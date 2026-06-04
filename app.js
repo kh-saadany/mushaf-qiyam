@@ -36,7 +36,7 @@ let rakahCount = 1; // عداد الركعات في الصلاة الحالية
 
 // ثوابت روابط الصور والموديل الصوتي
 const IMAGE_BASE_URL = 'https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/png/';
-const MODEL_URL = 'https://alphacephei.com/vosk/models/vosk-model-small-ar-0.22.zip';
+const MODEL_URL = 'https://alphacephei.com/vosk/models/vosk-model-ar-mgb2-0.4.zip';
 
 // ==================== التهيئة عند التشغيل الأول ==================== //
 document.addEventListener('DOMContentLoaded', () => {
@@ -786,7 +786,7 @@ async function downloadVoskModel() {
   } catch (error) {
     console.error('Error downloading Vosk model:', error);
     btn.disabled = false;
-    btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 45 ميجا)';
+    btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 318 ميجا)';
     document.getElementById('model-status-label').innerText = 'فشل التحميل، يرجى التحقق من اتصال الإنترنت.';
     showStatusMessage('فشل تحميل الموديل الصوتي، يرجى المحاولة لاحقاً.', 'red');
   }

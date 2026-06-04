@@ -13,6 +13,28 @@ const ASSETS_TO_CACHE = [
   'quran-pages.json'
 ];
 
+// استراتيجية التخزين المؤقت أولاً (Cache-First Strategy)
+function cacheFirst(request, cacheName, fallbackResponse = null) {
+  return caches.open(cacheName).then((cache) => {
+    return cache.match(request).then((cachedResponse) => {
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+      return fetch(request).then((networkResponse) => {
+        if (networkResponse.status === 200) {
+          cache.put(request, networkResponse.clone());
+        }
+        return networkResponse;
+      }).catch((err) => {
+        if (fallbackResponse) {
+          return fallbackResponse;
+        }
+        throw err;
+      });
+    });
+  });
+}
+
 // Install Event - Pre-cache App Shell
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -45,61 +67,20 @@ self.addEventListener('fetch', (event) => {
 
   // Check if it's a request for jsdelivr (Transformers.js and ONNX Runtime WASM runtime)
   if (requestUrl.host === 'cdn.jsdelivr.net') {
-    event.respondWith(
-      caches.open(SHELL_CACHE_NAME).then((cache) => {
-        return cache.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          return fetch(event.request).then((networkResponse) => {
-            if (networkResponse.status === 200) {
-              cache.put(event.request, networkResponse.clone());
-            }
-            return networkResponse;
-          });
-        });
-      })
-    );
+    event.respondWith(cacheFirst(event.request, SHELL_CACHE_NAME));
   }
   // Check if it's a request for the local model files
   else if (requestUrl.pathname.includes('/models/')) {
-    event.respondWith(
-      caches.open(MODEL_CACHE_NAME).then((cache) => {
-        return cache.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          // Fetch from network and cache (Cache-First strategy)
-          return fetch(event.request).then((networkResponse) => {
-            if (networkResponse.status === 200) {
-              cache.put(event.request, networkResponse.clone());
-            }
-            return networkResponse;
-          });
-        });
-      })
-    );
+    event.respondWith(cacheFirst(event.request, MODEL_CACHE_NAME));
   }
   // Check if it's a request for Quran page images (raw.githubusercontent.com/GovarJabbar/Quran-PNG)
   else if (requestUrl.host === 'raw.githubusercontent.com' && requestUrl.pathname.includes('/Quran-PNG/')) {
     event.respondWith(
-      caches.open(IMAGES_CACHE_NAME).then((cache) => {
-        return cache.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          // Fetch from network and cache
-          return fetch(event.request).then((networkResponse) => {
-            if (networkResponse.status === 200) {
-              cache.put(event.request, networkResponse.clone());
-            }
-            return networkResponse;
-          }).catch((err) => {
-            console.error('[Service Worker] Fetch image failed:', err);
-            return new Response('Offline image not found', { status: 404 });
-          });
-        });
-      })
+      cacheFirst(
+        event.request,
+        IMAGES_CACHE_NAME,
+        new Response('Offline image not found', { status: 404 })
+      )
     );
   } else {
     // App Shell Strategy: Stale-While-Revalidate

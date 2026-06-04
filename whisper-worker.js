@@ -24,17 +24,25 @@ const absoluteModelPath = workerBaseUrl + 'models/';
 console.log('[Whisper Worker] Base URL:', workerBaseUrl);
 console.log('[Whisper Worker] Model path:', absoluteModelPath);
 
-// تحميل مكتبة Transformers.js محلياً من ملفات المشروع
+// تحميل مكتبة Transformers.js محلياً من ملفات المشروع كـ Module
 let libraryLoaded = false;
 let libraryLoadError = null;
-try {
-  console.log('[Whisper Worker] جاري تحميل مكتبة Transformers.js محلياً...');
-  importScripts('transformers.min.js');
-  libraryLoaded = true;
-  console.log('[Whisper Worker] تم تحميل مكتبة Transformers.js بنجاح.');
-} catch (err) {
-  console.error('[Whisper Worker] فشل تحميل مكتبة Transformers.js محلياً:', err);
-  libraryLoadError = err.message || err.toString();
+let transformersInstance = null;
+
+async function loadLibrary() {
+  if (libraryLoaded) return true;
+  try {
+    console.log('[Whisper Worker] جاري استيراد مكتبة Transformers.js (MJS) محلياً...');
+    const module = await import('./transformers.min.mjs');
+    transformersInstance = module;
+    libraryLoaded = true;
+    console.log('[Whisper Worker] تم استيراد مكتبة Transformers.js بنجاح.');
+    return true;
+  } catch (err) {
+    console.error('[Whisper Worker] فشل استيراد مكتبة Transformers.js محلياً:', err);
+    libraryLoadError = err.message || err.toString();
+    return false;
+  }
 }
 
 let transcriber = null;
@@ -44,17 +52,18 @@ self.onmessage = async (e) => {
   const { type, audio } = e.data;
 
   if (type === 'load') {
-    // التحقق من تحميل المكتبة أولاً
-    if (!libraryLoaded || typeof transformers === 'undefined') {
+    // محاولة استيراد المكتبة
+    const loaded = await loadLibrary();
+    if (!loaded || !transformersInstance) {
       self.postMessage({
         type: 'error',
-        error: `فشل تحميل مكتبة التعرف الصوتي المحلية (transformers.min.js): ${libraryLoadError || 'سبب غير معروف'}`
+        error: `فشل تحميل مكتبة التعرف الصوتي المحلية (transformers.min.mjs): ${libraryLoadError || 'سبب غير معروف'}`
       });
       return;
     }
 
     try {
-      const { pipeline, env } = transformers;
+      const { pipeline, env } = transformersInstance;
 
       // تكوين بيئة المكتبة لتحميل الموديل محلياً من مجلد المشروع
       env.allowLocalModels = true;

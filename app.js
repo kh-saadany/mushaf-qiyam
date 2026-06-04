@@ -610,7 +610,7 @@ async function startPrayerSession() {
     try {
       if (!whisperWorker) {
         // تهيئة الـ Web Worker
-        whisperWorker = new Worker('whisper-worker.js');
+        whisperWorker = new Worker('whisper-worker.js', { type: 'module' });
         
         whisperWorker.onmessage = (e) => {
           const { type, text, error } = e.data;
@@ -1041,7 +1041,7 @@ async function downloadVoskModel() {
     whisperWorker = null;
   }
   
-  whisperWorker = new Worker('whisper-worker.js');
+  whisperWorker = new Worker('whisper-worker.js', { type: 'module' });
 
   const fileProgress = {};
   

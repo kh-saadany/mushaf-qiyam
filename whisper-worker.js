@@ -26,6 +26,7 @@ console.log('[Whisper Worker] Model path:', absoluteModelPath);
 
 // تحميل مكتبة Transformers.js محلياً من ملفات المشروع
 let libraryLoaded = false;
+let libraryLoadError = null;
 try {
   console.log('[Whisper Worker] جاري تحميل مكتبة Transformers.js محلياً...');
   importScripts('transformers.min.js');
@@ -33,6 +34,7 @@ try {
   console.log('[Whisper Worker] تم تحميل مكتبة Transformers.js بنجاح.');
 } catch (err) {
   console.error('[Whisper Worker] فشل تحميل مكتبة Transformers.js محلياً:', err);
+  libraryLoadError = err.message || err.toString();
 }
 
 let transcriber = null;
@@ -46,7 +48,7 @@ self.onmessage = async (e) => {
     if (!libraryLoaded || typeof transformers === 'undefined') {
       self.postMessage({
         type: 'error',
-        error: 'فشل تحميل مكتبة التعرف الصوتي المحلية (transformers.min.js).'
+        error: `فشل تحميل مكتبة التعرف الصوتي المحلية (transformers.min.js): ${libraryLoadError || 'سبب غير معروف'}`
       });
       return;
     }

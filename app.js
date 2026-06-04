@@ -1,6 +1,7 @@
 /**
  * ==========================================================================
  * المنطق البرمجي الأساسي لتطبيق "مصحف القيام" (PWA)
+ * مع دمج محرك Vosk-browser للتشغيل أوفلاين بالكامل
  * ==========================================================================
  */
 
@@ -16,17 +17,26 @@ let currentPage = 1;      // الصفحة الحالية المعروضة
 let currentSurah = 1;     // السورة الحالية
 let isPrayerActive = false;
 let prayerState = STATE_IDLE;
-let speechRecognition = null;
 let wakeLock = null;
-let isAudioMuted = false;
+
+// متغيرات محرك صوت Vosk-browser
+let voskModel = null;
+let voskRecognizer = null;
+let audioContext = null;
+let mediaStream = null;
+let audioSource = null;
+let audioProcessor = null;
+let isMicGranted = false;
+let isModelCached = false;
 
 // علامات تتبع الوقوف والركعات
 let lastMatchedVerse = { surah: 1, ayah: 0 };
 let checkpointVerse = { page: 1, surah: 1, ayah: 0 };
 let rakahCount = 1; // عداد الركعات في الصلاة الحالية
 
-// ثوابت روابط الصور (مستودع GovarJabbar/Quran-PNG)
+// ثوابت روابط الصور والموديل الصوتي
 const IMAGE_BASE_URL = 'https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/png/';
+const MODEL_URL = 'https://alphacephei.com/vosk/models/vosk-model-small-ar-0.22.zip';
 
 // ==================== التهيئة عند التشغيل الأول ==================== //
 document.addEventListener('DOMContentLoaded', () => {
@@ -45,11 +55,11 @@ async function initApp() {
     // 3. التحقق من حالة تخزين المصحف أوفلاين
     checkOfflineCacheStatus();
     
-    // 4. ربط أحداث أزرار وعناصر الواجهة
-    setupEventListeners();
+    // 4. التحقق من حالة تخزين الموديل الصوتي أوفلاين
+    checkOfflineModelStatus();
     
-    // 5. تهيئة محرك التعرف الصوتي
-    initSpeechRecognition();
+    // 5. ربط أحداث أزرار وعناصر الواجهة
+    setupEventListeners();
     
     // 6. التحقق من وجود تحديثات على جيت هاب
     checkForUpdates();
@@ -70,7 +80,7 @@ function registerServiceWorker() {
       .then((reg) => {
         console.log('Service Worker registered successfully:', reg.scope);
         
-        // الاستماع لرسائل التقدم في التحميل أوفلاين من السيرفس وركر
+        // الاستماع لرسائل التقدم في التحميل أوفلاين من السيرفس وركر (خاص بالصور)
         navigator.serviceWorker.addEventListener('message', (event) => {
           if (event.data) {
             if (event.data.type === 'cache-progress') {
@@ -92,7 +102,6 @@ function populateSetupSelectors() {
   
   if (!quranDatabase) return;
 
-  // استخراج السور الفريدة وأول صفحة تظهر فيها
   const surahsMap = new Map();
   quranDatabase.forEach(p => {
     p.verses.forEach(v => {
@@ -106,20 +115,17 @@ function populateSetupSelectors() {
     });
   });
 
-  // ملء قائمة السور مرتبة
   const sortedSurahs = Array.from(surahsMap.values()).sort((a, b) => a.id - b.id);
   surahSelect.innerHTML = sortedSurahs.map(s => 
     `<option value="${s.id}" data-page="${s.firstPage}">سورة ${s.name.replace('سُورَةُ ', '')}</option>`
   ).join('');
 
-  // ملء قائمة الصفحات (1 - 604)
   const pagesHTML = [];
   for (let i = 1; i <= 604; i++) {
     pagesHTML.push(`<option value="${i}">الصفحة ${i}</option>`);
   }
   pageSelect.innerHTML = pagesHTML.join('');
 
-  // ربط اختيار السورة بتحديث رقم الصفحة تلقائياً
   surahSelect.addEventListener('change', () => {
     const selectedOption = surahSelect.options[surahSelect.selectedIndex];
     const pageNum = selectedOption.getAttribute('data-page');
@@ -138,6 +144,7 @@ function setupEventListeners() {
   document.getElementById('btn-grant-mic').addEventListener('click', requestMicrophonePermission);
   document.getElementById('btn-start-prayer').addEventListener('click', startPrayerSession);
   document.getElementById('btn-download-quran').addEventListener('click', downloadAllQuranImages);
+  document.getElementById('btn-download-model').addEventListener('click', downloadVoskModel);
   document.getElementById('btn-show-guide').addEventListener('click', () => toggleModal('guide-modal', true));
   document.getElementById('btn-close-guide').addEventListener('click', () => toggleModal('guide-modal', false));
 
@@ -162,17 +169,13 @@ function setupEventListeners() {
     const touchEndX = e.changedTouches[0].screenX;
     const diffX = touchEndX - touchStartX;
     
-    // سحب من اليمين لليسار (تقليب للصفحة التالية)
     if (diffX < -60) {
       flipPageManual(1);
-    }
-    // سحب من اليسار لليمين (تقليب للصفحة السابقة)
-    else if (diffX > 60) {
+    } else if (diffX > 60) {
       flipPageManual(-1);
     }
   }, { passive: true });
 
-  // نافذة التحديث
   document.getElementById('btn-apply-update').addEventListener('click', () => {
     window.location.reload(true);
   });
@@ -196,19 +199,20 @@ function toggleTheme() {
   }
 }
 
-// ==================== صلاحيات الميكروفون والتعرف الصوتي ==================== //
+// ==================== تفعيل صلاحيات الميكروفون ==================== //
 function requestMicrophonePermission() {
   navigator.mediaDevices.getUserMedia({ audio: true })
     .then((stream) => {
-      // إيقاف الستريم فوراً، نحتاج فقط للتأكد من موافقة المستخدم
       stream.getTracks().forEach(track => track.stop());
       
       const dot = document.getElementById('mic-status-dot');
       const text = document.getElementById('mic-status-text');
       
       dot.className = 'pulse-dot green';
-      text.innerText = 'الميكروفون مفعل وجاهز لبدء الصلاة';
-      document.getElementById('btn-start-prayer').disabled = false;
+      text.innerText = 'الميكروفون مفعل';
+      isMicGranted = true;
+      
+      updateStartButtonState();
       document.getElementById('btn-grant-mic').style.display = 'none';
       
       showStatusMessage('تم تفعيل الميكروفون بنجاح!', 'green');
@@ -219,58 +223,10 @@ function requestMicrophonePermission() {
     });
 }
 
-// تهيئة محرك الاستماع الصوتي
-function initSpeechRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  
-  if (!SpeechRecognition) {
-    showStatusMessage('عذراً، متصفحك الحالي لا يدعم التعرف الصوتي المدمج. يرجى استخدام متصفح Google Chrome.', 'red');
-    return;
-  }
-
-  speechRecognition = new SpeechRecognition();
-  speechRecognition.continuous = true;
-  speechRecognition.interimResults = true;
-  speechRecognition.lang = 'ar-SA'; // نبرة لغة عربية فصحى
-
-  // عند استقبال كلام منطوق
-  speechRecognition.onresult = (event) => {
-    let interimTranscript = '';
-    let finalTranscript = '';
-
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript;
-      } else {
-        interimTranscript += event.results[i][0].transcript;
-      }
-    }
-
-    const currentTranscript = finalTranscript || interimTranscript;
-    if (currentTranscript.trim().length > 0) {
-      handleSpokenWords(currentTranscript);
-    }
-  };
-
-  // معالجة توقف الخدمة التلقائي (الأندرويد يوقف الميكروفون عند الصمت الطويل)
-  speechRecognition.onend = () => {
-    if (isPrayerActive && prayerState !== STATE_RUKU) {
-      console.log('[Speech Recognition] Restarting due to timeout...');
-      try {
-        speechRecognition.start();
-        updateAudioIndicator(true);
-      } catch (err) {
-        console.error('Error restarting speech recognition:', err);
-      }
-    }
-  };
-
-  speechRecognition.onerror = (event) => {
-    console.error('Speech recognition error:', event.error);
-    if (event.error === 'not-allowed') {
-      showStatusMessage('تم حظر الميكروفون. يرجى تفعيله من إعدادات المتصفح.', 'red');
-    }
-  };
+// تحديث إمكانية بدء الصلاة (الميكروفون + الموديل الصوتي يجب توفرهما)
+function updateStartButtonState() {
+  const startBtn = document.getElementById('btn-start-prayer');
+  startBtn.disabled = !(isMicGranted && isModelCached);
 }
 
 // تحديث مؤشر الصوت البصري
@@ -283,20 +239,16 @@ function updateAudioIndicator(active) {
 
 // ==================== معالجة الكلام الذكي (Quran Sync Algorithm) ==================== //
 function handleSpokenWords(words) {
-  // 1. تحديث المؤشر النصي أسفل الشاشة
   const toastText = document.getElementById('recognized-words');
   toastText.innerText = words;
 
-  // 2. تطهير وتنظيف النص المنطوق
   const cleanSpoken = normalizeArabic(words);
 
-  // 3. التحقق من حالات الصلاة الخاصة أولاً (التكبير، الفاتحة)
   if (detectTakbeer(cleanSpoken)) {
     triggerRukuState();
     return;
   }
 
-  // إذا كنا ننتظر الفاتحة لبدء الركعة
   if (prayerState === STATE_WAITING_FATIHA) {
     if (detectFatiha(cleanSpoken)) {
       transitionToReciting();
@@ -304,7 +256,6 @@ function handleSpokenWords(words) {
     return;
   }
 
-  // 4. مطابقة النص مع آيات الصفحة الحالية والصفحة التالية (Fuzzy Matching)
   if (prayerState === STATE_RECITING) {
     matchRecitationWithQuran(cleanSpoken);
   }
@@ -314,17 +265,11 @@ function handleSpokenWords(words) {
 function normalizeArabic(text) {
   if (!text) return '';
   return text
-    // إزالة التشكيل وعلامات التجويد
     .replace(/[\u064B-\u0652]/g, '')
-    // إزالة علامات الوقف القرآنية
     .replace(/[\u0615-\u061A\u06D6-\u06E2\u06E4\u06E7\u06E8\u06EA-\u06EC]/g, '')
-    // توحيد همزات الألف
     .replace(/[أإآ]/g, 'ا')
-    // توحيد الياء والألف المقصورة
     .replace(/ى/g, 'ي')
-    // توحيد التاء المربوطة والهاء
     .replace(/ة/g, 'هـ')
-    // إزالة الحروف غير العربية والمسافات الزائدة
     .replace(/[^\u0600-\u06FF\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -332,9 +277,8 @@ function normalizeArabic(text) {
 
 // التحقق من كشف التكبير ("الله أكبر") للانتقال للركوع
 function detectTakbeer(cleanText) {
-  // نبحث عن كلمات التكبير في آخر جزء من النص المنطوق
   const tokens = cleanText.split(' ');
-  const lastWords = tokens.slice(-3).join(' '); // آخر 3 كلمات فقط للسرعة والدقة
+  const lastWords = tokens.slice(-3).join(' ');
   return lastWords.includes('الله اكبر') || lastWords.includes('اللهم اكبر');
 }
 
@@ -350,9 +294,23 @@ function detectFatiha(cleanText) {
     'غير المغضوب عليهم',
     'ولا الضالين'
   ];
-
-  // يكفي مطابقة جملة واحدة قوية من الفاتحة لنعرف أن الإمام يقرأها
   return fatihaKeywords.some(keyword => cleanText.includes(normalizeArabic(keyword)));
+}
+
+// دالة مساعدة موحدة للبحث عن تطابق في آيات صفحة محددة (تم حل تكرار الكود المكتشف بـ Fallow)
+function searchPageForMatch(pageData, cleanQuery, pageNumber) {
+  let bestMatch = null;
+  pageData.verses.forEach((verse, index) => {
+    const cleanVerse = normalizeArabic(verse.text);
+    if (cleanVerse.includes(cleanQuery) || checkSubSequenceMatch(cleanVerse, cleanQuery)) {
+      bestMatch = {
+        verse: verse,
+        index: index,
+        page: pageNumber
+      };
+    }
+  });
+  return bestMatch;
 }
 
 // مطابقة التلاوة مع نصوص آيات الصفحة المفتوحة
@@ -364,40 +322,23 @@ function matchRecitationWithQuran(cleanSpoken) {
   
   if (!pageData) return;
 
-  // نأخذ آخر كلمات نطقها الإمام (مثلاً آخر 8 كلمات) لمطابقتها لعدم تشتيت الخوارزمية
   const spokenTokens = cleanSpoken.split(' ');
   const queryWordsCount = Math.min(10, spokenTokens.length);
   const cleanQuery = spokenTokens.slice(-queryWordsCount).join(' ');
 
-  let bestMatch = null;
-  let isNextPageMatch = false;
-
   // 1. نبحث أولاً في الصفحة الحالية
-  pageData.verses.forEach((verse, index) => {
-    const cleanVerse = normalizeArabic(verse.text);
-    if (cleanVerse.includes(cleanQuery) || checkSubSequenceMatch(cleanVerse, cleanQuery)) {
-      bestMatch = {
-        verse: verse,
-        index: index,
-        page: currentPage
-      };
-    }
-  });
+  let bestMatch = searchPageForMatch(pageData, cleanQuery, currentPage);
+  let isNextPageMatch = false;
 
   // 2. إذا لم نجد مطابقة، نبحث في أول آيتين من الصفحة التالية للتأكد من تقليب الصفحة الذكي
   if (!bestMatch && nextRawPageData) {
-    const firstTwoVerses = nextRawPageData.verses.slice(0, 2);
-    firstTwoVerses.forEach((verse, index) => {
-      const cleanVerse = normalizeArabic(verse.text);
-      if (cleanVerse.includes(cleanQuery) || checkSubSequenceMatch(cleanVerse, cleanQuery)) {
-        bestMatch = {
-          verse: verse,
-          index: index,
-          page: currentPage + 1
-        };
-        isNextPageMatch = true;
-      }
-    });
+    const firstTwoVersesData = {
+      verses: nextRawPageData.verses.slice(0, 2)
+    };
+    bestMatch = searchPageForMatch(firstTwoVersesData, cleanQuery, currentPage + 1);
+    if (bestMatch) {
+      isNextPageMatch = true;
+    }
   }
 
   // 3. إذا تم العثور على مطابقة موثقة
@@ -409,7 +350,6 @@ function matchRecitationWithQuran(cleanSpoken) {
 
     console.log(`Matched: Surah ${bestMatch.verse.surah}, Ayah ${bestMatch.verse.ayah} on page ${bestMatch.page}`);
 
-    // تحديث الشاشة بالصفحة الصحيحة إذا كانت المطابقة في الصفحة التالية
     if (isNextPageMatch || bestMatch.page > currentPage) {
       flipPage(bestMatch.page);
     }
@@ -419,9 +359,8 @@ function matchRecitationWithQuran(cleanSpoken) {
 // خوارزمية مطابقة تسلسلية بسيطة (Sub-sequence match) في حالة سقوط بعض الحروف الصامتة
 function checkSubSequenceMatch(verseText, queryText) {
   const queryTokens = queryText.split(' ');
-  if (queryTokens.length < 3) return false; // نحتاج 3 كلمات على الأقل للتثبت
+  if (queryTokens.length < 3) return false;
 
-  // نبحث عن وجود الكلمات بنفس الترتيب داخل الآية
   let lastIndex = -1;
   let matchCount = 0;
 
@@ -433,22 +372,17 @@ function checkSubSequenceMatch(verseText, queryText) {
     }
   }
 
-  // إذا تطابق 70% من الكلمات بنفس الترتيب، نعتبرها مطابقة مقبولة
   return (matchCount / queryTokens.length) >= 0.7;
 }
 
 // ==================== دورة حياة الصلاة وإدارة الحالات ==================== //
 
-// 1. بدء الصلاة
-function startPrayerSession() {
-  if (!speechRecognition) return;
+// بدء الصلاة وتهيئة Vosk-browser أوفلاين
+async function startPrayerSession() {
+  if (isPrayerActive) return;
 
-  isPrayerActive = true;
-  prayerState = STATE_WAITING_FATIHA;
-  rakahCount = 1;
-
-  // إبقاء الشاشة مضيئة
-  requestWakeLock();
+  const statusToastText = document.getElementById('recognized-words');
+  statusToastText.innerText = 'جاري تهيئة محرك الصوت المحلي...';
 
   // الانتقال لشاشة الصلاة
   document.getElementById('setup-screen').classList.remove('active');
@@ -457,43 +391,92 @@ function startPrayerSession() {
   // عرض صفحة البداية المختارة
   displayPage(currentPage);
 
-  // تحديث شريط معلومات الواجهة
+  isPrayerActive = true;
+  prayerState = STATE_WAITING_FATIHA;
+  rakahCount = 1;
   updatePrayerStatusUI();
 
-  // تشغيل الاستماع الصوتي
-  try {
-    speechRecognition.start();
-    updateAudioIndicator(true);
-  } catch (e) {
-    console.log('Recognition already active');
-  }
+  // إبقاء الشاشة مضيئة
+  requestWakeLock();
 
-  showStatusMessage('تم بدء الصلاة وتفعيل وضع الانتظار (تلاوة الفاتحة)...', 'green');
+  try {
+    // تحميل الموديل الصوتي من الكاش/المستند المحلي
+    if (!voskModel) {
+      console.log('[Vosk] Loading model from cached URL:', MODEL_URL);
+      voskModel = await Vosk.createModel(MODEL_URL);
+    }
+
+    // تهيئة مسجل الصوت ومجرى الميكروفون
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    
+    // إنشاء سياق الصوت (Audio Context) بتردد 16000Hz (المفضل لـ Vosk)
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    
+    // إنشاء المستمع
+    voskRecognizer = new voskModel.KaldiRecognizer(16000);
+    
+    // ربط أحداث التعرف الصوتي لـ Vosk
+    voskRecognizer.on('result', (message) => {
+      const text = message.result.text;
+      if (text && text.trim().length > 0) {
+        console.log('[Vosk Final Result]:', text);
+        handleSpokenWords(text);
+      }
+    });
+
+    voskRecognizer.on('partialresult', (message) => {
+      const partialText = message.result.partial;
+      if (partialText && partialText.trim().length > 0) {
+        // تحديث النص اللحظي على الشاشة فوراً لمساندة الإمام بصرياً
+        document.getElementById('recognized-words').innerText = partialText;
+        handleSpokenWords(partialText);
+      }
+    });
+
+    // ربط خط الأنابيب الصوتي (Audio Pipeline)
+    audioSource = audioContext.createMediaStreamSource(mediaStream);
+    audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+    
+    audioProcessor.onaudioprocess = (event) => {
+      if (isPrayerActive && prayerState !== STATE_RUKU) {
+        const floatData = event.inputBuffer.getChannelData(0);
+        voskRecognizer.acceptWaveform(floatData);
+      }
+    };
+
+    audioSource.connect(audioProcessor);
+    audioProcessor.connect(audioContext.destination);
+
+    updateAudioIndicator(true);
+    statusToastText.innerText = 'بانتظار قراءة الفاتحة...';
+    console.log('[Vosk] Listening initialized successfully');
+
+  } catch (error) {
+    console.error('[Vosk] Initialization error:', error);
+    statusToastText.innerText = 'فشل تشغيل الصوت المحلي. اضغط خروج لإعادة التهيئة.';
+    updateAudioIndicator(false);
+  }
 }
 
 // الانتقال لوضع القراءة النشط بعد الفاتحة
 function transitionToReciting() {
   prayerState = STATE_RECITING;
   updatePrayerStatusUI();
-  
-  // تصفير مؤشر الكلمات المنطوقة
   document.getElementById('recognized-words').innerText = 'تم كشف الفاتحة - جاري متابعة السورة...';
   console.log('[State Machine] Transition to Reciting Surah');
 }
 
-// 2. كشف الركوع وحفظ علامة التوقف
+// كشف الركوع وحفظ علامة التوقف
 function triggerRukuState() {
   prayerState = STATE_RUKU;
   updatePrayerStatusUI();
 
-  // حفظ موضع الوقوف الفعلي (Checkpoint)
   checkpointVerse = {
     page: currentPage,
     surah: lastMatchedVerse.surah,
     ayah: lastMatchedVerse.ayah
   };
 
-  // جلب اسم السورة المحفوظة لعرضها في لوحة الإيقاف المؤقت
   const pageData = quranDatabase[currentPage - 1];
   let surahName = 'سورة البقرة';
   if (pageData) {
@@ -502,8 +485,6 @@ function triggerRukuState() {
   }
 
   document.getElementById('saved-location-text').innerText = `${surahName.replace('سُورَةُ ', '')} - آية ${checkpointVerse.ayah}`;
-  
-  // إظهار لوحة الركوع والسجود وتعتيم الإضاءة
   document.getElementById('ruku-overlay').classList.add('active');
 
   console.log('[State Machine] Ruku/Sujood state activated. Checkpoint saved:', checkpointVerse);
@@ -513,63 +494,67 @@ function triggerRukuState() {
 function skipRukuState() {
   document.getElementById('ruku-overlay').classList.remove('active');
   
-  // زيادة عداد الركعات
   rakahCount++;
   prayerState = STATE_WAITING_FATIHA;
   updatePrayerStatusUI();
 
-  // إعادة توجيه الصفحة إلى الصفحة المحفوظة استعداداً للركعة التالية
   currentPage = checkpointVerse.page;
   displayPage(currentPage);
 
   document.getElementById('recognized-words').innerText = 'انتظار قراءة الفاتحة للركعة التالية...';
-  
-  // إعادة تشغيل الاستماع الصوتي في المتصفح إذا تم إيقافه
-  try {
-    speechRecognition.start();
-    updateAudioIndicator(true);
-  } catch(e) {}
 }
 
-// 3. إنهاء الصلاة والعودة للتهيئة
+// إنهاء الصلاة والعودة للتهيئة
 function stopPrayerSession() {
   isPrayerActive = false;
   prayerState = STATE_IDLE;
 
-  // تحرير حظر الشاشة
   releaseWakeLock();
 
-  // إيقاف الصوت
+  // إغلاق مجرى الصوت ومسجل Vosk
   try {
-    speechRecognition.stop();
-    updateAudioIndicator(false);
-  } catch(e) {}
+    if (audioProcessor) {
+      audioProcessor.disconnect();
+      audioProcessor = null;
+    }
+    if (audioSource) {
+      audioSource.disconnect();
+      audioSource = null;
+    }
+    if (audioContext) {
+      audioContext.close();
+      audioContext = null;
+    }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+    if (voskRecognizer) {
+      voskRecognizer.remove();
+      voskRecognizer = null;
+    }
+  } catch (e) {
+    console.error('Error stopping audio tracks:', e);
+  }
 
-  // إخفاء التعتيم
+  updateAudioIndicator(false);
   document.getElementById('ruku-overlay').classList.remove('active');
-
-  // تبديل الشاشات
   document.getElementById('prayer-screen').classList.remove('active');
   document.getElementById('setup-screen').classList.add('active');
 }
 
 // ==================== إدارة عرض صفحات المصحف ==================== //
 
-// عرض صفحة معينة بالرقم
 function displayPage(pageNum) {
   if (pageNum < 1 || pageNum > 604) return;
   
   const imgElement = document.getElementById('mushaf-image');
   const threeDigitPage = String(pageNum).padStart(3, '0');
-  const imageUrl = `${IMAGE_BASE_URL}${threeDigitPage.slice(0,1)}/${threeDigitPage}.png`; // مسار raw جيت هاب
+  const imageUrl = `${IMAGE_BASE_URL}${threeDigitPage.slice(0,1)}/${threeDigitPage}.png`;
 
-  // تحديث الصورة
   imgElement.src = imageUrl;
-
-  // تحديث بيانات شريط المعلومات
   document.getElementById('current-page-num').innerText = `صفحة ${pageNum}`;
   
-  // جلب اسم السورة المعروضة في الصفحة
   if (quranDatabase) {
     const pageData = quranDatabase[pageNum - 1];
     if (pageData && pageData.verses.length > 0) {
@@ -578,7 +563,6 @@ function displayPage(pageNum) {
     }
   }
 
-  // التحميل المسبق (Preload) للصفحة التالية في ذاكرة المتصفح لتقليب فوري أوفلاين
   if (pageNum < 604) {
     const nextThreeDigit = String(pageNum + 1).padStart(3, '0');
     const nextImg = new Image();
@@ -586,20 +570,16 @@ function displayPage(pageNum) {
   }
 }
 
-// تقليب الصفحة تلقائياً
 function flipPage(targetPage) {
   if (targetPage === currentPage || targetPage < 1 || targetPage > 604) return;
 
   const wrapper = document.getElementById('mushaf-page-wrapper');
-  
-  // تأثير انتقالي ناعم (Fade & Slide) يحاكي تقليب الكتاب
   wrapper.style.transform = 'translateX(-30px)';
   wrapper.style.opacity = '0';
   
   setTimeout(() => {
     currentPage = targetPage;
     displayPage(currentPage);
-    
     wrapper.style.transform = 'translateX(30px)';
     
     setTimeout(() => {
@@ -610,11 +590,9 @@ function flipPage(targetPage) {
   }, 250);
 }
 
-// تقليب يدوي باللمس (حالة الطوارئ)
 function flipPageManual(direction) {
   const target = currentPage + direction;
   if (target >= 1 && target <= 604) {
-    // تحديث علامة وقوف افتراضية عند التقليب اليدوي لمنع التشتت
     if (quranDatabase) {
       const pageData = quranDatabase[target - 1];
       if (pageData && pageData.verses.length > 0) {
@@ -641,7 +619,6 @@ function updatePrayerStatusUI() {
   }
 }
 
-// عرض رسائل التنبيه والخطأ في الهيدر
 function showStatusMessage(msg, color) {
   console.log(`[Status Message] ${msg} (${color})`);
 }
@@ -668,26 +645,24 @@ function releaseWakeLock() {
   }
 }
 
-// إعادة طلب قفل الشاشة إذا عاد التطبيق للظهور بعد الخروج
 document.addEventListener('visibilitychange', async () => {
   if (wakeLock !== null && document.visibilityState === 'visible' && isPrayerActive) {
     await requestWakeLock();
   }
 });
 
-// ==================== إدارة تخزين الصور أوفلاين (Download Manager) ==================== //
+// ==================== إدارة تخزين البيانات أوفلاين (Download Manager) ==================== //
 
-// التحقق من حالة الملفات المخزنة أوفلاين
+// 1. التحقق من كاش الصور
 function checkOfflineCacheStatus() {
   if (!('caches' in window)) return;
   
   caches.has('mushaf-qiyam-images-v1').then(exists => {
     if (exists) {
-      // نتحقق من عدد العناصر المخزنة
       caches.open('mushaf-qiyam-images-v1').then(cache => {
         cache.keys().then(keys => {
           if (keys.length >= 600) {
-            document.getElementById('cache-status-label').innerText = 'المصحف محمل بالكامل للعمل دون اتصال بالإنترنت (604 صفحات)';
+            document.getElementById('cache-status-label').innerText = 'المصحف محمل بالكامل أوفلاين';
             document.getElementById('cache-percent-label').innerText = '100%';
             document.getElementById('cache-progress-bar').style.width = '100%';
             document.getElementById('btn-download-quran').innerText = 'تحديث صور المصحف المخزنة محلياً';
@@ -698,44 +673,37 @@ function checkOfflineCacheStatus() {
   });
 }
 
-// تحميل كافة الصور وتخزينها محلياً
 function downloadAllQuranImages() {
   const btn = document.getElementById('btn-download-quran');
   btn.disabled = true;
   btn.innerText = 'جاري الاتصال بخادم الصور...';
 
-  // إعداد قائمة الـ 604 رابط لصور الصفحات
   const urlsToCache = [];
   for (let i = 1; i <= 604; i++) {
     const threeDigitPage = String(i).padStart(3, '0');
-    // raw github url
     urlsToCache.push(`${IMAGE_BASE_URL}${threeDigitPage.slice(0,1)}/${threeDigitPage}.png`);
   }
 
-  // إرسال الطلب لـ Service Worker
   if (navigator.serviceWorker && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage({
       action: 'cache-images',
       urls: urlsToCache
     });
   } else {
-    // إعادة محاولة الربط في حال عدم كفاءة الـ Service Worker فوراً
     showStatusMessage('جاري تهيئة خادم التحميل الصامت، يرجى المحاولة بعد قليل.', 'yellow');
     btn.disabled = false;
     btn.innerText = 'تحميل صفحات المصحف (حوالي 85 ميجا)';
   }
 }
 
-// تحديث شريط تقدم التحميل
 function updateDownloadUI(progress, current, total) {
-  document.getElementById('cache-status-label').innerText = `جاري تحميل الصفحات محلياً (${current} من ${total})...`;
+  document.getElementById('cache-status-label').innerText = `جاري تحميل الصور محلياً (${current} من ${total})...`;
   document.getElementById('cache-percent-label').innerText = `${progress}%`;
   document.getElementById('cache-progress-bar').style.width = `${progress}%`;
 }
 
-// انتهاء التحميل
 function onDownloadCompleted() {
-  document.getElementById('cache-status-label').innerText = 'اكتمل التحميل! المصحف محمل بالكامل للعمل دون اتصال بالإنترنت.';
+  document.getElementById('cache-status-label').innerText = 'اكتمل تحميل الصور أوفلاين!';
   document.getElementById('cache-percent-label').innerText = '100%';
   document.getElementById('cache-progress-bar').style.width = '100%';
   
@@ -746,13 +714,113 @@ function onDownloadCompleted() {
   showStatusMessage('اكتمل تحميل جميع صفحات المصحف أوفلاين بنجاح!', 'green');
 }
 
+// 2. التحقق من كاش الموديل الصوتي أوفلاين
+function checkOfflineModelStatus() {
+  if (!('caches' in window)) return;
+
+  caches.open('mushaf-qiyam-model-v1').then(cache => {
+    cache.match(MODEL_URL).then(response => {
+      if (response) {
+        document.getElementById('model-status-label').innerText = 'الموديل الصوتي محمل بالكامل أوفلاين';
+        document.getElementById('model-percent-label').innerText = '100%';
+        document.getElementById('model-progress-bar').style.width = '100%';
+        document.getElementById('btn-download-model').innerText = 'تحديث الموديل الصوتي المخزن محلياً';
+        isModelCached = true;
+        updateStartButtonState();
+      }
+    });
+  });
+}
+
+// تحميل الموديل الصوتي مع إشهار شريط التقدم الفعلي (Fetch Progress Stream)
+async function downloadVoskModel() {
+  const btn = document.getElementById('btn-download-model');
+  btn.disabled = true;
+  btn.innerText = 'جاري الاتصال بخادم الصوت...';
+  
+  document.getElementById('model-status-label').innerText = 'جاري الاتصال بخادم تحميل الموديل...';
+  document.getElementById('model-percent-label').innerText = '0%';
+  document.getElementById('model-progress-bar').style.width = '0%';
+
+  try {
+    const response = await fetch(MODEL_URL);
+    if (!response.ok) throw new Error('Network response was not ok');
+
+    const contentLength = response.headers.get('content-length');
+    if (!contentLength) {
+      throw new Error('Content-Length response header is missing');
+    }
+    const totalBytes = parseInt(contentLength, 10);
+    let loadedBytes = 0;
+
+    const reader = response.body.getReader();
+    const chunks = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loadedBytes += value.length;
+      
+      const progress = Math.min(100, Math.round((loadedBytes / totalBytes) * 100));
+      updateModelDownloadUI(progress, loadedBytes, totalBytes);
+    }
+
+    console.log('[Vosk Model] Assembly response chunks...');
+    const modelBlob = new Blob(chunks);
+    const cachedResponse = new Response(modelBlob, {
+      status: 200,
+      statusText: 'OK',
+      headers: { 
+        'Content-Type': 'application/zip',
+        'Content-Length': modelBlob.size.toString()
+      }
+    });
+
+    console.log('[Vosk Model] Saving model to mushaf-qiyam-model-v1 cache...');
+    const modelCache = await caches.open('mushaf-qiyam-model-v1');
+    await modelCache.put(MODEL_URL, cachedResponse);
+
+    onModelDownloadCompleted();
+
+  } catch (error) {
+    console.error('Error downloading Vosk model:', error);
+    btn.disabled = false;
+    btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 45 ميجا)';
+    document.getElementById('model-status-label').innerText = 'فشل التحميل، يرجى التحقق من اتصال الإنترنت.';
+    showStatusMessage('فشل تحميل الموديل الصوتي، يرجى المحاولة لاحقاً.', 'red');
+  }
+}
+
+function updateModelDownloadUI(progress, loaded, total) {
+  const currentMB = (loaded / (1024 * 1024)).toFixed(1);
+  const totalMB = (total / (1024 * 1024)).toFixed(1);
+  
+  document.getElementById('model-status-label').innerText = `جاري تحميل الموديل الصوتي (${currentMB}MB من ${totalMB}MB)...`;
+  document.getElementById('model-percent-label').innerText = `${progress}%`;
+  document.getElementById('model-progress-bar').style.width = `${progress}%`;
+}
+
+function onModelDownloadCompleted() {
+  document.getElementById('model-status-label').innerText = 'اكتمل تحميل الموديل الصوتي أوفلاين!';
+  document.getElementById('model-percent-label').innerText = '100%';
+  document.getElementById('model-progress-bar').style.width = '100%';
+  
+  const btn = document.getElementById('btn-download-model');
+  btn.disabled = false;
+  btn.innerText = 'تحديث الموديل الصوتي المخزن محلياً';
+  
+  isModelCached = true;
+  updateStartButtonState();
+  
+  showStatusMessage('تم تحميل الموديل الصوتي محلياً وجاهز للتشغيل بالمسجد!', 'green');
+}
+
 // ==================== إدارة التحديثات التلقائية (GitHub Auto Update) ==================== //
 function checkForUpdates() {
-  // نقارن رقم الإصدار المحلي بملف version.json المرفوع على سيرفر جيت هاب بيجز
   fetch('version.json?nocache=' + Date.now())
     .then(res => res.json())
     .then(serverInfo => {
-      // جلب الإصدار الحالي من الواجهة
       fetch('version.json')
         .then(res => res.json())
         .then(localInfo => {
@@ -760,7 +828,6 @@ function checkForUpdates() {
           document.getElementById('app-version-label').innerText = `إصدار ${localInfo.version}`;
           
           if (compareVersions(serverInfo.version, localInfo.version) > 0) {
-            // إظهار إشعار التحديث الأنيق
             document.getElementById('update-toast').classList.add('show');
           }
         });
@@ -768,7 +835,6 @@ function checkForUpdates() {
     .catch(err => console.log('Update check failed (normal if running local/offline):', err));
 }
 
-// خوارزمية مقارنة إصدارات الأكواد (Semantic Versioning comparison)
 function compareVersions(v1, v2) {
   const parts1 = v1.split('.').map(Number);
   const parts2 = v2.split('.').map(Number);

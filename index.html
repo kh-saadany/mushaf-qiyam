@@ -21,6 +21,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&family=Tajawal:wght@300;400;500;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="index.css">
+  <script src="vosk.js"></script>
 </head>
 <body class="dark-theme">
 
@@ -64,17 +65,35 @@
         <!-- قسم التخزين المؤقت أوفلاين -->
         <section class="offline-manager">
           <h3>التشغيل دون اتصال بالإنترنت (Offline)</h3>
-          <p class="section-desc">قم بتحميل صفحات المصحف بالكامل على التابلت لتجنب أي انقطاع بالإنترنت في المسجد.</p>
-          <div class="cache-status-container">
-            <div class="progress-bar-container">
-              <div id="cache-progress-bar" class="progress-bar" style="width: 0%"></div>
+          <p class="section-desc">يرجى تحميل المتطلبات التالية لضمان عمل التطبيق في المحراب دون اتصال بالإنترنت:</p>
+          
+          <!-- تحميل صفحات المصحف -->
+          <div class="download-item">
+            <div class="cache-status-container">
+              <div class="progress-bar-container">
+                <div id="cache-progress-bar" class="progress-bar" style="width: 0%"></div>
+              </div>
+              <div class="cache-info-row">
+                <span id="cache-status-label">صور المصحف غير محملة محلياً</span>
+                <span id="cache-percent-label">0%</span>
+              </div>
             </div>
-            <div class="cache-info-row">
-              <span id="cache-status-label">المصحف غير محمل محلياً</span>
-              <span id="cache-percent-label">0%</span>
-            </div>
+            <button id="btn-download-quran" class="btn btn-accent btn-block btn-sm">تحميل صفحات المصحف (حوالي 85 ميجا)</button>
           </div>
-          <button id="btn-download-quran" class="btn btn-accent btn-block">تحميل صفحات المصحف (حوالي 85 ميجا)</button>
+
+          <!-- تحميل الموديل الصوتي للتعرف -->
+          <div class="download-item" style="margin-top: 16px;">
+            <div class="cache-status-container">
+              <div class="progress-bar-container">
+                <div id="model-progress-bar" class="progress-bar" style="width: 0%"></div>
+              </div>
+              <div class="cache-info-row">
+                <span id="model-status-label">الموديل الصوتي غير محمل محلياً</span>
+                <span id="model-percent-label">0%</span>
+              </div>
+            </div>
+            <button id="btn-download-model" class="btn btn-accent btn-block btn-sm">تحميل الموديل الصوتي أوفلاين (حوالي 45 ميجا)</button>
+          </div>
         </section>
       </main>
 

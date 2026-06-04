@@ -1,11 +1,13 @@
 const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v1';
 const IMAGES_CACHE_NAME = 'mushaf-qiyam-images-v1';
+const MODEL_CACHE_NAME = 'mushaf-qiyam-model-v1';
 
 const ASSETS_TO_CACHE = [
   './',
   'index.html',
   'index.css',
   'app.js',
+  'vosk.js',
   'manifest.json',
   'version.json',
   'quran-pages.json'
@@ -27,7 +29,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== SHELL_CACHE_NAME && cacheName !== IMAGES_CACHE_NAME) {
+          if (cacheName !== SHELL_CACHE_NAME && cacheName !== IMAGES_CACHE_NAME && cacheName !== MODEL_CACHE_NAME) {
             console.log('[Service Worker] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
@@ -41,8 +43,27 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
 
+  // Check if it's a request for the voice model
+  if (requestUrl.host === 'alphacephei.com' && requestUrl.pathname.includes('/vosk/models/')) {
+    event.respondWith(
+      caches.open(MODEL_CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            console.log('[Service Worker] Serving voice model from cache');
+            return cachedResponse;
+          }
+          return fetch(event.request).then((networkResponse) => {
+            if (networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          });
+        });
+      })
+    );
+  }
   // Check if it's a request for Quran page images (raw.githubusercontent.com/GovarJabbar/Quran-PNG)
-  if (requestUrl.host === 'raw.githubusercontent.com' && requestUrl.pathname.includes('/Quran-PNG/')) {
+  else if (requestUrl.host === 'raw.githubusercontent.com' && requestUrl.pathname.includes('/Quran-PNG/')) {
     event.respondWith(
       caches.open(IMAGES_CACHE_NAME).then((cache) => {
         return cache.match(event.request).then((cachedResponse) => {

@@ -291,6 +291,12 @@ select:focus {
   width: 100%;
 }
 
+.btn-sm {
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  border-radius: var(--border-radius-sm);
+}
+
 .btn-primary {
   background-color: var(--btn-primary-bg);
   color: var(--btn-primary-text);

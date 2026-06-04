@@ -43,6 +43,7 @@ const STRIDE_SAMPLES = SAMPLE_RATE * STRIDE_SIZE_SEC;
 let lastMatchedVerse = { surah: 1, ayah: 0 };
 let checkpointVerse = { page: 1, surah: 1, ayah: 0 };
 let rakahCount = 1; // عداد الركعات في الصلاة الحالية
+let spokenHistory = ''; // مخزن الكلمات المنطوقة المتراكم للمطابقة المستمرة
 
 // ثوابت روابط الصور ومعرف الموديل الصوتي
 const IMAGE_BASE_URL = 'https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/';
@@ -301,18 +302,72 @@ function handleSpokenWords(words) {
 }
 
 // خوارزمية تطبيع الحروف العربية (تجريد التشكيل وتوحيد الحروف المتقاربة)
+// تدعم الرسم العثماني للمصحف بالكامل (Unicode Uthmani Script)
 function normalizeArabic(text) {
   if (!text) return '';
   return text
+    // 1. إزالة جميع علامات التشكيل القياسية (فتحة، ضمة، كسرة، شدة، سكون، تنوين)
     .replace(/[\u064B-\u0652]/g, '')
-    .replace(/[\u0615-\u061A\u06D6-\u06E2\u06E4\u06E7\u06E8\u06EA-\u06EC]/g, '')
-    .replace(/[أإآ]/g, 'ا')
+    // 2. إزالة المدة والهمزة الفوقية والتحتية (maddah, hamza above/below)
+    .replace(/[\u0653-\u0655]/g, '')
+    // 3. إزالة الألف الصغيرة الفوقية (superscript alef) وعلامات أخرى
+    .replace(/[\u0656-\u065F\u0670]/g, '')
+    // 4. إزالة علامات التلاوة والوقف القرآنية (Quranic annotation signs)
+    .replace(/[\u0610-\u061A]/g, '')
+    .replace(/[\u06D6-\u06ED]/g, '')
+    // 5. إزالة التطويل (kashida/tatweel)
+    .replace(/\u0640/g, '')
+    // 6. توحيد أشكال الألف: أ إ آ ٱ → ا
+    .replace(/[أإآ\u0671]/g, 'ا')
+    // 7. توحيد الياء والألف المقصورة: ى → ي
     .replace(/ى/g, 'ي')
-    .replace(/ة/g, 'هـ')
-    .replace(/[^\u0600-\u06FF\s]/g, '')
+    // 8. توحيد التاء المربوطة: ة → ه
+    .replace(/ة/g, 'ه')
+    // 9. إزالة رموز الأحزاب والأرباع والسجدات وغيرها (۞ ۩ ﷺ إلخ)
+    .replace(/[\u06DE\u06E9\uFDFA\uFDFB\uFDFC]/g, '')
+    // 10. إزالة أي حرف ليس حرفاً عربياً أساسياً (U+0621-U+064A) أو مسافة
+    .replace(/[^\u0621-\u064A\s]/g, '')
+    // 11. تنظيف المسافات المتكررة
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+// دالة لدمج المقاطع الصوتية المتتالية وتجنب التكرار الناتج عن التداخل (Overlap) في دفق الصوت
+function mergeSpeechTranscripts(existingText, newText) {
+  if (!existingText) return newText.trim();
+  if (!newText) return existingText.trim();
+
+  const words1 = existingText.trim().split(/\s+/);
+  const words2 = newText.trim().split(/\s+/);
+
+  // نبحث عن تداخل بطول أقصى يساوي طول إحدى المجموعتين وبحد أقصى 6 كلمات
+  const maxOverlap = Math.min(words1.length, words2.length, 6);
+
+  for (let k = maxOverlap; k > 0; k--) {
+    const endSlice = words1.slice(-k).join(' ');
+    const startSlice = words2.slice(0, k).join(' ');
+
+    if (normalizeArabic(endSlice) === normalizeArabic(startSlice)) {
+      // تم العثور على تداخل متطابق، نقوم بدمج النصين مع استبعاد الكلمات المكررة
+      return words1.concat(words2.slice(k)).join(' ');
+    }
+  }
+
+  // إذا لم يعثر على أي تداخل، نقوم بإضافة النص الجديد كـ جملة جديدة
+  return existingText + ' ' + newText;
+}
+
+// تحديث مخزن الكلمات المنطوقة مع دمج النتائج الجديدة والتأكد من عدم تضخم الحجم
+function updateSpokenHistory(newText) {
+  spokenHistory = mergeSpeechTranscripts(spokenHistory, newText);
+  
+  // الاحتفاظ بآخر 40 كلمة فقط لضمان سرعة المعالجة واستقرار المطابقة
+  const tokens = spokenHistory.trim().split(/\s+/);
+  if (tokens.length > 40) {
+    spokenHistory = tokens.slice(-40).join(' ');
+  }
+}
+
 
 // التحقق من كشف التكبير ("الله أكبر") للانتقال للركوع
 function detectTakbeer(cleanText) {
@@ -336,67 +391,32 @@ function detectFatiha(cleanText) {
   return fatihaKeywords.some(keyword => cleanText.includes(normalizeArabic(keyword)));
 }
 
-// دالة مساعدة موحدة للبحث عن تطابق في آيات صفحة محددة (تم حل تكرار الكود المكتشف بـ Fallow)
-function searchPageForMatch(pageData, cleanQuery, pageNumber) {
-  let bestMatch = null;
-  pageData.verses.forEach((verse, index) => {
+// البحث عن الآية الأكثر ملاءمة للاستعلام في قائمة الآيات بناءً على عدد الكلمات المشتركة
+function findBestMatchingVerse(verses, cleanQuery) {
+  let bestVerse = null;
+  let maxOverlap = 0;
+  const queryTokens = cleanQuery.split(' ');
+
+  verses.forEach(verse => {
     const cleanVerse = normalizeArabic(verse.text);
-    if (cleanVerse.includes(cleanQuery) || checkSubSequenceMatch(cleanVerse, cleanQuery)) {
-      bestMatch = {
-        verse: verse,
-        index: index,
-        page: pageNumber
-      };
+    let overlap = 0;
+    queryTokens.forEach(word => {
+      if (cleanVerse.includes(word)) {
+        overlap++;
+      }
+    });
+
+    if (overlap > maxOverlap) {
+      maxOverlap = overlap;
+      bestVerse = verse;
     }
   });
-  return bestMatch;
+
+  return bestVerse || verses[0];
 }
 
-// مطابقة التلاوة مع نصوص آيات الصفحة المفتوحة
-function matchRecitationWithQuran(cleanSpoken) {
-  if (!quranDatabase) return;
-
-  const pageData = quranDatabase[currentPage - 1];
-  const nextRawPageData = quranDatabase[currentPage]; // الصفحة التالية
-  
-  if (!pageData) return;
-
-  const spokenTokens = cleanSpoken.split(' ');
-  const queryWordsCount = Math.min(10, spokenTokens.length);
-  const cleanQuery = spokenTokens.slice(-queryWordsCount).join(' ');
-
-  // 1. نبحث أولاً في الصفحة الحالية
-  let bestMatch = searchPageForMatch(pageData, cleanQuery, currentPage);
-  let isNextPageMatch = false;
-
-  // 2. إذا لم نجد مطابقة، نبحث في أول آيتين من الصفحة التالية للتأكد من تقليب الصفحة الذكي
-  if (!bestMatch && nextRawPageData) {
-    const firstTwoVersesData = {
-      verses: nextRawPageData.verses.slice(0, 2)
-    };
-    bestMatch = searchPageForMatch(firstTwoVersesData, cleanQuery, currentPage + 1);
-    if (bestMatch) {
-      isNextPageMatch = true;
-    }
-  }
-
-  // 3. إذا تم العثور على مطابقة موثقة
-  if (bestMatch) {
-    lastMatchedVerse = {
-      surah: bestMatch.verse.surah,
-      ayah: bestMatch.verse.ayah
-    };
-
-    console.log(`Matched: Surah ${bestMatch.verse.surah}, Ayah ${bestMatch.verse.ayah} on page ${bestMatch.page}`);
-
-    if (isNextPageMatch || bestMatch.page > currentPage) {
-      flipPage(bestMatch.page);
-    }
-  }
-}
-
-// خوارزمية مطابقة تسلسلية بسيطة (Sub-sequence match) في حالة سقوط بعض الحروف الصامتة
-function checkSubSequenceMatch(verseText, queryText) {
+// خوارزمية مطابقة تسلسلية مرنة للمقارنة بين التلاوة ونص الصفحة الكامل في حال سقوط بعض الحروف أو تبدلها
+function checkTextSubSequenceMatch(fullText, queryText) {
   const queryTokens = queryText.split(' ');
   if (queryTokens.length < 3) return false;
 
@@ -404,15 +424,90 @@ function checkSubSequenceMatch(verseText, queryText) {
   let matchCount = 0;
 
   for (let word of queryTokens) {
-    const index = verseText.indexOf(word, lastIndex + 1);
+    const index = fullText.indexOf(word, lastIndex + 1);
     if (index > lastIndex) {
-      lastIndex = index;
-      matchCount++;
+      // لضمان تقارب الكلمات المطابقة وعدم قفزها عبر الصفحة بشكل عشوائي
+      if (lastIndex === -1 || (index - lastIndex) < 60) {
+        lastIndex = index;
+        matchCount++;
+      }
     }
   }
 
   return (matchCount / queryTokens.length) >= 0.7;
 }
+
+// مطابقة التلاوة مع نصوص آيات الصفحة المفتوحة والصفحة التالية بشكل متسلسل
+function matchRecitationWithQuran(cleanSpoken) {
+  if (!quranDatabase) return;
+
+  const pageData = quranDatabase[currentPage - 1];
+  const nextPageData = quranDatabase[currentPage]; // الصفحة التالية
+  
+  if (!pageData) return;
+
+  const spokenTokens = cleanSpoken.split(' ');
+  const totalTokens = spokenTokens.length;
+
+  const currentPageText = pageData.verses.map(v => normalizeArabic(v.text)).join(' ');
+  const nextPageText = nextPageData ? nextPageData.verses.map(v => normalizeArabic(v.text)).join(' ') : '';
+
+  let matchedPage = null;
+  let matchedVerse = null;
+
+  // 1. نبحث أولاً في الصفحة الحالية بأطوال استعلام تنازلية من 10 إلى 2
+  const currentQueryLengths = [10, 8, 6, 4, 3, 2];
+  for (let len of currentQueryLengths) {
+    if (totalTokens < len) continue;
+    const cleanQuery = spokenTokens.slice(-len).join(' ');
+
+    if (currentPageText.includes(cleanQuery)) {
+      matchedPage = currentPage;
+      matchedVerse = findBestMatchingVerse(pageData.verses, cleanQuery);
+      break;
+    }
+    if (checkTextSubSequenceMatch(currentPageText, cleanQuery)) {
+      matchedPage = currentPage;
+      matchedVerse = findBestMatchingVerse(pageData.verses, cleanQuery);
+      break;
+    }
+  }
+
+  // 2. إذا لم نجد مطابقة في الصفحة الحالية، نبحث في الصفحة التالية بأطوال من 10 إلى 4 (لتفادي التقلبات الخاطئة)
+  if (!matchedPage && nextPageText) {
+    const nextQueryLengths = [10, 8, 6, 4];
+    for (let len of nextQueryLengths) {
+      if (totalTokens < len) continue;
+      const cleanQuery = spokenTokens.slice(-len).join(' ');
+
+      if (nextPageText.includes(cleanQuery)) {
+        matchedPage = currentPage + 1;
+        matchedVerse = findBestMatchingVerse(nextPageData.verses, cleanQuery);
+        break;
+      }
+      if (checkTextSubSequenceMatch(nextPageText, cleanQuery)) {
+        matchedPage = currentPage + 1;
+        matchedVerse = findBestMatchingVerse(nextPageData.verses, cleanQuery);
+        break;
+      }
+    }
+  }
+
+  // إذا تم العثور على مطابقة موثقة
+  if (matchedPage && matchedVerse) {
+    lastMatchedVerse = {
+      surah: matchedVerse.surah,
+      ayah: matchedVerse.ayah
+    };
+
+    console.log(`Matched (Stream): Surah ${matchedVerse.surah}, Ayah ${matchedVerse.ayah} on page ${matchedPage}`);
+
+    if (matchedPage > currentPage) {
+      flipPage(matchedPage);
+    }
+  }
+}
+
 
 // ==================== دورة حياة الصلاة وإدارة الحالات ==================== //
 
@@ -433,6 +528,7 @@ async function startPrayerSession() {
   isPrayerActive = true;
   prayerState = STATE_WAITING_FATIHA;
   rakahCount = 1;
+  spokenHistory = ''; // إعادة ضبط مخزن الكلمات المنطوقة
   updatePrayerStatusUI();
 
   // إبقاء الشاشة مضيئة
@@ -452,20 +548,28 @@ async function startPrayerSession() {
       nativeRecognizer.interimResults = true;
       
       nativeRecognizer.onresult = (event) => {
-        let interimTranscript = '';
         let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        let interimTranscript = '';
+        for (let i = 0; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
+            finalTranscript += transcript + ' ';
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            interimTranscript += transcript;
           }
         }
-        const text = finalTranscript || interimTranscript;
-        if (text && text.trim().length > 0) {
-          console.log('[Native Speech Result]:', text);
-          document.getElementById('recognized-words').innerText = text;
-          handleSpokenWords(text);
+        const text = (finalTranscript + interimTranscript).trim();
+        if (text.length > 0) {
+          spokenHistory = text; // في وضع أونلاين، المتصفح يتولى التجميع وتصحيح الكلمات تلقائياً
+          
+          // نقتطع آخر 40 كلمة فقط لتفادي تضخم النص
+          const tokens = spokenHistory.split(/\s+/);
+          if (tokens.length > 40) {
+            spokenHistory = tokens.slice(-40).join(' ');
+          }
+          
+          console.log('[Native Speech Full]:', spokenHistory);
+          handleSpokenWords(spokenHistory);
         }
       };
 
@@ -504,7 +608,8 @@ async function startPrayerSession() {
           if (type === 'result') {
             if (isPrayerActive && text && text.trim().length > 0) {
               console.log('[Whisper Result]:', text);
-              handleSpokenWords(text);
+              updateSpokenHistory(text);
+              handleSpokenWords(spokenHistory);
             }
           } else if (type === 'error') {
             console.error('[Whisper Worker Error]:', error);
@@ -617,6 +722,7 @@ function skipRukuState() {
   
   rakahCount++;
   prayerState = STATE_WAITING_FATIHA;
+  spokenHistory = ''; // إعادة ضبط مخزن الكلمات المنطوقة
   updatePrayerStatusUI();
 
   currentPage = checkpointVerse.page;
@@ -629,6 +735,7 @@ function skipRukuState() {
 function stopPrayerSession() {
   isPrayerActive = false;
   prayerState = STATE_IDLE;
+  spokenHistory = ''; // إعادة ضبط مخزن الكلمات المنطوقة
 
   releaseWakeLock();
 
@@ -702,6 +809,7 @@ function flipPage(targetPage) {
   
   setTimeout(() => {
     currentPage = targetPage;
+    spokenHistory = ''; // إعادة ضبط الكلمات المنطوقة عند الانتقال لصفحة جديدة لتفادي المطابقات الخاطئة من الصفحة السابقة
     displayPage(currentPage);
     wrapper.style.transform = 'translateX(30px)';
     
@@ -716,6 +824,7 @@ function flipPage(targetPage) {
 function flipPageManual(direction) {
   const target = currentPage + direction;
   if (target >= 1 && target <= 604) {
+    spokenHistory = ''; // إعادة ضبط الكلمات المنطوقة عند الانتقال اليدوي لتفادي المطابقة القديمة
     if (quranDatabase) {
       const pageData = quranDatabase[target - 1];
       if (pageData && pageData.verses.length > 0) {
@@ -863,21 +972,29 @@ function onDownloadCompleted() {
 function checkOfflineModelStatus() {
   if (!('caches' in window)) return;
 
-  caches.open('transformers-cache').then(cache => {
-    cache.keys().then(keys => {
-      // التحقق من وجود ملفات موديل Whisper في ذاكرة كاش المتصفح المخصصة لـ Transformers.js
-      const isCached = keys.some(request => request.url.includes('whisper-tiny-ar-quran-onnx'));
-      if (isCached) {
-        document.getElementById('model-status-label').innerText = 'الموديل الصوتي محمل بالكامل أوفلاين';
-        document.getElementById('model-percent-label').innerText = '100%';
-        document.getElementById('model-progress-bar').style.width = '100%';
-        document.getElementById('btn-download-model').innerText = 'تحديث الموديل الصوتي المخزن محلياً';
-        isModelCached = true;
-        updateStartButtonState();
-      }
-    });
-  }).catch(err => {
-    console.log('Error opening transformers cache:', err);
+  const checkCache = (cacheName) => {
+    return caches.open(cacheName).then(cache => {
+      return cache.keys().then(keys => {
+        return keys.some(request => request.url.includes('whisper-tiny-ar-quran-onnx'));
+      });
+    }).catch(() => false);
+  };
+
+  Promise.all([
+    checkCache('transformers-cache'),
+    checkCache('mushaf-qiyam-model-v2'),
+    fetch('models/whisper-tiny-ar-quran-onnx/config.json', { method: 'HEAD' })
+      .then(res => res.ok)
+      .catch(() => false)
+  ]).then(([cachedTransformers, cachedSW, localExists]) => {
+    if (cachedTransformers || cachedSW || localExists) {
+      document.getElementById('model-status-label').innerText = 'الموديل الصوتي محمل بالكامل أوفلاين';
+      document.getElementById('model-percent-label').innerText = '100%';
+      document.getElementById('model-progress-bar').style.width = '100%';
+      document.getElementById('btn-download-model').innerText = 'تحديث الموديل الصوتي المخزن محلياً';
+      isModelCached = true;
+      updateStartButtonState();
+    }
   });
 }
 
@@ -997,7 +1114,8 @@ async function downloadVoskModel() {
     } else if (type === 'result') {
       if (isPrayerActive && text && text.trim().length > 0) {
         console.log('[Whisper Result]:', text);
-        handleSpokenWords(text);
+        updateSpokenHistory(text);
+        handleSpokenWords(spokenHistory);
       }
     }
   };

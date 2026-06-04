@@ -8,6 +8,8 @@ const ASSETS_TO_CACHE = [
   'index.css',
   'app.js',
   'whisper-worker.js',
+  'transformers.min.js',
+  'ort-wasm-simd-threaded.jsep.wasm',
   'manifest.json',
   'version.json',
   'quran-pages.json'

@@ -24,16 +24,15 @@ const absoluteModelPath = workerBaseUrl + 'models/';
 console.log('[Whisper Worker] Base URL:', workerBaseUrl);
 console.log('[Whisper Worker] Model path:', absoluteModelPath);
 
-// تحميل مكتبة Transformers.js من شبكة CDN
+// تحميل مكتبة Transformers.js محلياً من ملفات المشروع
 let libraryLoaded = false;
 try {
-  console.log('[Whisper Worker] جاري تحميل مكتبة Transformers.js من CDN...');
-  importScripts('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.1/dist/transformers.min.js');
+  console.log('[Whisper Worker] جاري تحميل مكتبة Transformers.js محلياً...');
+  importScripts('transformers.min.js');
   libraryLoaded = true;
   console.log('[Whisper Worker] تم تحميل مكتبة Transformers.js بنجاح.');
 } catch (err) {
-  console.error('[Whisper Worker] فشل تحميل مكتبة Transformers.js:', err);
-  // سنرسل الخطأ عند أول رسالة واردة
+  console.error('[Whisper Worker] فشل تحميل مكتبة Transformers.js محلياً:', err);
 }
 
 let transcriber = null;
@@ -47,7 +46,7 @@ self.onmessage = async (e) => {
     if (!libraryLoaded || typeof transformers === 'undefined') {
       self.postMessage({
         type: 'error',
-        error: 'فشل تحميل مكتبة التعرف الصوتي (Transformers.js). تحقق من اتصال الإنترنت وأعد المحاولة.'
+        error: 'فشل تحميل مكتبة التعرف الصوتي المحلية (transformers.min.js).'
       });
       return;
     }
@@ -61,7 +60,16 @@ self.onmessage = async (e) => {
       env.localModelPath = absoluteModelPath;
       env.useBrowserCache = true;
 
+      // تكوين مسارات ملفات ONNX Runtime WASM محلياً لتشغيل أوفلاين بالكامل
+      if (env.backends && env.backends.onnx) {
+        env.backends.onnx.wasm.wasmPaths = workerBaseUrl;
+      }
+      if (env.onnx) {
+        env.onnx.wasm.wasmPaths = workerBaseUrl;
+      }
+
       console.log('[Whisper Worker] env.localModelPath =', env.localModelPath);
+      console.log('[Whisper Worker] WASM paths =', workerBaseUrl);
       console.log('[Whisper Worker] جاري تهيئة خط أنابيب الاستماع (Q4)...');
 
       // إرسال رسالة تأكيد بدء التحميل الفعلي

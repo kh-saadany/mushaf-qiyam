@@ -170,6 +170,15 @@ function populateSetupSelectors() {
 
   pageSelect.addEventListener('change', () => {
     currentPage = parseInt(pageSelect.value);
+    
+    // تحديث اختيار السورة تلقائياً لتناسب الصفحة المحددة
+    if (quranDatabase) {
+      const pageData = quranDatabase[currentPage - 1];
+      if (pageData && pageData.verses.length > 0) {
+        const firstVerse = pageData.verses[0];
+        surahSelect.value = firstVerse.surah;
+      }
+    }
   });
 }
 
@@ -626,6 +635,9 @@ async function startPrayerSession() {
       
       // إنشاء سياق الصوت (Audio Context) بتردد 16000Hz المفضل لـ Whisper
       audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
       
       // تفريغ الذاكرة المؤقتة للصوت
       audioBuffer = [];

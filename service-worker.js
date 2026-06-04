@@ -107,55 +107,67 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data && event.data.action === 'cache-images') {
     const urlsToCache = event.data.urls;
-    event.waitUntil(
-      caches.open(IMAGES_CACHE_NAME).then((cache) => {
-        console.log('[Service Worker] Pre-caching Quran Images, count:', urlsToCache.length);
-        
-        // Cache files sequentially or in small chunks to avoid memory issues on tablet
-        let promise = Promise.resolve();
-        const batchSize = 10;
-        
-        for (let i = 0; i < urlsToCache.length; i += batchSize) {
-          const batch = urlsToCache.slice(i, i + batchSize);
-          promise = promise.then(() => {
-            // Report progress back to client
-            const progress = Math.min(100, Math.round((i / urlsToCache.length) * 100));
-            self.clients.matchAll().then((clients) => {
-              clients.forEach((client) => {
-                client.postMessage({
-                  type: 'cache-progress',
-                  progress: progress,
-                  cachedCount: i,
-                  totalCount: urlsToCache.length
-                });
-              });
-            });
+    const sourceClient = event.source;
 
-            return Promise.all(
-              batch.map(url => {
-                return cache.match(url).then(exists => {
-                  if (exists) return Promise.resolve();
-                  return cache.add(url).catch(err => console.error('Failed to cache image:', url, err));
-                });
-              })
-            );
+    const cachePromise = caches.open(IMAGES_CACHE_NAME).then((cache) => {
+      console.log('[Service Worker] Pre-caching Quran Images, count:', urlsToCache.length);
+
+      // Cache files sequentially in small batches to avoid memory issues on tablet
+      let promise = Promise.resolve();
+      const batchSize = 10;
+
+      for (let i = 0; i < urlsToCache.length; i += batchSize) {
+        const batchIndex = i;
+        const batch = urlsToCache.slice(i, i + batchSize);
+        promise = promise.then(() => {
+          // Report progress back to client
+          const progress = Math.min(100, Math.round((batchIndex / urlsToCache.length) * 100));
+          const sendProgress = (client) => client.postMessage({
+            type: 'cache-progress',
+            progress: progress,
+            cachedCount: batchIndex,
+            totalCount: urlsToCache.length
           });
-        }
-        
-        return promise.then(() => {
-          console.log('[Service Worker] Pre-caching Quran Images completed!');
-          self.clients.matchAll().then((clients) => {
-            clients.forEach((client) => {
-              client.postMessage({
-                type: 'cache-completed',
-                progress: 100,
-                cachedCount: urlsToCache.length,
-                totalCount: urlsToCache.length
-              });
+
+          if (sourceClient) {
+            sourceClient.postMessage({
+              type: 'cache-progress',
+              progress: progress,
+              cachedCount: batchIndex,
+              totalCount: urlsToCache.length
             });
-          });
+          }
+          self.clients.matchAll().then((clients) => clients.forEach(sendProgress));
+
+          return Promise.all(
+            batch.map(url => {
+              return cache.match(url).then(exists => {
+                if (exists) return Promise.resolve();
+                return cache.add(url).catch(err => console.error('Failed to cache image:', url, err));
+              });
+            })
+          );
         });
-      })
-    );
+      }
+
+      return promise.then(() => {
+        console.log('[Service Worker] Pre-caching Quran Images completed!');
+        const completedMsg = {
+          type: 'cache-completed',
+          progress: 100,
+          cachedCount: urlsToCache.length,
+          totalCount: urlsToCache.length
+        };
+        if (sourceClient) {
+          sourceClient.postMessage(completedMsg);
+        }
+        self.clients.matchAll().then((clients) => clients.forEach(c => c.postMessage(completedMsg)));
+      });
+    });
+
+    if (event.waitUntil) {
+      event.waitUntil(cachePromise);
+    }
   }
 });
+

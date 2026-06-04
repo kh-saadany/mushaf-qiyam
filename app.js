@@ -113,19 +113,19 @@ function registerServiceWorker() {
     navigator.serviceWorker.register('service-worker.js')
       .then((reg) => {
         console.log('Service Worker registered successfully:', reg.scope);
-        
-        // الاستماع لرسائل التقدم في التحميل أوفلاين من السيرفس وركر (خاص بالصور)
-        navigator.serviceWorker.addEventListener('message', (event) => {
-          if (event.data) {
-            if (event.data.type === 'cache-progress') {
-              updateDownloadUI(event.data.progress, event.data.cachedCount, event.data.totalCount);
-            } else if (event.data.type === 'cache-completed') {
-              onDownloadCompleted();
-            }
-          }
-        });
       })
       .catch((err) => console.error('Service Worker registration failed:', err));
+
+    // الاستماع لرسائل التقدم في التحميل أوفلاين من السيرفس وركر (مستوى الصفحة بالكامل)
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data) {
+        if (event.data.type === 'cache-progress') {
+          updateDownloadUI(event.data.progress, event.data.cachedCount, event.data.totalCount);
+        } else if (event.data.type === 'cache-completed') {
+          onDownloadCompleted();
+        }
+      }
+    });
   }
 }
 
@@ -807,17 +807,39 @@ function downloadAllQuranImages() {
     urlsToCache.push(`${IMAGE_BASE_URL}${threeDigitPage}.png`);
   }
 
-  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({
-      action: 'cache-images',
-      urls: urlsToCache
-    });
-  } else {
-    showStatusMessage('جاري تهيئة خادم التحميل الصامت، يرجى المحاولة بعد قليل.', 'yellow');
-    btn.disabled = false;
-    btn.innerText = 'تحميل صفحات المصحف (حوالي 85 ميجا)';
+  function sendCacheMessage() {
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        action: 'cache-images',
+        urls: urlsToCache
+      });
+      document.getElementById('cache-status-label').innerText = 'جاري تحميل الصور محلياً...';
+    } else if (navigator.serviceWorker) {
+      // الـ Service Worker مسجل لكن لم يتولَّ التحكم بعد، انتظر حتى يصبح جاهزاً
+      navigator.serviceWorker.ready.then((registration) => {
+        // أرسل رسالة إلى الـ SW عبر الـ active worker مباشرة
+        if (registration.active) {
+          registration.active.postMessage({
+            action: 'cache-images',
+            urls: urlsToCache
+          });
+          document.getElementById('cache-status-label').innerText = 'جاري تحميل الصور محلياً...';
+        } else {
+          showStatusMessage('فشل تفعيل خادم التخزين، يرجى إعادة تحميل الصفحة.', 'red');
+          btn.disabled = false;
+          btn.innerText = 'تحميل صفحات المصحف (حوالي 85 ميجا)';
+        }
+      });
+    } else {
+      showStatusMessage('المتصفح لا يدعم التخزين أوفلاين.', 'red');
+      btn.disabled = false;
+      btn.innerText = 'تحميل صفحات المصحف (حوالي 85 ميجا)';
+    }
   }
+
+  sendCacheMessage();
 }
+
 
 function updateDownloadUI(progress, current, total) {
   document.getElementById('cache-status-label').innerText = `جاري تحميل الصور محلياً (${current} من ${total})...`;

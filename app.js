@@ -980,12 +980,16 @@ function checkOfflineModelStatus() {
     }).catch(() => false);
   };
 
+  const isLocalhost = window.location.hostname === 'localhost' || 
+                      window.location.hostname === '127.0.0.1' || 
+                      window.location.protocol === 'file:';
+
   Promise.all([
     checkCache('transformers-cache'),
     checkCache('mushaf-qiyam-model-v2'),
-    fetch('models/whisper-tiny-ar-quran-onnx/config.json', { method: 'HEAD' })
+    isLocalhost ? fetch('models/whisper-tiny-ar-quran-onnx/config.json', { method: 'HEAD' })
       .then(res => res.ok)
-      .catch(() => false)
+      .catch(() => false) : Promise.resolve(false)
   ]).then(([cachedTransformers, cachedSW, localExists]) => {
     if (cachedTransformers || cachedSW || localExists) {
       document.getElementById('model-status-label').innerText = 'الموديل الصوتي محمل بالكامل أوفلاين';
@@ -993,6 +997,13 @@ function checkOfflineModelStatus() {
       document.getElementById('model-progress-bar').style.width = '100%';
       document.getElementById('btn-download-model').innerText = 'تحديث الموديل الصوتي المخزن محلياً';
       isModelCached = true;
+      updateStartButtonState();
+    } else {
+      document.getElementById('model-status-label').innerText = 'الموديل الصوتي غير محمل محلياً';
+      document.getElementById('model-percent-label').innerText = '0%';
+      document.getElementById('model-progress-bar').style.width = '0%';
+      document.getElementById('btn-download-model').innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+      isModelCached = false;
       updateStartButtonState();
     }
   });

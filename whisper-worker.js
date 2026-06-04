@@ -5,7 +5,9 @@ const { pipeline, env } = transformers;
 
 // تكوين التخزين المؤقت المحلي للعمل أوفلاين بالكامل
 env.useWasmCache = true;
-env.allowLocalModels = false;
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
+env.localModelPath = './models/';
 
 let transcriber = null;
 
@@ -15,8 +17,9 @@ self.onmessage = async (e) => {
 
   if (type === 'load') {
     try {
-      console.log('[Whisper Worker] جاري تهيئة خط أنابيب الاستماع...');
-      transcriber = await pipeline('automatic-speech-recognition', 'omartariq612/whisper-tiny-ar-quran-onnx', {
+      console.log('[Whisper Worker] جاري تهيئة خط أنابيب الاستماع المحلي (Q4)...');
+      transcriber = await pipeline('automatic-speech-recognition', 'whisper-tiny-ar-quran-onnx', {
+        dtype: 'q4',
         progress_callback: (data) => {
           if (data.status === 'progress') {
             // إرسال نسب تحميل الملفات الفردية لتحديث شريط التقدم
@@ -32,10 +35,10 @@ self.onmessage = async (e) => {
           }
         }
       });
-      console.log('[Whisper Worker] اكتمل تحميل النموذج بنجاح وهو جاهز للاستخدام.');
+      console.log('[Whisper Worker] اكتمل تحميل النموذج المحلي بنجاح وهو جاهز للاستخدام.');
       self.postMessage({ type: 'ready' });
     } catch (err) {
-      console.error('[Whisper Worker] فشل تحميل الموديل الصوتي:', err);
+      console.error('[Whisper Worker] فشل تحميل الموديل الصوتي المحلي:', err);
       self.postMessage({ type: 'error', error: err.message });
     }
   } else if (type === 'transcribe') {

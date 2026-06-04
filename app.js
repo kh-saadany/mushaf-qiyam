@@ -45,7 +45,7 @@ let checkpointVerse = { page: 1, surah: 1, ayah: 0 };
 let rakahCount = 1; // عداد الركعات في الصلاة الحالية
 
 // ثوابت روابط الصور ومعرف الموديل الصوتي
-const IMAGE_BASE_URL = 'https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/png/';
+const IMAGE_BASE_URL = 'https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/';
 const MODEL_URL = 'omartariq612/whisper-tiny-ar-quran-onnx';
 
 // ==================== التهيئة عند التشغيل الأول ==================== //
@@ -673,7 +673,7 @@ function displayPage(pageNum) {
   
   const imgElement = document.getElementById('mushaf-image');
   const threeDigitPage = String(pageNum).padStart(3, '0');
-  const imageUrl = `${IMAGE_BASE_URL}${threeDigitPage.slice(0,1)}/${threeDigitPage}.png`;
+  const imageUrl = `${IMAGE_BASE_URL}${threeDigitPage}.png`;
 
   imgElement.src = imageUrl;
   document.getElementById('current-page-num').innerText = `صفحة ${pageNum}`;
@@ -689,7 +689,7 @@ function displayPage(pageNum) {
   if (pageNum < 604) {
     const nextThreeDigit = String(pageNum + 1).padStart(3, '0');
     const nextImg = new Image();
-    nextImg.src = `${IMAGE_BASE_URL}${nextThreeDigit.slice(0,1)}/${nextThreeDigit}.png`;
+    nextImg.src = `${IMAGE_BASE_URL}${nextThreeDigit}.png`;
   }
 }
 
@@ -804,7 +804,7 @@ function downloadAllQuranImages() {
   const urlsToCache = [];
   for (let i = 1; i <= 604; i++) {
     const threeDigitPage = String(i).padStart(3, '0');
-    urlsToCache.push(`${IMAGE_BASE_URL}${threeDigitPage.slice(0,1)}/${threeDigitPage}.png`);
+    urlsToCache.push(`${IMAGE_BASE_URL}${threeDigitPage}.png`);
   }
 
   if (navigator.serviceWorker && navigator.serviceWorker.controller) {

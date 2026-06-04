@@ -1,6 +1,6 @@
-const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v1';
+const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v2';
 const IMAGES_CACHE_NAME = 'mushaf-qiyam-images-v1';
-const MODEL_CACHE_NAME = 'mushaf-qiyam-model-v1';
+const MODEL_CACHE_NAME = 'mushaf-qiyam-model-v2';
 
 const ASSETS_TO_CACHE = [
   './',
@@ -51,6 +51,25 @@ self.addEventListener('fetch', (event) => {
           if (cachedResponse) {
             return cachedResponse;
           }
+          return fetch(event.request).then((networkResponse) => {
+            if (networkResponse.status === 200) {
+              cache.put(event.request, networkResponse.clone());
+            }
+            return networkResponse;
+          });
+        });
+      })
+    );
+  }
+  // Check if it's a request for the local model files
+  else if (requestUrl.pathname.includes('/models/')) {
+    event.respondWith(
+      caches.open(MODEL_CACHE_NAME).then((cache) => {
+        return cache.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          // Fetch from network and cache (Cache-First strategy)
           return fetch(event.request).then((networkResponse) => {
             if (networkResponse.status === 200) {
               cache.put(event.request, networkResponse.clone());

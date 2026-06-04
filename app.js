@@ -887,25 +887,71 @@ async function downloadVoskModel() {
   
   const btn = document.getElementById('btn-download-model');
   btn.disabled = true;
-  btn.innerText = 'جاري الاتصال بخادم الصوت...';
+  btn.innerText = 'جاري تحميل مكتبة الصوت...';
   
-  document.getElementById('model-status-label').innerText = 'جاري الاتصال بخادم تحميل الموديل...';
+  document.getElementById('model-status-label').innerText = 'جاري تحميل مكتبة التعرف الصوتي...';
   document.getElementById('model-percent-label').innerText = '0%';
   document.getElementById('model-progress-bar').style.width = '0%';
 
   isModelLoading = true;
 
-  // تهيئة الـ Web Worker
-  if (!whisperWorker) {
-    whisperWorker = new Worker('whisper-worker.js');
+  // تهيئة الـ Web Worker (إعادة إنشائه في كل مرة لتجنب حالة معطوبة)
+  if (whisperWorker) {
+    whisperWorker.terminate();
+    whisperWorker = null;
   }
+  
+  whisperWorker = new Worker('whisper-worker.js');
 
   const fileProgress = {};
+  
+  // مؤقت للكشف عن توقف الخيط الخلفي بالكامل (30 ثانية بدون أي رسالة)
+  let workerTimeout = setTimeout(() => {
+    if (isModelLoading) {
+      isModelLoading = false;
+      btn.disabled = false;
+      btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+      document.getElementById('model-status-label').innerText = 'انقطع الاتصال بخيط المعالجة. أعد المحاولة.';
+      showStatusMessage('فشل الاتصال بخيط المعالجة الصوتي. حاول مرة أخرى.', 'red');
+    }
+  }, 30000);
+
+  // التقاط أخطاء الخيط الخلفي الصامتة
+  whisperWorker.onerror = (event) => {
+    clearTimeout(workerTimeout);
+    isModelLoading = false;
+    btn.disabled = false;
+    btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+    
+    const errorMsg = event.message || 'خطأ غير معروف في خيط المعالجة';
+    document.getElementById('model-status-label').innerText = `خطأ: ${errorMsg}`;
+    showStatusMessage(`فشل خيط المعالجة الصوتي: ${errorMsg}`, 'red');
+    console.error('[Worker Error Event]', event);
+  };
 
   whisperWorker.onmessage = (e) => {
     const { type, file, progress, loaded, total, error, text } = e.data;
+    
+    // إعادة ضبط المؤقت مع كل رسالة واردة (الخيط الخلفي لا يزال حياً)
+    clearTimeout(workerTimeout);
+    workerTimeout = setTimeout(() => {
+      if (isModelLoading) {
+        isModelLoading = false;
+        btn.disabled = false;
+        btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+        document.getElementById('model-status-label').innerText = 'توقف التحميل. أعد المحاولة.';
+        showStatusMessage('توقف تحميل الموديل الصوتي. حاول مرة أخرى.', 'red');
+      }
+    }, 60000); // 60 ثانية أثناء التحميل الفعلي
 
-    if (type === 'progress') {
+    if (type === 'loading_started') {
+      document.getElementById('model-status-label').innerText = 'بدأ تحميل ملفات الموديل الصوتي...';
+      btn.innerText = 'جاري تحميل الموديل...';
+      
+    } else if (type === 'file_initiate') {
+      document.getElementById('model-status-label').innerText = `جاري تحميل: ${file || 'ملف'}...`;
+      
+    } else if (type === 'progress') {
       fileProgress[file] = { loaded, total };
       
       // حساب إجمالي نسبة التحمل الفعلي
@@ -925,6 +971,7 @@ async function downloadVoskModel() {
       document.getElementById('model-progress-bar').style.width = `${pct}%`;
       
     } else if (type === 'ready') {
+      clearTimeout(workerTimeout);
       isModelLoading = false;
       isModelCached = true;
       
@@ -939,11 +986,13 @@ async function downloadVoskModel() {
       showStatusMessage('تم تحميل الموديل الصوتي محلياً وجاهز للتشغيل بالمسجد!', 'green');
       
     } else if (type === 'error') {
+      clearTimeout(workerTimeout);
       isModelLoading = false;
       btn.disabled = false;
       btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
-      document.getElementById('model-status-label').innerText = 'فشل التحميل، يرجى التحقق من اتصال الإنترنت.';
-      showStatusMessage('فشل تحميل الموديل الصوتي، يرجى المحاولة لاحقاً.', 'red');
+      document.getElementById('model-status-label').innerText = `خطأ: ${error}`;
+      showStatusMessage(`فشل تحميل الموديل الصوتي: ${error}`, 'red');
+      console.error('[Whisper Model Error]', error);
       
     } else if (type === 'result') {
       if (isPrayerActive && text && text.trim().length > 0) {

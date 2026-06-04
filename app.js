@@ -19,24 +19,34 @@ let isPrayerActive = false;
 let prayerState = STATE_IDLE;
 let wakeLock = null;
 
-// متغيرات محرك صوت Vosk-browser
-let voskModel = null;
-let voskRecognizer = null;
+// متغيرات محرك الصوت (أونلاين وأوفلاين)
+let whisperWorker = null;
+let nativeRecognizer = null;
+let isOfflineMode = false;
+let isModelCached = false;
+let isModelLoading = false;
 let audioContext = null;
 let mediaStream = null;
 let audioSource = null;
 let audioProcessor = null;
 let isMicGranted = false;
-let isModelCached = false;
+
+// ذاكرة مؤقتة لمعالجة دفق الصوت في وضع أوفلاين (Sliding Window)
+let audioBuffer = [];
+const SAMPLE_RATE = 16000;
+const WINDOW_SIZE_SEC = 4;
+const STRIDE_SIZE_SEC = 2;
+const MAX_BUFFER_SAMPLES = SAMPLE_RATE * WINDOW_SIZE_SEC;
+const STRIDE_SAMPLES = SAMPLE_RATE * STRIDE_SIZE_SEC;
 
 // علامات تتبع الوقوف والركعات
 let lastMatchedVerse = { surah: 1, ayah: 0 };
 let checkpointVerse = { page: 1, surah: 1, ayah: 0 };
 let rakahCount = 1; // عداد الركعات في الصلاة الحالية
 
-// ثوابت روابط الصور والموديل الصوتي
+// ثوابت روابط الصور ومعرف الموديل الصوتي
 const IMAGE_BASE_URL = 'https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/png/';
-const MODEL_URL = 'https://alphacephei.com/vosk/models/vosk-model-ar-mgb2-0.4.zip';
+const MODEL_URL = 'omartariq612/whisper-tiny-ar-quran-onnx';
 
 // ==================== التهيئة عند التشغيل الأول ==================== //
 document.addEventListener('DOMContentLoaded', () => {
@@ -57,6 +67,30 @@ async function initApp() {
     
     // 4. التحقق من حالة تخزين الموديل الصوتي أوفلاين
     checkOfflineModelStatus();
+
+    // تهيئة اختيار وضع التعرف الصوتي (أونلاين/أوفلاين)
+    const savedMode = localStorage.getItem('mushaf-prayer-mode') || 'online';
+    isOfflineMode = (savedMode === 'offline');
+    const modeSelect = document.getElementById('prayer-mode');
+    if (modeSelect) {
+      modeSelect.value = savedMode;
+      modeSelect.addEventListener('change', (e) => {
+        isOfflineMode = (e.target.value === 'offline');
+        localStorage.setItem('mushaf-prayer-mode', e.target.value);
+        updateStartButtonState();
+        
+        // إخفاء/إظهار خيار تحميل الموديل الصوتي في شاشة الإعداد بناءً على الخيار
+        const downloadContainer = document.getElementById('voice-model-download-container');
+        if (downloadContainer) {
+          downloadContainer.style.display = isOfflineMode ? 'block' : 'none';
+        }
+      });
+      
+      const downloadContainer = document.getElementById('voice-model-download-container');
+      if (downloadContainer) {
+        downloadContainer.style.display = isOfflineMode ? 'block' : 'none';
+      }
+    }
     
     // 5. ربط أحداث أزرار وعناصر الواجهة
     setupEventListeners();
@@ -223,10 +257,15 @@ function requestMicrophonePermission() {
     });
 }
 
-// تحديث إمكانية بدء الصلاة (الميكروفون + الموديل الصوتي يجب توفرهما)
+// تحديث إمكانية بدء الصلاة (الميكروفون + الموديل الصوتي عند الحاجة)
 function updateStartButtonState() {
   const startBtn = document.getElementById('btn-start-prayer');
-  startBtn.disabled = !(isMicGranted && isModelCached);
+  if (isOfflineMode) {
+    startBtn.disabled = !(isMicGranted && isModelCached);
+  } else {
+    // الوضع أونلاين: يتطلب الميكروفون فقط
+    startBtn.disabled = !isMicGranted;
+  }
 }
 
 // تحديث مؤشر الصوت البصري
@@ -377,12 +416,12 @@ function checkSubSequenceMatch(verseText, queryText) {
 
 // ==================== دورة حياة الصلاة وإدارة الحالات ==================== //
 
-// بدء الصلاة وتهيئة Vosk-browser أوفلاين
+// بدء الصلاة وتهيئة محرك الصوت (أونلاين أو أوفلاين)
 async function startPrayerSession() {
   if (isPrayerActive) return;
 
   const statusToastText = document.getElementById('recognized-words');
-  statusToastText.innerText = 'جاري تهيئة محرك الصوت المحلي...';
+  statusToastText.innerText = 'جاري تهيئة محرك الصوت...';
 
   // الانتقال لشاشة الصلاة
   document.getElementById('setup-screen').classList.remove('active');
@@ -399,62 +438,144 @@ async function startPrayerSession() {
   // إبقاء الشاشة مضيئة
   requestWakeLock();
 
-  try {
-    // تحميل الموديل الصوتي من الكاش/المستند المحلي
-    if (!voskModel) {
-      console.log('[Vosk] Loading model from cached URL:', MODEL_URL);
-      voskModel = await Vosk.createModel(MODEL_URL);
+  if (!isOfflineMode) {
+    // ------------------ وضع التشغيل أونلاين (Native Web Speech API) ------------------
+    try {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        throw new Error('التعرف الصوتي للمتصفح غير مدعوم في هذا الجهاز.');
+      }
+      
+      nativeRecognizer = new SpeechRecognition();
+      nativeRecognizer.lang = 'ar-EG';
+      nativeRecognizer.continuous = true;
+      nativeRecognizer.interimResults = true;
+      
+      nativeRecognizer.onresult = (event) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+        const text = finalTranscript || interimTranscript;
+        if (text && text.trim().length > 0) {
+          console.log('[Native Speech Result]:', text);
+          document.getElementById('recognized-words').innerText = text;
+          handleSpokenWords(text);
+        }
+      };
+
+      nativeRecognizer.onerror = (event) => {
+        console.error('[Native Speech Error]:', event.error);
+        if (event.error === 'no-speech') return;
+        statusToastText.innerText = 'تنبيه: ' + event.error;
+      };
+
+      nativeRecognizer.onend = () => {
+        if (isPrayerActive && nativeRecognizer) {
+          console.log('[Native Speech] Restarting Speech Recognition...');
+          try { nativeRecognizer.start(); } catch (err) { console.log(err); }
+        }
+      };
+
+      nativeRecognizer.start();
+      updateAudioIndicator(true);
+      statusToastText.innerText = 'بانتظار قراءة الفاتحة (وضع أونلاين)...';
+      console.log('[Native Speech] Listening started successfully');
+
+    } catch (error) {
+      console.error('[Native Speech] Initialization error:', error);
+      statusToastText.innerText = 'فشل تشغيل التعرف الصوتي أونلاين. اضغط خروج لإعادة التهيئة.';
+      updateAudioIndicator(false);
     }
-
-    // تهيئة مسجل الصوت ومجرى الميكروفون
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    
-    // إنشاء سياق الصوت (Audio Context) بتردد 16000Hz (المفضل لـ Vosk)
-    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    
-    // إنشاء المستمع
-    voskRecognizer = new voskModel.KaldiRecognizer(16000);
-    
-    // ربط أحداث التعرف الصوتي لـ Vosk
-    voskRecognizer.on('result', (message) => {
-      const text = message.result.text;
-      if (text && text.trim().length > 0) {
-        console.log('[Vosk Final Result]:', text);
-        handleSpokenWords(text);
+  } else {
+    // ------------------ وضع التشغيل أوفلاين (Whisper WASM Worker) ------------------
+    try {
+      if (!whisperWorker) {
+        // تهيئة الـ Web Worker
+        whisperWorker = new Worker('whisper-worker.js');
+        
+        whisperWorker.onmessage = (e) => {
+          const { type, text, error } = e.data;
+          if (type === 'result') {
+            if (isPrayerActive && text && text.trim().length > 0) {
+              console.log('[Whisper Result]:', text);
+              handleSpokenWords(text);
+            }
+          } else if (type === 'error') {
+            console.error('[Whisper Worker Error]:', error);
+            statusToastText.innerText = 'خطأ في المحرك: ' + error;
+          }
+        };
       }
-    });
 
-    voskRecognizer.on('partialresult', (message) => {
-      const partialText = message.result.partial;
-      if (partialText && partialText.trim().length > 0) {
-        // تحديث النص اللحظي على الشاشة فوراً لمساندة الإمام بصرياً
-        document.getElementById('recognized-words').innerText = partialText;
-        handleSpokenWords(partialText);
-      }
-    });
+      // إرسال رسالة تحميل احتياطية لضمان تنشيط النموذج في الـ Worker
+      whisperWorker.postMessage({ type: 'load' });
 
-    // ربط خط الأنابيب الصوتي (Audio Pipeline)
-    audioSource = audioContext.createMediaStreamSource(mediaStream);
-    audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-    
-    audioProcessor.onaudioprocess = (event) => {
-      if (isPrayerActive && prayerState !== STATE_RUKU) {
-        const floatData = event.inputBuffer.getChannelData(0);
-        voskRecognizer.acceptWaveform(floatData);
-      }
-    };
+      // تهيئة مسجل الصوت ومجرى الميكروفون
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      
+      // إنشاء سياق الصوت (Audio Context) بتردد 16000Hz المفضل لـ Whisper
+      audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      
+      // تفريغ الذاكرة المؤقتة للصوت
+      audioBuffer = [];
 
-    audioSource.connect(audioProcessor);
-    audioProcessor.connect(audioContext.destination);
+      audioSource = audioContext.createMediaStreamSource(mediaStream);
+      audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+      
+      audioProcessor.onaudioprocess = (event) => {
+        if (isPrayerActive && prayerState !== STATE_RUKU) {
+          const floatData = event.inputBuffer.getChannelData(0);
+          
+          // دفع العينات لجدول التخزين المؤقت
+          for (let i = 0; i < floatData.length; i++) {
+            audioBuffer.push(floatData[i]);
+          }
 
-    updateAudioIndicator(true);
-    statusToastText.innerText = 'بانتظار قراءة الفاتحة...';
-    console.log('[Vosk] Listening initialized successfully');
+          // معالجة البيانات عند امتلاء النافذة المنزلقة (Sliding Window)
+          if (audioBuffer.length >= MAX_BUFFER_SAMPLES) {
+            const windowSamples = new Float32Array(audioBuffer);
+            
+            // تطبيق فحص الصوت البسيط (Simple RMS-based VAD) لتوفير البطارية
+            let sum = 0;
+            for (let i = 0; i < windowSamples.length; i++) {
+              sum += windowSamples[i] * windowSamples[i];
+            }
+            const rms = Math.sqrt(sum / windowSamples.length);
+            const VAD_THRESHOLD = 0.008; // حد الحساسية الصامتة
 
-  } catch (error) {
-    console.error('[Vosk] Initialization error:', error);
-    statusToastText.innerText = 'فشل تشغيل الصوت المحلي. اضغط خروج لإعادة التهيئة.';
-    updateAudioIndicator(false);
+            if (rms >= VAD_THRESHOLD) {
+              if (whisperWorker) {
+                // إرسال عينات الصوت للـ Web Worker لمعالجتها بالخلفية
+                whisperWorker.postMessage({ type: 'transcribe', audio: windowSamples });
+              }
+            } else {
+              console.log(`[VAD] صمت أو ضوضاء ضعيفة (RMS: ${rms.toFixed(5)}). تخطي المعالجة.`);
+            }
+
+            // إزاحة النافذة المنزلقة (Slide Window)
+            audioBuffer = audioBuffer.slice(STRIDE_SAMPLES);
+          }
+        }
+      };
+
+      audioSource.connect(audioProcessor);
+      audioProcessor.connect(audioContext.destination);
+
+      updateAudioIndicator(true);
+      statusToastText.innerText = 'بانتظار قراءة الفاتحة (وضع أوفلاين)...';
+      console.log('[Whisper WASM] Listening initialized successfully');
+
+    } catch (error) {
+      console.error('[Whisper WASM] Initialization error:', error);
+      statusToastText.innerText = 'فشل تشغيل الصوت أوفلاين. اضغط خروج لإعادة التهيئة.';
+      updateAudioIndicator(false);
+    }
   }
 }
 
@@ -529,10 +650,12 @@ function stopPrayerSession() {
       mediaStream.getTracks().forEach(track => track.stop());
       mediaStream = null;
     }
-    if (voskRecognizer) {
-      voskRecognizer.remove();
-      voskRecognizer = null;
+    if (nativeRecognizer) {
+      nativeRecognizer.onend = null;
+      nativeRecognizer.stop();
+      nativeRecognizer = null;
     }
+    audioBuffer = [];
   } catch (e) {
     console.error('Error stopping audio tracks:', e);
   }
@@ -718,9 +841,11 @@ function onDownloadCompleted() {
 function checkOfflineModelStatus() {
   if (!('caches' in window)) return;
 
-  caches.open('mushaf-qiyam-model-v1').then(cache => {
-    cache.match(MODEL_URL).then(response => {
-      if (response) {
+  caches.open('transformers-cache').then(cache => {
+    cache.keys().then(keys => {
+      // التحقق من وجود ملفات موديل Whisper في ذاكرة كاش المتصفح المخصصة لـ Transformers.js
+      const isCached = keys.some(request => request.url.includes('whisper-tiny-ar-quran-onnx'));
+      if (isCached) {
         document.getElementById('model-status-label').innerText = 'الموديل الصوتي محمل بالكامل أوفلاين';
         document.getElementById('model-percent-label').innerText = '100%';
         document.getElementById('model-progress-bar').style.width = '100%';
@@ -729,11 +854,15 @@ function checkOfflineModelStatus() {
         updateStartButtonState();
       }
     });
+  }).catch(err => {
+    console.log('Error opening transformers cache:', err);
   });
 }
 
-// تحميل الموديل الصوتي مع إشهار شريط التقدم الفعلي (Fetch Progress Stream)
+// تحميل الموديل الصوتي وتخزينه عبر خيط المعالجة الخلفي (Transformers.js)
 async function downloadVoskModel() {
+  if (isModelLoading) return;
+  
   const btn = document.getElementById('btn-download-model');
   btn.disabled = true;
   btn.innerText = 'جاري الاتصال بخادم الصوت...';
@@ -742,78 +871,68 @@ async function downloadVoskModel() {
   document.getElementById('model-percent-label').innerText = '0%';
   document.getElementById('model-progress-bar').style.width = '0%';
 
-  try {
-    const response = await fetch(MODEL_URL);
-    if (!response.ok) throw new Error('Network response was not ok');
+  isModelLoading = true;
 
-    const contentLength = response.headers.get('content-length');
-    if (!contentLength) {
-      throw new Error('Content-Length response header is missing');
-    }
-    const totalBytes = parseInt(contentLength, 10);
-    let loadedBytes = 0;
-
-    const reader = response.body.getReader();
-    const chunks = [];
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      loadedBytes += value.length;
-      
-      const progress = Math.min(100, Math.round((loadedBytes / totalBytes) * 100));
-      updateModelDownloadUI(progress, loadedBytes, totalBytes);
-    }
-
-    console.log('[Vosk Model] Assembly response chunks...');
-    const modelBlob = new Blob(chunks);
-    const cachedResponse = new Response(modelBlob, {
-      status: 200,
-      statusText: 'OK',
-      headers: { 
-        'Content-Type': 'application/zip',
-        'Content-Length': modelBlob.size.toString()
-      }
-    });
-
-    console.log('[Vosk Model] Saving model to mushaf-qiyam-model-v1 cache...');
-    const modelCache = await caches.open('mushaf-qiyam-model-v1');
-    await modelCache.put(MODEL_URL, cachedResponse);
-
-    onModelDownloadCompleted();
-
-  } catch (error) {
-    console.error('Error downloading Vosk model:', error);
-    btn.disabled = false;
-    btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 318 ميجا)';
-    document.getElementById('model-status-label').innerText = 'فشل التحميل، يرجى التحقق من اتصال الإنترنت.';
-    showStatusMessage('فشل تحميل الموديل الصوتي، يرجى المحاولة لاحقاً.', 'red');
+  // تهيئة الـ Web Worker
+  if (!whisperWorker) {
+    whisperWorker = new Worker('whisper-worker.js');
   }
-}
 
-function updateModelDownloadUI(progress, loaded, total) {
-  const currentMB = (loaded / (1024 * 1024)).toFixed(1);
-  const totalMB = (total / (1024 * 1024)).toFixed(1);
-  
-  document.getElementById('model-status-label').innerText = `جاري تحميل الموديل الصوتي (${currentMB}MB من ${totalMB}MB)...`;
-  document.getElementById('model-percent-label').innerText = `${progress}%`;
-  document.getElementById('model-progress-bar').style.width = `${progress}%`;
-}
+  const fileProgress = {};
 
-function onModelDownloadCompleted() {
-  document.getElementById('model-status-label').innerText = 'اكتمل تحميل الموديل الصوتي أوفلاين!';
-  document.getElementById('model-percent-label').innerText = '100%';
-  document.getElementById('model-progress-bar').style.width = '100%';
-  
-  const btn = document.getElementById('btn-download-model');
-  btn.disabled = false;
-  btn.innerText = 'تحديث الموديل الصوتي المخزن محلياً';
-  
-  isModelCached = true;
-  updateStartButtonState();
-  
-  showStatusMessage('تم تحميل الموديل الصوتي محلياً وجاهز للتشغيل بالمسجد!', 'green');
+  whisperWorker.onmessage = (e) => {
+    const { type, file, progress, loaded, total, error, text } = e.data;
+
+    if (type === 'progress') {
+      fileProgress[file] = { loaded, total };
+      
+      // حساب إجمالي نسبة التحمل الفعلي
+      let totalLoaded = 0;
+      let totalBytes = 0;
+      for (const f in fileProgress) {
+        totalLoaded += fileProgress[f].loaded;
+        totalBytes += fileProgress[f].total || fileProgress[f].loaded;
+      }
+      
+      const pct = totalBytes > 0 ? Math.min(99, Math.round((totalLoaded / totalBytes) * 100)) : 0;
+      const loadedMB = (totalLoaded / (1024 * 1024)).toFixed(1);
+      const totalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) : '75.0';
+      
+      document.getElementById('model-status-label').innerText = `جاري تحميل الموديل الصوتي (${loadedMB}MB من ${totalMB}MB)...`;
+      document.getElementById('model-percent-label').innerText = `${pct}%`;
+      document.getElementById('model-progress-bar').style.width = `${pct}%`;
+      
+    } else if (type === 'ready') {
+      isModelLoading = false;
+      isModelCached = true;
+      
+      document.getElementById('model-status-label').innerText = 'اكتمل تحميل الموديل الصوتي أوفلاين!';
+      document.getElementById('model-percent-label').innerText = '100%';
+      document.getElementById('model-progress-bar').style.width = '100%';
+      
+      btn.disabled = false;
+      btn.innerText = 'تحديث الموديل الصوتي المخزن محلياً';
+      
+      updateStartButtonState();
+      showStatusMessage('تم تحميل الموديل الصوتي محلياً وجاهز للتشغيل بالمسجد!', 'green');
+      
+    } else if (type === 'error') {
+      isModelLoading = false;
+      btn.disabled = false;
+      btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+      document.getElementById('model-status-label').innerText = 'فشل التحميل، يرجى التحقق من اتصال الإنترنت.';
+      showStatusMessage('فشل تحميل الموديل الصوتي، يرجى المحاولة لاحقاً.', 'red');
+      
+    } else if (type === 'result') {
+      if (isPrayerActive && text && text.trim().length > 0) {
+        console.log('[Whisper Result]:', text);
+        handleSpokenWords(text);
+      }
+    }
+  };
+
+  // إرسال رسالة البدء في تحميل الموديل للخلفية
+  whisperWorker.postMessage({ type: 'load' });
 }
 
 // ==================== إدارة التحديثات التلقائية (GitHub Auto Update) ==================== //

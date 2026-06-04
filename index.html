@@ -21,7 +21,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&family=Tajawal:wght@300;400;500;700&display=swap" rel="stylesheet">
 
   <link rel="stylesheet" href="index.css">
-  <script src="vosk.js"></script>
 </head>
 <body class="dark-theme">
 
@@ -62,6 +61,15 @@
           <span class="icon">🕌</span> ابدأ الصلاة الآن
         </button>
 
+        <!-- اختيار وضع التعرف الصوتي (أونلاين/أوفلاين) -->
+        <section class="mode-selector" style="margin-top: 20px; margin-bottom: 20px;">
+          <label for="prayer-mode" style="display: block; font-weight: bold; margin-bottom: 8px; font-size: 0.95rem; text-align: right;">وضع التعرف الصوتي:</label>
+          <select id="prayer-mode" style="width: 100%; padding: 10px; border-radius: var(--border-radius-sm); border: 1px solid var(--bg-card-border); background-color: var(--bg-input); color: var(--text-main); font-size: 0.95rem; font-family: var(--font-main); outline: none; cursor: pointer;">
+            <option value="online">أونلاين (سريع وتلقائي - بدون تنزيل ملفات)</option>
+            <option value="offline">أوفلاين (VAD + Whisper - يحتاج تنزيل 75MB)</option>
+          </select>
+        </section>
+
         <!-- قسم التخزين المؤقت أوفلاين -->
         <section class="offline-manager">
           <h3>التشغيل دون اتصال بالإنترنت (Offline)</h3>
@@ -82,7 +90,7 @@
           </div>
 
           <!-- تحميل الموديل الصوتي للتعرف -->
-          <div class="download-item" style="margin-top: 16px;">
+          <div class="download-item" id="voice-model-download-container" style="margin-top: 16px;">
             <div class="cache-status-container">
               <div class="progress-bar-container">
                 <div id="model-progress-bar" class="progress-bar" style="width: 0%"></div>
@@ -92,7 +100,7 @@
                 <span id="model-percent-label">0%</span>
               </div>
             </div>
-            <button id="btn-download-model" class="btn btn-accent btn-block btn-sm">تحميل الموديل الصوتي أوفلاين (حوالي 318 ميجا)</button>
+            <button id="btn-download-model" class="btn btn-accent btn-block btn-sm">تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)</button>
           </div>
         </section>
       </main>

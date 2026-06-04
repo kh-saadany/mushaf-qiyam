@@ -7,7 +7,7 @@ const ASSETS_TO_CACHE = [
   'index.html',
   'index.css',
   'app.js',
-  'vosk.js',
+  'whisper-worker.js',
   'manifest.json',
   'version.json',
   'quran-pages.json'
@@ -43,13 +43,12 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
 
-  // Check if it's a request for the voice model
-  if (requestUrl.host === 'alphacephei.com' && requestUrl.pathname.includes('/vosk/models/')) {
+  // Check if it's a request for jsdelivr (Transformers.js and ONNX Runtime WASM runtime)
+  if (requestUrl.host === 'cdn.jsdelivr.net') {
     event.respondWith(
-      caches.open(MODEL_CACHE_NAME).then((cache) => {
+      caches.open(SHELL_CACHE_NAME).then((cache) => {
         return cache.match(event.request).then((cachedResponse) => {
           if (cachedResponse) {
-            console.log('[Service Worker] Serving voice model from cache');
             return cachedResponse;
           }
           return fetch(event.request).then((networkResponse) => {

@@ -27,7 +27,8 @@
   <!-- ==================== شاشة الإعداد والتهيئة ==================== -->
   <div id="setup-screen" class="screen active">
     <div class="glass-card">
-      <header class="app-header">
+      <header class="app-header" style="position: relative;">
+        <button id="btn-reload-app" class="btn-icon" style="position: absolute; left: 0; top: 0; font-size: 1.25rem; opacity: 0.6; color: var(--text-muted);" title="إعادة تحميل التطبيق">🔄</button>
         <div class="logo-icon">📖</div>
         <h1>مصحَف القيام</h1>
         <p class="subtitle">المساعد الذكي لتتبع التلاوة وتقليب الصفحات آلياً</p>
@@ -157,6 +158,7 @@
       </div>
       <div class="status-left">
         <span class="page-number" id="current-page-num">صفحة ٢</span>
+        <button id="btn-reload-prayer" class="btn-icon" title="إعادة تحميل التطبيق">🔄</button>
         <button id="btn-theme-toggle" class="btn-icon" title="تغيير المظهر">🌓</button>
       </div>
     </header>

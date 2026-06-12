@@ -198,6 +198,16 @@ function setupEventListeners() {
   document.getElementById('btn-theme-toggle').addEventListener('click', toggleTheme);
   document.getElementById('btn-skip-ruku').addEventListener('click', skipRukuState);
 
+  // أزرار إعادة تحميل التطبيق
+  const reloadAppBtn = document.getElementById('btn-reload-app');
+  if (reloadAppBtn) {
+    reloadAppBtn.addEventListener('click', () => window.location.reload());
+  }
+  const reloadPrayerBtn = document.getElementById('btn-reload-prayer');
+  if (reloadPrayerBtn) {
+    reloadPrayerBtn.addEventListener('click', () => window.location.reload());
+  }
+
   // مناطق اللمس الجانبية لتقليب الصفحات يدوياً
   document.getElementById('zone-prev').addEventListener('click', () => flipPageManual(-1));
   document.getElementById('zone-next').addEventListener('click', () => flipPageManual(1));

@@ -202,7 +202,7 @@ function setupEventListeners() {
   document.getElementById('zone-prev').addEventListener('click', () => flipPageManual(-1));
   document.getElementById('zone-next').addEventListener('click', () => flipPageManual(1));
 
-  // إيماءات اللمس السريعة (Swipe Gestures) على الشاشة
+  // إيماءات اللمس السريعة (Swipe Gestures) على الشاشة - متوافقة مع القراءة العربية (RTL)
   const viewport = document.getElementById('mushaf-viewport');
   let touchStartX = 0;
   
@@ -215,9 +215,9 @@ function setupEventListeners() {
     const diffX = touchEndX - touchStartX;
     
     if (diffX < -60) {
-      flipPageManual(-1); // سحب لليسار: الصفحة السابقة
+      flipPageManual(-1); // سحب لليسار: الصفحة السابقة (RTL)
     } else if (diffX > 60) {
-      flipPageManual(1);  // سحب لليمين: الصفحة التالية
+      flipPageManual(1);  // سحب لليمين: الصفحة التالية (RTL)
     }
   }, { passive: true });
 
@@ -744,6 +744,7 @@ function skipRukuState() {
   rakahCount++;
   prayerState = STATE_WAITING_FATIHA;
   spokenHistory = ''; // إعادة ضبط مخزن الكلمات المنطوقة
+  audioBuffer = [];   // تفريغ الذاكرة المؤقتة للصوت لبدء الركعة الجديدة بنظافة
   updatePrayerStatusUI();
 
   currentPage = checkpointVerse.page;
@@ -825,14 +826,20 @@ function flipPage(targetPage) {
   if (targetPage === currentPage || targetPage < 1 || targetPage > 604) return;
 
   const wrapper = document.getElementById('mushaf-page-wrapper');
-  wrapper.style.transform = 'translateX(-30px)';
+  
+  // اتجاه الحركة متوافق مع القراءة العربية (RTL)
+  const isNext = targetPage > currentPage;
+  const outX = isNext ? '30px' : '-30px';
+  const inX = isNext ? '-30px' : '30px';
+
+  wrapper.style.transform = `translateX(${outX})`;
   wrapper.style.opacity = '0';
   
   setTimeout(() => {
     currentPage = targetPage;
     spokenHistory = ''; // إعادة ضبط الكلمات المنطوقة عند الانتقال لصفحة جديدة لتفادي المطابقات الخاطئة من الصفحة السابقة
     displayPage(currentPage);
-    wrapper.style.transform = 'translateX(30px)';
+    wrapper.style.transform = `translateX(${inX})`;
     
     setTimeout(() => {
       wrapper.style.transform = 'translateX(0)';

@@ -1,4 +1,4 @@
-const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v4';
+const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v5';
 const IMAGES_CACHE_NAME = 'mushaf-qiyam-images-v1';
 const MODEL_CACHE_NAME = 'mushaf-qiyam-model-v2';
 
@@ -65,6 +65,11 @@ self.addEventListener('activate', (event) => {
 
 // Fetch Event - Handle Caching Strategies
 self.addEventListener('fetch', (event) => {
+  // تصفية الطلبات غير المتوافقة مع بروتوكول http/https أو الطلبات غير التابعة لـ GET لتجنب أخطاء المتصفح والملحقات (مثل حوافظ كلمات المرور)
+  if (!event.request.url.startsWith('http') || event.request.method !== 'GET') {
+    return;
+  }
+
   const requestUrl = new URL(event.request.url);
 
   // Check if it's a request for jsdelivr (Transformers.js and ONNX Runtime WASM runtime)

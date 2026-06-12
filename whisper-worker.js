@@ -52,6 +52,13 @@ self.onmessage = async (e) => {
   const { type, audio } = e.data;
 
   if (type === 'load') {
+    // إذا كان الموديل محملاً بالفعل، نرسل جاهزية فوراً ولا نعيد تحميله لتوفير الذاكرة والوقت
+    if (transcriber) {
+      console.log('[Whisper Worker] النموذج محمل بالفعل. إرسال جاهزية مباشرة...');
+      self.postMessage({ type: 'ready' });
+      return;
+    }
+
     // محاولة استيراد المكتبة
     const loaded = await loadLibrary();
     if (!loaded || !transformersInstance) {
@@ -71,12 +78,14 @@ self.onmessage = async (e) => {
       env.localModelPath = absoluteModelPath;
       env.useBrowserCache = true;
 
-      // تكوين مسارات ملفات ONNX Runtime WASM محلياً لتشغيل أوفلاين بالكامل
+      // تكوين مسارات ملفات ONNX Runtime WASM وتحديد خيط واحد لتقليص استهلاك الذاكرة وحل أخطاء تخصيص الذاكرة
       if (env.backends && env.backends.onnx) {
         env.backends.onnx.wasm.wasmPaths = workerBaseUrl;
+        env.backends.onnx.wasm.numThreads = 1;
       }
       if (env.onnx) {
         env.onnx.wasm.wasmPaths = workerBaseUrl;
+        env.onnx.wasm.numThreads = 1;
       }
 
       console.log('[Whisper Worker] env.localModelPath =', env.localModelPath);
@@ -86,33 +95,53 @@ self.onmessage = async (e) => {
       // إرسال رسالة تأكيد بدء التحميل الفعلي
       self.postMessage({ type: 'loading_started' });
 
-      transcriber = await pipeline('automatic-speech-recognition', 'whisper-tiny-ar-quran-onnx', {
-        dtype: 'q4',
-        progress_callback: (data) => {
-          console.log('[Whisper Worker] progress:', data.status, data.file, data.progress);
-          if (data.status === 'progress') {
-            self.postMessage({
-              type: 'progress',
-              file: data.file,
-              progress: data.progress,
-              loaded: data.loaded,
-              total: data.total
-            });
-          } else if (data.status === 'ready') {
-            self.postMessage({ type: 'file_ready', file: data.file });
-          } else if (data.status === 'initiate') {
-            self.postMessage({ type: 'file_initiate', file: data.file });
-          } else if (data.status === 'done') {
-            self.postMessage({ type: 'file_done', file: data.file });
-          }
+      const progressCallback = (data) => {
+        console.log('[Whisper Worker] progress:', data.status, data.file, data.progress);
+        if (data.status === 'progress') {
+          self.postMessage({
+            type: 'progress',
+            file: data.file,
+            progress: data.progress,
+            loaded: data.loaded,
+            total: data.total
+          });
+        } else if (data.status === 'ready') {
+          self.postMessage({ type: 'file_ready', file: data.file });
+        } else if (data.status === 'initiate') {
+          self.postMessage({ type: 'file_initiate', file: data.file });
+        } else if (data.status === 'done') {
+          self.postMessage({ type: 'file_done', file: data.file });
         }
-      });
+      };
+
+      try {
+        console.log('[Whisper Worker] جاري محاولة تحميل النموذج محلياً...');
+        transcriber = await pipeline('automatic-speech-recognition', 'whisper-tiny-ar-quran-onnx', {
+          dtype: 'q4',
+          session_options: {
+            intraOpNumThreads: 1,
+            interOpNumThreads: 1
+          },
+          progress_callback: progressCallback
+        });
+      } catch (localErr) {
+        console.warn('[Whisper Worker] فشل تحميل النموذج محلياً. جاري المحاولة من المستودع البعيد...', localErr);
+        // محاولة التحميل من المستودع البعيد كخطة بديلة باستخدام المعرف الكامل للمستودع
+        transcriber = await pipeline('automatic-speech-recognition', 'omartariq612/whisper-tiny-ar-quran-onnx', {
+          dtype: 'q4',
+          session_options: {
+            intraOpNumThreads: 1,
+            interOpNumThreads: 1
+          },
+          progress_callback: progressCallback
+        });
+      }
 
       console.log('[Whisper Worker] اكتمل تحميل النموذج بنجاح وهو جاهز للاستخدام.');
       self.postMessage({ type: 'ready' });
 
     } catch (err) {
-      console.error('[Whisper Worker] فشل تحميل الموديل الصوتي:', err);
+      console.error('[Whisper Worker] فشل تحميل الموديل الصوتي النهائي:', err);
       self.postMessage({
         type: 'error',
         error: `فشل تحميل الموديل: ${err.message || err}`

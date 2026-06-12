@@ -44,9 +44,19 @@ jobs:
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v3
+      if: success()
       with:
         name: mushaf-qiyam-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Upload Logs on Failure
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: gradle-logs
+        path: |
+          android/app/build/reports/
+          android/app/build/outputs/logs/
 
     - name: Create Release
       uses: ncipollo/release-action@v1

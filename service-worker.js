@@ -1,4 +1,4 @@
-const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v2';
+const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v3';
 const IMAGES_CACHE_NAME = 'mushaf-qiyam-images-v1';
 const MODEL_CACHE_NAME = 'mushaf-qiyam-model-v2';
 
@@ -8,7 +8,7 @@ const ASSETS_TO_CACHE = [
   'index.css',
   'app.js',
   'whisper-worker.js',
-  'transformers.min.mjs',
+  'transformers.min.js',
   'ort-wasm-simd-threaded.jsep.wasm',
   'manifest.json',
   'version.json',

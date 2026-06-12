@@ -7,6 +7,9 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -44,3 +47,13 @@ jobs:
       with:
         name: mushaf-qiyam-apk
         path: android/app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Create Release
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: "android/app/build/outputs/apk/debug/app-debug.apk"
+        tag: "latest"
+        name: "Latest APK Release"
+        body: "Auto-generated APK."
+        allowUpdates: true
+        makeLatest: true

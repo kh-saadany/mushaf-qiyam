@@ -30,6 +30,7 @@ let mediaStream = null;
 let audioSource = null;
 let audioProcessor = null;
 let isMicGranted = false;
+let isWorkerReady = false;
 
 // ذاكرة مؤقتة لمعالجة دفق الصوت في وضع أوفلاين (Sliding Window)
 let audioBuffer = [];
@@ -214,9 +215,9 @@ function setupEventListeners() {
     const diffX = touchEndX - touchStartX;
     
     if (diffX < -60) {
-      flipPageManual(1);
+      flipPageManual(-1); // سحب لليسار: الصفحة السابقة
     } else if (diffX > 60) {
-      flipPageManual(-1);
+      flipPageManual(1);  // سحب لليمين: الصفحة التالية
     }
   }, { passive: true });
 
@@ -608,24 +609,34 @@ async function startPrayerSession() {
   } else {
     // ------------------ وضع التشغيل أوفلاين (Whisper WASM Worker) ------------------
     try {
+      isWorkerReady = false;
+      statusToastText.innerText = 'جاري تهيئة الموديل الصوتي أوفلاين...';
+      updateAudioIndicator(false);
+
       if (!whisperWorker) {
         // تهيئة الـ Web Worker
         whisperWorker = new Worker('whisper-worker.js', { type: 'module' });
-        
-        whisperWorker.onmessage = (e) => {
-          const { type, text, error } = e.data;
-          if (type === 'result') {
-            if (isPrayerActive && text && text.trim().length > 0) {
-              console.log('[Whisper Result]:', text);
-              updateSpokenHistory(text);
-              handleSpokenWords(spokenHistory);
-            }
-          } else if (type === 'error') {
-            console.error('[Whisper Worker Error]:', error);
-            statusToastText.innerText = 'خطأ في المحرك: ' + error;
-          }
-        };
       }
+
+      whisperWorker.onmessage = (e) => {
+        const { type, text, error } = e.data;
+        if (type === 'ready') {
+          console.log('[Whisper Worker] Model is ready for transcription');
+          isWorkerReady = true;
+          statusToastText.innerText = 'بانتظار قراءة الفاتحة (وضع أوفلاين)...';
+          updateAudioIndicator(true);
+        } else if (type === 'result') {
+          if (isPrayerActive && text && text.trim().length > 0) {
+            console.log('[Whisper Result]:', text);
+            updateSpokenHistory(text);
+            handleSpokenWords(spokenHistory);
+          }
+        } else if (type === 'error') {
+          console.error('[Whisper Worker Error]:', error);
+          statusToastText.innerText = 'خطأ في المحرك: ' + error;
+          updateAudioIndicator(false);
+        }
+      };
 
       // إرسال رسالة تحميل احتياطية لضمان تنشيط النموذج في الـ Worker
       whisperWorker.postMessage({ type: 'load' });
@@ -667,7 +678,7 @@ async function startPrayerSession() {
             const VAD_THRESHOLD = 0.008; // حد الحساسية الصامتة
 
             if (rms >= VAD_THRESHOLD) {
-              if (whisperWorker) {
+              if (whisperWorker && isWorkerReady) {
                 // إرسال عينات الصوت للـ Web Worker لمعالجتها بالخلفية
                 whisperWorker.postMessage({ type: 'transcribe', audio: windowSamples });
               }
@@ -684,8 +695,6 @@ async function startPrayerSession() {
       audioSource.connect(audioProcessor);
       audioProcessor.connect(audioContext.destination);
 
-      updateAudioIndicator(true);
-      statusToastText.innerText = 'بانتظار قراءة الفاتحة (وضع أوفلاين)...';
       console.log('[Whisper WASM] Listening initialized successfully');
 
     } catch (error) {

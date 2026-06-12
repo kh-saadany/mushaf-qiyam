@@ -41,8 +41,14 @@ function cacheFirst(request, cacheName, fallbackResponse = null) {
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(SHELL_CACHE_NAME).then((cache) => {
-      console.log('[Service Worker] Caching App Shell');
-      return cache.addAll(ASSETS_TO_CACHE);
+      console.log('[Service Worker] Caching App Shell (Bypassing HTTP Cache)');
+      return Promise.all(ASSETS_TO_CACHE.map(url => {
+        return fetch(url + (url.includes('?') ? '&' : '?') + 'nocache=' + Date.now())
+          .then(response => {
+            if (!response.ok) throw new Error('Fetch failed for ' + url);
+            return cache.put(url, response);
+          });
+      }));
     }).then(() => self.skipWaiting())
   );
 });

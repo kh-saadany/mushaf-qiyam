@@ -221,8 +221,34 @@ function setupEventListeners() {
     }
   }, { passive: true });
 
-  document.getElementById('btn-apply-update').addEventListener('click', () => {
-    window.location.reload(true);
+  document.getElementById('btn-apply-update').addEventListener('click', async () => {
+    document.getElementById('btn-apply-update').innerText = 'جاري التحديث...';
+    
+    if ('serviceWorker' in navigator) {
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (let registration of registrations) {
+          await registration.unregister();
+        }
+      } catch (err) {
+        console.error('SW Unregister Error:', err);
+      }
+    }
+    
+    if ('caches' in window) {
+      try {
+        const keys = await caches.keys();
+        for (let key of keys) {
+          if (key.includes('mushaf-qiyam-shell')) {
+            await caches.delete(key);
+          }
+        }
+      } catch (err) {
+        console.error('Cache Delete Error:', err);
+      }
+    }
+    
+    window.location.href = window.location.href.split('?')[0] + '?v=' + Date.now();
   });
 }
 

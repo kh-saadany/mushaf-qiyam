@@ -70,6 +70,9 @@ async function initApp() {
     // 4. التحقق من حالة تخزين الموديل الصوتي أوفلاين
     checkOfflineModelStatus();
 
+    // 5. التحقق من صلاحية الميكروفون
+    await checkMicrophonePermission();
+
     // تهيئة اختيار وضع التعرف الصوتي (أونلاين/أوفلاين)
     const savedMode = localStorage.getItem('mushaf-prayer-mode') || 'online';
     isOfflineMode = (savedMode === 'offline');
@@ -282,26 +285,81 @@ function toggleTheme() {
 
 // ==================== تفعيل صلاحيات الميكروفون ==================== //
 function requestMicrophonePermission() {
+  console.log('Requesting microphone permission...');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showStatusMessage('المتصفح أو النظام لا يدعم الميكروفون.', 'red');
+    return;
+  }
+  
   navigator.mediaDevices.getUserMedia({ audio: true })
     .then((stream) => {
-      stream.getTracks().forEach(track => track.stop());
+      console.log('Microphone access granted.');
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          try { track.stop(); } catch(e) { console.error('Error stopping track:', e); }
+        });
+      }
       
-      const dot = document.getElementById('mic-status-dot');
-      const text = document.getElementById('mic-status-text');
-      
-      dot.className = 'pulse-dot green';
-      text.innerText = 'الميكروفون مفعل';
       isMicGranted = true;
-      
+      updateMicStatusUI(true);
       updateStartButtonState();
-      document.getElementById('btn-grant-mic').style.display = 'none';
       
       showStatusMessage('تم تفعيل الميكروفون بنجاح!', 'green');
     })
     .catch((err) => {
       console.error('Microphone access denied:', err);
-      showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
+      isMicGranted = false;
+      updateMicStatusUI(false);
+      updateStartButtonState();
+      showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً. الخطأ: ' + err.message, 'red');
     });
+}
+
+function updateMicStatusUI(granted) {
+  const dot = document.getElementById('mic-status-dot');
+  const text = document.getElementById('mic-status-text');
+  const grantBtn = document.getElementById('btn-grant-mic');
+  
+  if (granted) {
+    if (dot) dot.className = 'pulse-dot green';
+    if (text) text.innerText = 'الميكروفون مفعل';
+    if (grantBtn) grantBtn.style.display = 'none';
+  } else {
+    if (dot) dot.className = 'pulse-dot red';
+    if (text) text.innerText = 'بانتظار صلاحية الميكروفون...';
+    if (grantBtn) grantBtn.style.display = 'block';
+  }
+}
+
+async function checkMicrophonePermission() {
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const result = await navigator.permissions.query({ name: 'microphone' });
+      if (result.state === 'granted') {
+        isMicGranted = true;
+        updateMicStatusUI(true);
+        updateStartButtonState();
+      } else {
+        isMicGranted = false;
+        updateMicStatusUI(false);
+        updateStartButtonState();
+      }
+      
+      result.onchange = () => {
+        if (result.state === 'granted') {
+          isMicGranted = true;
+          updateMicStatusUI(true);
+          updateStartButtonState();
+        } else {
+          isMicGranted = false;
+          updateMicStatusUI(false);
+          updateStartButtonState();
+        }
+      };
+    } catch (e) {
+      console.error('Error querying microphone permission:', e);
+    }
+  }
 }
 
 // تحديث إمكانية بدء الصلاة (الميكروفون + الموديل الصوتي عند الحاجة)
@@ -1000,13 +1058,13 @@ function downloadAllQuranImages() {
         } else {
           showStatusMessage('فشل تفعيل خادم التخزين، يرجى إعادة تحميل الصفحة.', 'red');
           btn.disabled = false;
-          btn.innerText = 'تحميل صفحات المصحف (حوالي 85 ميجا)';
+          btn.innerText = 'تحميل صفحات المصحف (حوالي 230 ميجا)';
         }
       });
     } else {
       showStatusMessage('المتصفح لا يدعم التخزين أوفلاين.', 'red');
       btn.disabled = false;
-      btn.innerText = 'تحميل صفحات المصحف (حوالي 85 ميجا)';
+      btn.innerText = 'تحميل صفحات المصحف (حوالي 230 ميجا)';
     }
   }
 
@@ -1066,7 +1124,7 @@ function checkOfflineModelStatus() {
       document.getElementById('model-status-label').innerText = 'الموديل الصوتي غير محمل محلياً';
       document.getElementById('model-percent-label').innerText = '0%';
       document.getElementById('model-progress-bar').style.width = '0%';
-      document.getElementById('btn-download-model').innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+      document.getElementById('btn-download-model').innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 100 ميجا)';
       isModelCached = false;
       updateStartButtonState();
     }
@@ -1102,7 +1160,7 @@ async function downloadVoskModel() {
     if (isModelLoading) {
       isModelLoading = false;
       btn.disabled = false;
-      btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+      btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 100 ميجا)';
       document.getElementById('model-status-label').innerText = 'انقطع الاتصال بخيط المعالجة. أعد المحاولة.';
       showStatusMessage('فشل الاتصال بخيط المعالجة الصوتي. حاول مرة أخرى.', 'red');
     }
@@ -1113,7 +1171,7 @@ async function downloadVoskModel() {
     clearTimeout(workerTimeout);
     isModelLoading = false;
     btn.disabled = false;
-    btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+    btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 100 ميجا)';
     
     const errorMsg = event.message || 'خطأ غير معروف في خيط المعالجة';
     document.getElementById('model-status-label').innerText = `خطأ: ${errorMsg}`;
@@ -1130,7 +1188,7 @@ async function downloadVoskModel() {
       if (isModelLoading) {
         isModelLoading = false;
         btn.disabled = false;
-        btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+        btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 100 ميجا)';
         document.getElementById('model-status-label').innerText = 'توقف التحميل. أعد المحاولة.';
         showStatusMessage('توقف تحميل الموديل الصوتي. حاول مرة أخرى.', 'red');
       }
@@ -1156,7 +1214,7 @@ async function downloadVoskModel() {
       
       const pct = totalBytes > 0 ? Math.min(99, Math.round((totalLoaded / totalBytes) * 100)) : 0;
       const loadedMB = (totalLoaded / (1024 * 1024)).toFixed(1);
-      const totalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) : '75.0';
+      const totalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) : '100.0';
       
       document.getElementById('model-status-label').innerText = `جاري تحميل الموديل الصوتي (${loadedMB}MB من ${totalMB}MB)...`;
       document.getElementById('model-percent-label').innerText = `${pct}%`;
@@ -1181,7 +1239,7 @@ async function downloadVoskModel() {
       clearTimeout(workerTimeout);
       isModelLoading = false;
       btn.disabled = false;
-      btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 75 ميجا)';
+      btn.innerText = 'تحميل الموديل الصوتي أوفلاين (حوالي 100 ميجا)';
       document.getElementById('model-status-label').innerText = `خطأ: ${error}`;
       showStatusMessage(`فشل تحميل الموديل الصوتي: ${error}`, 'red');
       console.error('[Whisper Model Error]', error);

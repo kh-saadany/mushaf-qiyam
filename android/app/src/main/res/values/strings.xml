@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">مصحف القيام</string>
+    <string name="title_activity_main">مصحف القيام</string>
+    <string name="package_name">com.khsaadany.mushafqiyam</string>
+    <string name="custom_url_scheme">com.khsaadany.mushafqiyam</string>
+</resources>

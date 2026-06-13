@@ -120,7 +120,9 @@ self.onmessage = async (e) => {
           dtype: 'q4',
           session_options: {
             intraOpNumThreads: 1,
-            interOpNumThreads: 1
+            interOpNumThreads: 1,
+            enableCpuMemArena: false,
+            enableMemPattern: false
           },
           progress_callback: progressCallback
         });
@@ -131,7 +133,9 @@ self.onmessage = async (e) => {
           dtype: 'q4',
           session_options: {
             intraOpNumThreads: 1,
-            interOpNumThreads: 1
+            interOpNumThreads: 1,
+            enableCpuMemArena: false,
+            enableMemPattern: false
           },
           progress_callback: progressCallback
         });

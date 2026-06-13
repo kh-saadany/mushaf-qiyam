@@ -189,7 +189,6 @@ function populateSetupSelectors() {
 // ==================== ربط أحداث العناصر (Event Listeners) ==================== //
 function setupEventListeners() {
   // أزرار شاشة الإعداد
-  document.getElementById('btn-grant-mic').addEventListener('click', requestMicrophonePermission);
   document.getElementById('btn-start-prayer').addEventListener('click', startPrayerSession);
   document.getElementById('btn-download-quran').addEventListener('click', downloadAllQuranImages);
   document.getElementById('btn-download-model').addEventListener('click', downloadVoskModel);
@@ -244,7 +243,7 @@ function setupEventListeners() {
       
       try {
         await Capacitor.Plugins.AppUpdater.installApk({ 
-          url: 'https://github.com/kh-saadany/mushaf-qiyam/releases/latest/download/app-debug.apk' 
+          url: 'https://github.com/kh-saadany/mushaf-qiyam/releases/download/latest/app-debug.apk' 
         });
         showStatusMessage('اكتمل تحميل التحديث! جاري فتح التثبيت...', 'green');
         btn.innerText = 'تثبيت التحديث';
@@ -341,8 +340,6 @@ async function checkMicrophonePermission() {
               text.innerText = 'الميكروفون مفعل';
               isMicGranted = true;
               updateStartButtonState();
-              const grantBtn = document.getElementById('btn-grant-mic');
-              if (grantBtn) grantBtn.style.display = 'none';
             }
           }
         };
@@ -355,78 +352,16 @@ async function checkMicrophonePermission() {
   }
 }
 
-// ==================== تفعيل صلاحيات الميكروفون ==================== //
-async function requestMicrophonePermission() {
-  const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
-  if (isApp) {
-    try {
-      const result = await Capacitor.Plugins.AppUpdater.requestPermissions({ permissions: ['microphone'] });
-      if (result.microphone === 'granted') {
-        const dot = document.getElementById('mic-status-dot');
-        const text = document.getElementById('mic-status-text');
-        if (dot && text) {
-          dot.className = 'pulse-dot green';
-          text.innerText = 'الميكروفون مفعل';
-        }
-        isMicGranted = true;
-        updateStartButtonState();
-        const btn = document.getElementById('btn-grant-mic');
-        if (btn) btn.style.display = 'none';
-        showStatusMessage('تم تفعيل الميكروفون بنجاح!', 'green');
-        return;
-      }
-    } catch (e) {
-      console.error('طلب صلاحية الميكروفون فشل:', e);
-    }
-    showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
-    return;
-  }
-  // نسخة الويب (PWA) – استدعاء getUserMedia كاحتياطي.
-  triggerGetUserMedia();
-}
-
-function triggerGetUserMedia() {
-  navigator.mediaDevices.getUserMedia({ audio: true })
-    .then((stream) => {
-      stream.getTracks().forEach(track => track.stop());
-      
-      const dot = document.getElementById('mic-status-dot');
-      const text = document.getElementById('mic-status-text');
-      
-      dot.className = 'pulse-dot green';
-      text.innerText = 'الميكروفون مفعل';
-      isMicGranted = true;
-      
-      updateStartButtonState();
-      document.getElementById('btn-grant-mic').style.display = 'none';
-      
-      showStatusMessage('تم تفعيل الميكروفون بنجاح!', 'green');
-    })
-    .catch((err) => {
-      console.error('Microphone access denied:', err);
-      // قد يحدث رفض لأن صلاحية النظام لم تُمنح بعد للـ WebView.
-      // نجرب طلب الصلاحية مرة أخرى عبر المكوّن الأصلي ثم نعيد المحاولة.
-      Capacitor.Plugins.AppUpdater.requestPermissions({ permissions: ['microphone'] })
-        .then(() => {
-          // انتظار قصير لتطبيق الصلاحية
-          setTimeout(triggerGetUserMedia, 500);
-        })
-        .catch((permErr) => {
-          console.error('Native permission request failed again:', permErr);
-          showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
-        });
-      showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
-    })
-}
-
-// تحديث إمكانية بدء الصلاة (الميكروفون + الموديل الصوتي عند الحاجة)
+// تحديث إمكانية بدء الصلاة (الموديل الصوتي عند الحاجة)
 function updateStartButtonState() {
   const startBtn = document.getElementById('btn-start-prayer');
-  if (isOfflineMode) {
-    startBtn.disabled = !(isMicGranted && isModelCached);
-  } else {
-    // الوضع أونلاين: يتطلب الميكروفون فقط
-    startBtn.disabled = !isMicGranted;
+  if (startBtn) {
+    if (isOfflineMode) {
+      startBtn.disabled = !isModelCached;
+    } else {
+      // الوضع أونلاين: متاح دائماً
+      startBtn.disabled = false;
+    }
   }
 }
 
@@ -1328,7 +1263,7 @@ function checkForUpdates() {
       .then(localVersion => {
         document.getElementById('app-version-label').innerText = `إصدار ${localVersion}`;
         
-        fetch('https://kh-saadany.github.io/mushaf-qiyam/version.json?nocache=' + Date.now())
+        fetch('https://raw.githubusercontent.com/kh-saadany/mushaf-qiyam/main/www/version.json?nocache=' + Date.now())
           .then(res => {
             if (!res.ok) throw new Error('Failed to fetch server version');
             return res.json();
@@ -1351,7 +1286,7 @@ function checkForUpdates() {
       .catch(err => console.error('Failed to load local version:', err));
   } else {
     // PWA Web version check
-    fetch('version.json?nocache=' + Date.now())
+    fetch('https://raw.githubusercontent.com/kh-saadany/mushaf-qiyam/main/www/version.json?nocache=' + Date.now())
       .then(res => res.json())
       .then(serverInfo => {
         fetch('version.json')

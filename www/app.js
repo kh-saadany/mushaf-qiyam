@@ -1302,11 +1302,14 @@ function checkForUpdates() {
   const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
 
   if (isApp) {
-    // Android APK version check (Query GitHub Pages version.json)
-    fetch('version.json?nocache=' + Date.now())
-      .then(res => res.json())
-      .then(localInfo => {
-        document.getElementById('app-version-label').innerText = `إصدار ${localInfo.version}`;
+    // Android APK version check (Query native plugin for actual APK version name)
+    const getLocalVersionPromise = (window.Capacitor.Plugins && window.Capacitor.Plugins.AppUpdater && typeof window.Capacitor.Plugins.AppUpdater.getAppVersion === 'function')
+      ? window.Capacitor.Plugins.AppUpdater.getAppVersion().then(res => res.version)
+      : fetch('version.json?nocache=' + Date.now()).then(res => res.json()).then(info => info.version);
+
+    getLocalVersionPromise
+      .then(localVersion => {
+        document.getElementById('app-version-label').innerText = `إصدار ${localVersion}`;
         
         fetch('https://kh-saadany.github.io/mushaf-qiyam/version.json?nocache=' + Date.now())
           .then(res => {
@@ -1315,9 +1318,9 @@ function checkForUpdates() {
           })
           .then(serverInfo => {
             const serverVersion = serverInfo.version;
-            console.log(`Local APK Version: ${localInfo.version}, Server Version: ${serverVersion}`);
+            console.log(`Local APK Version: ${localVersion}, Server Version: ${serverVersion}`);
             
-            if (compareVersions(serverVersion, localInfo.version) > 0) {
+            if (compareVersions(serverVersion, localVersion) > 0) {
               const toastTitle = document.querySelector('.update-toast-content h4');
               const toastDesc = document.querySelector('.update-toast-content p');
               if (toastTitle) toastTitle.innerText = 'يتوفر تحديث جديد للتطبيق!';

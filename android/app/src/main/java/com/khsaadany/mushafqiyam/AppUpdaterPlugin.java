@@ -29,6 +29,20 @@ import java.net.URL;
 public class AppUpdaterPlugin extends Plugin {
 
     @PluginMethod
+    public void getAppVersion(PluginCall call) {
+        try {
+            Context context = getContext();
+            String versionName = context.getPackageManager()
+                .getPackageInfo(context.getPackageName(), 0).versionName;
+            JSObject ret = new JSObject();
+            ret.put("version", versionName);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Failed to get app version: " + e.getMessage(), e);
+        }
+    }
+
+    @PluginMethod
     public void installApk(PluginCall call) {
         String apkUrl = call.getString("url");
         if (apkUrl == null || apkUrl.isEmpty()) {
@@ -45,9 +59,34 @@ public class AppUpdaterPlugin extends Plugin {
                 try {
                     // 1. Download APK to Cache Directory
                     URL url = new URL(apkUrl);
-                    HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                    connection.setRequestMethod("GET");
-                    connection.connect();
+                    HttpURLConnection connection = null;
+                    int redirectCount = 0;
+                    int maxRedirects = 5;
+
+                    while (true) {
+                        connection = (HttpURLConnection) url.openConnection();
+                        connection.setRequestMethod("GET");
+                        connection.setInstanceFollowRedirects(true);
+
+                        int status = connection.getResponseCode();
+                        if (status == HttpURLConnection.HTTP_MOVED_TEMP 
+                            || status == HttpURLConnection.HTTP_MOVED_PERM 
+                            || status == HttpURLConnection.HTTP_SEE_OTHER 
+                            || status == 307 
+                            || status == 308) {
+                            
+                            redirectCount++;
+                            if (redirectCount > maxRedirects) {
+                                call.reject("Too many redirects");
+                                return;
+                            }
+                            String newUrl = connection.getHeaderField("Location");
+                            connection.disconnect();
+                            url = new URL(url, newUrl);
+                        } else {
+                            break;
+                        }
+                    }
 
                     if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
                         call.reject("Server returned HTTP " + connection.getResponseCode());

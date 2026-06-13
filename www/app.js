@@ -70,8 +70,8 @@ async function initApp() {
     // 4. التحقق من حالة تخزين الموديل الصوتي أوفلاين
     checkOfflineModelStatus();
 
-    // 5. التحقق من صلاحية الميكروفون
-    await checkMicrophonePermission();
+    // 5. التحقق من حالة صلاحية الميكروفون الممنوحة مسبقاً
+    checkMicrophonePermission();
 
     // تهيئة اختيار وضع التعرف الصوتي (أونلاين/أوفلاين)
     const savedMode = localStorage.getItem('mushaf-prayer-mode') || 'online';
@@ -283,83 +283,55 @@ function toggleTheme() {
   }
 }
 
+// التحقق من حالة صلاحية الميكروفون الممنوحة مسبقاً
+async function checkMicrophonePermission() {
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const result = await navigator.permissions.query({ name: 'microphone' });
+      const updateUI = () => {
+        if (result.state === 'granted') {
+          const dot = document.getElementById('mic-status-dot');
+          const text = document.getElementById('mic-status-text');
+          if (dot && text) {
+            dot.className = 'pulse-dot green';
+            text.innerText = 'الميكروفون مفعل';
+            isMicGranted = true;
+            updateStartButtonState();
+            const grantBtn = document.getElementById('btn-grant-mic');
+            if (grantBtn) grantBtn.style.display = 'none';
+          }
+        }
+      };
+      updateUI();
+      result.onchange = updateUI;
+    } catch (e) {
+      console.warn('Permissions API query not supported for microphone:', e);
+    }
+  }
+}
+
 // ==================== تفعيل صلاحيات الميكروفون ==================== //
 function requestMicrophonePermission() {
-  console.log('Requesting microphone permission...');
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    showStatusMessage('المتصفح أو النظام لا يدعم الميكروفون.', 'red');
-    return;
-  }
-  
   navigator.mediaDevices.getUserMedia({ audio: true })
     .then((stream) => {
-      console.log('Microphone access granted.');
-      if (stream) {
-        stream.getTracks().forEach(track => {
-          try { track.stop(); } catch(e) { console.error('Error stopping track:', e); }
-        });
-      }
+      stream.getTracks().forEach(track => track.stop());
       
+      const dot = document.getElementById('mic-status-dot');
+      const text = document.getElementById('mic-status-text');
+      
+      dot.className = 'pulse-dot green';
+      text.innerText = 'الميكروفون مفعل';
       isMicGranted = true;
-      updateMicStatusUI(true);
+      
       updateStartButtonState();
+      document.getElementById('btn-grant-mic').style.display = 'none';
       
       showStatusMessage('تم تفعيل الميكروفون بنجاح!', 'green');
     })
     .catch((err) => {
       console.error('Microphone access denied:', err);
-      isMicGranted = false;
-      updateMicStatusUI(false);
-      updateStartButtonState();
-      showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً. الخطأ: ' + err.message, 'red');
+      showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
     });
-}
-
-function updateMicStatusUI(granted) {
-  const dot = document.getElementById('mic-status-dot');
-  const text = document.getElementById('mic-status-text');
-  const grantBtn = document.getElementById('btn-grant-mic');
-  
-  if (granted) {
-    if (dot) dot.className = 'pulse-dot green';
-    if (text) text.innerText = 'الميكروفون مفعل';
-    if (grantBtn) grantBtn.style.display = 'none';
-  } else {
-    if (dot) dot.className = 'pulse-dot red';
-    if (text) text.innerText = 'بانتظار صلاحية الميكروفون...';
-    if (grantBtn) grantBtn.style.display = 'block';
-  }
-}
-
-async function checkMicrophonePermission() {
-  if (navigator.permissions && navigator.permissions.query) {
-    try {
-      const result = await navigator.permissions.query({ name: 'microphone' });
-      if (result.state === 'granted') {
-        isMicGranted = true;
-        updateMicStatusUI(true);
-        updateStartButtonState();
-      } else {
-        isMicGranted = false;
-        updateMicStatusUI(false);
-        updateStartButtonState();
-      }
-      
-      result.onchange = () => {
-        if (result.state === 'granted') {
-          isMicGranted = true;
-          updateMicStatusUI(true);
-          updateStartButtonState();
-        } else {
-          isMicGranted = false;
-          updateMicStatusUI(false);
-          updateStartButtonState();
-        }
-      };
-    } catch (e) {
-      console.error('Error querying microphone permission:', e);
-    }
-  }
 }
 
 // تحديث إمكانية بدء الصلاة (الميكروفون + الموديل الصوتي عند الحاجة)
@@ -1058,13 +1030,13 @@ function downloadAllQuranImages() {
         } else {
           showStatusMessage('فشل تفعيل خادم التخزين، يرجى إعادة تحميل الصفحة.', 'red');
           btn.disabled = false;
-          btn.innerText = 'تحميل صفحات المصحف (حوالي 230 ميجا)';
+          btn.innerText = 'تحميل صفحات المصحف (حوالي 240 ميجا)';
         }
       });
     } else {
       showStatusMessage('المتصفح لا يدعم التخزين أوفلاين.', 'red');
       btn.disabled = false;
-      btn.innerText = 'تحميل صفحات المصحف (حوالي 230 ميجا)';
+      btn.innerText = 'تحميل صفحات المصحف (حوالي 240 ميجا)';
     }
   }
 
@@ -1214,7 +1186,7 @@ async function downloadVoskModel() {
       
       const pct = totalBytes > 0 ? Math.min(99, Math.round((totalLoaded / totalBytes) * 100)) : 0;
       const loadedMB = (totalLoaded / (1024 * 1024)).toFixed(1);
-      const totalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) : '100.0';
+      const totalMB = totalBytes > 0 ? (totalBytes / (1024 * 1024)).toFixed(1) : '75.0';
       
       document.getElementById('model-status-label').innerText = `جاري تحميل الموديل الصوتي (${loadedMB}MB من ${totalMB}MB)...`;
       document.getElementById('model-percent-label').innerText = `${pct}%`;

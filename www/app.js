@@ -235,33 +235,55 @@ function setupEventListeners() {
   }, { passive: true });
 
   document.getElementById('btn-apply-update').addEventListener('click', async () => {
-    document.getElementById('btn-apply-update').innerText = 'جاري التحديث...';
+    const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
     
-    if ('serviceWorker' in navigator) {
+    if (isApp) {
+      const btn = document.getElementById('btn-apply-update');
+      btn.innerText = 'جاري تحميل التحديث...';
+      btn.disabled = true;
+      
       try {
-        const registrations = await navigator.serviceWorker.getRegistrations();
-        for (let registration of registrations) {
-          await registration.unregister();
-        }
+        await Capacitor.Plugins.AppUpdater.installApk({ 
+          url: 'https://github.com/kh-saadany/mushaf-qiyam/releases/latest/download/app-debug.apk' 
+        });
+        showStatusMessage('اكتمل تحميل التحديث! جاري فتح التثبيت...', 'green');
+        btn.innerText = 'تثبيت التحديث';
+        btn.disabled = false;
       } catch (err) {
-        console.error('SW Unregister Error:', err);
+        console.error('Update failed:', err);
+        showStatusMessage('فشل تحميل التحديث: ' + (err.message || err), 'red');
+        btn.innerText = 'إعادة المحاولة';
+        btn.disabled = false;
       }
-    }
-    
-    if ('caches' in window) {
-      try {
-        const keys = await caches.keys();
-        for (let key of keys) {
-          if (key.includes('mushaf-qiyam-shell')) {
-            await caches.delete(key);
+    } else {
+      document.getElementById('btn-apply-update').innerText = 'جاري التحديث...';
+      
+      if ('serviceWorker' in navigator) {
+        try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          for (let registration of registrations) {
+            await registration.unregister();
           }
+        } catch (err) {
+          console.error('SW Unregister Error:', err);
         }
-      } catch (err) {
-        console.error('Cache Delete Error:', err);
       }
+      
+      if ('caches' in window) {
+        try {
+          const keys = await caches.keys();
+          for (let key of keys) {
+            if (key.includes('mushaf-qiyam-shell')) {
+              await caches.delete(key);
+            }
+          }
+        } catch (err) {
+          console.error('Cache Delete Error:', err);
+        }
+      }
+      
+      window.location.href = window.location.href.split('?')[0] + '?v=' + Date.now();
     }
-    
-    window.location.href = window.location.href.split('?')[0] + '?v=' + Date.now();
   });
 }
 
@@ -1231,21 +1253,54 @@ async function downloadVoskModel() {
 
 // ==================== إدارة التحديثات التلقائية (GitHub Auto Update) ==================== //
 function checkForUpdates() {
-  fetch('version.json?nocache=' + Date.now())
-    .then(res => res.json())
-    .then(serverInfo => {
-      fetch('version.json')
-        .then(res => res.json())
-        .then(localInfo => {
-          console.log(`Local Version: ${localInfo.version}, Server Version: ${serverInfo.version}`);
-          document.getElementById('app-version-label').innerText = `إصدار ${localInfo.version}`;
-          
-          if (compareVersions(serverInfo.version, localInfo.version) > 0) {
-            document.getElementById('update-toast').classList.add('show');
-          }
-        });
-    })
-    .catch(err => console.log('Update check failed (normal if running local/offline):', err));
+  const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
+
+  if (isApp) {
+    // Android APK version check (Query GitHub Releases API)
+    fetch('version.json?nocache=' + Date.now())
+      .then(res => res.json())
+      .then(localInfo => {
+        document.getElementById('app-version-label').innerText = `إصدار ${localInfo.version}`;
+        
+        fetch('https://api.github.com/repos/kh-saadany/mushaf-qiyam/releases/latest')
+          .then(res => {
+            if (!res.ok) throw new Error('GitHub API returned ' + res.status);
+            return res.json();
+          })
+          .then(latestRelease => {
+            const serverVersion = latestRelease.tag_name.replace(/^v/, '');
+            console.log(`Local APK Version: ${localInfo.version}, Latest GitHub Release: ${serverVersion}`);
+            
+            if (compareVersions(serverVersion, localInfo.version) > 0) {
+              const toastTitle = document.querySelector('.update-toast-content h4');
+              const toastDesc = document.querySelector('.update-toast-content p');
+              if (toastTitle) toastTitle.innerText = 'يتوفر تحديث جديد للتطبيق!';
+              if (toastDesc) toastDesc.innerText = `إصدار جديد (${serverVersion}) متوفر للتحميل المباشر.`;
+              
+              document.getElementById('update-toast').classList.add('show');
+            }
+          })
+          .catch(err => console.log('GitHub Release check failed (offline or rate limited):', err));
+      })
+      .catch(err => console.error('Failed to load local version:', err));
+  } else {
+    // PWA Web version check
+    fetch('version.json?nocache=' + Date.now())
+      .then(res => res.json())
+      .then(serverInfo => {
+        fetch('version.json')
+          .then(res => res.json())
+          .then(localInfo => {
+            console.log(`Local PWA Version: ${localInfo.version}, Server Version: ${serverInfo.version}`);
+            document.getElementById('app-version-label').innerText = `إصدار ${localInfo.version}`;
+            
+            if (compareVersions(serverInfo.version, localInfo.version) > 0) {
+              document.getElementById('update-toast').classList.add('show');
+            }
+          });
+      })
+      .catch(err => console.log('Update check failed:', err));
+  }
 }
 
 function compareVersions(v1, v2) {

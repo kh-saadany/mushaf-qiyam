@@ -307,33 +307,79 @@ function toggleTheme() {
 
 // التحقق من حالة صلاحية الميكروفون الممنوحة مسبقاً
 async function checkMicrophonePermission() {
-  if (navigator.permissions && navigator.permissions.query) {
+  const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
+  
+  if (isApp) {
     try {
-      const result = await navigator.permissions.query({ name: 'microphone' });
-      const updateUI = () => {
-        if (result.state === 'granted') {
-          const dot = document.getElementById('mic-status-dot');
-          const text = document.getElementById('mic-status-text');
-          if (dot && text) {
-            dot.className = 'pulse-dot green';
-            text.innerText = 'الميكروفون مفعل';
-            isMicGranted = true;
-            updateStartButtonState();
-            const grantBtn = document.getElementById('btn-grant-mic');
-            if (grantBtn) grantBtn.style.display = 'none';
-          }
+      const status = await Capacitor.Plugins.AppUpdater.checkPermissions();
+      if (status.microphone === 'granted') {
+        const dot = document.getElementById('mic-status-dot');
+        const text = document.getElementById('mic-status-text');
+        if (dot && text) {
+          dot.className = 'pulse-dot green';
+          text.innerText = 'الميكروفون مفعل';
+          isMicGranted = true;
+          updateStartButtonState();
+          const grantBtn = document.getElementById('btn-grant-mic');
+          if (grantBtn) grantBtn.style.display = 'none';
         }
-      };
-      updateUI();
-      result.onchange = updateUI;
-    } catch (e) {
-      console.warn('Permissions API query not supported for microphone:', e);
+      }
+    } catch (err) {
+      console.warn('Native permission check failed:', err);
+    }
+  } else {
+    // Web PWA version check
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const result = await navigator.permissions.query({ name: 'microphone' });
+        const updateUI = () => {
+          if (result.state === 'granted') {
+            const dot = document.getElementById('mic-status-dot');
+            const text = document.getElementById('mic-status-text');
+            if (dot && text) {
+              dot.className = 'pulse-dot green';
+              text.innerText = 'الميكروفون مفعل';
+              isMicGranted = true;
+              updateStartButtonState();
+              const grantBtn = document.getElementById('btn-grant-mic');
+              if (grantBtn) grantBtn.style.display = 'none';
+            }
+          }
+        };
+        updateUI();
+        result.onchange = updateUI;
+      } catch (e) {
+        console.warn('Permissions API query not supported for microphone:', e);
+      }
     }
   }
 }
 
 // ==================== تفعيل صلاحيات الميكروفون ==================== //
-function requestMicrophonePermission() {
+async function requestMicrophonePermission() {
+  const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
+  
+  if (isApp) {
+    try {
+      const status = await Capacitor.Plugins.AppUpdater.checkPermissions();
+      if (status.microphone !== 'granted') {
+        const reqStatus = await Capacitor.Plugins.AppUpdater.requestPermissions({ permissions: ['microphone'] });
+        if (reqStatus.microphone !== 'granted') {
+          showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
+          return;
+        }
+      }
+      triggerGetUserMedia();
+    } catch (err) {
+      console.error('Native permission request failed:', err);
+      triggerGetUserMedia();
+    }
+  } else {
+    triggerGetUserMedia();
+  }
+}
+
+function triggerGetUserMedia() {
   navigator.mediaDevices.getUserMedia({ audio: true })
     .then((stream) => {
       stream.getTracks().forEach(track => track.stop());

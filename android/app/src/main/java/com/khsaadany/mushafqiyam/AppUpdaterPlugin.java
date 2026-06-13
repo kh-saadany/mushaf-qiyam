@@ -9,13 +9,23 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import android.Manifest;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
-@CapacitorPlugin(name = "AppUpdater")
+@CapacitorPlugin(
+    name = "AppUpdater",
+    permissions = {
+        @Permission(
+            alias = "microphone",
+            strings = { Manifest.permission.RECORD_AUDIO }
+        )
+    }
+)
 public class AppUpdaterPlugin extends Plugin {
 
     @PluginMethod

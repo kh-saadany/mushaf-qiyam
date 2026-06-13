@@ -1256,20 +1256,20 @@ function checkForUpdates() {
   const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
 
   if (isApp) {
-    // Android APK version check (Query GitHub Releases API)
+    // Android APK version check (Query GitHub Pages version.json)
     fetch('version.json?nocache=' + Date.now())
       .then(res => res.json())
       .then(localInfo => {
         document.getElementById('app-version-label').innerText = `إصدار ${localInfo.version}`;
         
-        fetch('https://api.github.com/repos/kh-saadany/mushaf-qiyam/releases/latest')
+        fetch('https://kh-saadany.github.io/mushaf-qiyam/version.json?nocache=' + Date.now())
           .then(res => {
-            if (!res.ok) throw new Error('GitHub API returned ' + res.status);
+            if (!res.ok) throw new Error('Failed to fetch server version');
             return res.json();
           })
-          .then(latestRelease => {
-            const serverVersion = latestRelease.tag_name.replace(/^v/, '');
-            console.log(`Local APK Version: ${localInfo.version}, Latest GitHub Release: ${serverVersion}`);
+          .then(serverInfo => {
+            const serverVersion = serverInfo.version;
+            console.log(`Local APK Version: ${localInfo.version}, Server Version: ${serverVersion}`);
             
             if (compareVersions(serverVersion, localInfo.version) > 0) {
               const toastTitle = document.querySelector('.update-toast-content h4');
@@ -1280,7 +1280,7 @@ function checkForUpdates() {
               document.getElementById('update-toast').classList.add('show');
             }
           })
-          .catch(err => console.log('GitHub Release check failed (offline or rate limited):', err));
+          .catch(err => console.log('Server version check failed (offline or network issue):', err));
       })
       .catch(err => console.error('Failed to load local version:', err));
   } else {

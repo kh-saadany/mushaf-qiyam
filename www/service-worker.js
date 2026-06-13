@@ -1,4 +1,4 @@
-const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v6';
+const SHELL_CACHE_NAME = 'mushaf-qiyam-shell-v7';
 const IMAGES_CACHE_NAME = 'mushaf-qiyam-images-v1';
 const MODEL_CACHE_NAME = 'mushaf-qiyam-model-v2';
 

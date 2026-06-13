@@ -967,6 +967,9 @@ function updatePrayerStatusUI() {
 
 function showStatusMessage(msg, color) {
   console.log(`[Status Message] ${msg} (${color})`);
+  if (color === 'red' || msg.includes('اكتمل') || msg.includes('نجاح') || msg.includes('فشل')) {
+    alert(msg);
+  }
 }
 
 // ==================== الحفاظ على الشاشة مضيئة (Wake Lock API) ==================== //

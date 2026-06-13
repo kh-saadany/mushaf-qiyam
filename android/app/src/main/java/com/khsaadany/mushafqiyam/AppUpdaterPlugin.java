@@ -66,6 +66,9 @@ public class AppUpdaterPlugin extends Plugin {
                     while (true) {
                         connection = (HttpURLConnection) url.openConnection();
                         connection.setRequestMethod("GET");
+                        connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Mobile Safari/537.36");
+                        connection.setConnectTimeout(15000);
+                        connection.setReadTimeout(20000);
                         connection.setInstanceFollowRedirects(true);
 
                         int status = connection.getResponseCode();
@@ -81,6 +84,10 @@ public class AppUpdaterPlugin extends Plugin {
                                 return;
                             }
                             String newUrl = connection.getHeaderField("Location");
+                            if (newUrl == null || newUrl.isEmpty()) {
+                                call.reject("Redirect Location is empty");
+                                return;
+                            }
                             connection.disconnect();
                             url = new URL(url, newUrl);
                         } else {

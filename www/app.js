@@ -357,23 +357,26 @@ async function checkMicrophonePermission() {
 
 // ==================== تفعيل صلاحيات الميكروفون ==================== //
 async function requestMicrophonePermission() {
+  // على أندرويد: الصلاحية تُطلب بشكل أصلي عند بدء التطبيق (MainActivity.java)
+  // هنا نستدعي getUserMedia مباشرة بعد التأكد من حالة الصلاحية
   const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
   
   if (isApp) {
+    // نحاول فحص الصلاحية عبر المكون الأصلي أولاً
     try {
       const status = await Capacitor.Plugins.AppUpdater.checkPermissions();
-      if (status.microphone !== 'granted') {
-        const reqStatus = await Capacitor.Plugins.AppUpdater.requestPermissions({ permissions: ['microphone'] });
-        if (reqStatus.microphone !== 'granted') {
-          showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
-          return;
-        }
+      if (status.microphone === 'granted') {
+        // الصلاحية ممنوحة بالفعل، نفعّل الميكروفون مباشرة
+        triggerGetUserMedia();
+        return;
       }
-      triggerGetUserMedia();
     } catch (err) {
-      console.error('Native permission request failed:', err);
-      triggerGetUserMedia();
+      console.warn('checkPermissions failed, proceeding directly:', err);
     }
+    // في جميع الحالات (سواء فشل الفحص أو الصلاحية لم تُمنح بعد)
+    // نستدعي getUserMedia مباشرة — نظام أندرويد سيتعامل معها لأن
+    // MainActivity طلبت الصلاحية مسبقاً عند فتح التطبيق
+    triggerGetUserMedia();
   } else {
     triggerGetUserMedia();
   }

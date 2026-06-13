@@ -349,7 +349,7 @@ async function checkMicrophonePermission() {
         updateUI();
         result.onchange = updateUI;
       } catch (e) {
-        console.warn('Permissions API query not supported for microphone:', e);
+        console.warn('Permissions API query not supported');
       }
     }
   }
@@ -357,29 +357,32 @@ async function checkMicrophonePermission() {
 
 // ==================== تفعيل صلاحيات الميكروفون ==================== //
 async function requestMicrophonePermission() {
-  // على أندرويد: الصلاحية تُطلب بشكل أصلي عند بدء التطبيق (MainActivity.java)
-  // هنا نستدعي getUserMedia مباشرة بعد التأكد من حالة الصلاحية
   const isApp = window.Capacitor && window.Capacitor.isNativePlatform();
-  
   if (isApp) {
-    // نحاول فحص الصلاحية عبر المكون الأصلي أولاً
     try {
-      const status = await Capacitor.Plugins.AppUpdater.checkPermissions();
-      if (status.microphone === 'granted') {
-        // الصلاحية ممنوحة بالفعل، نفعّل الميكروفون مباشرة
-        triggerGetUserMedia();
+      const result = await Capacitor.Plugins.AppUpdater.requestPermissions({ permissions: ['microphone'] });
+      if (result.microphone === 'granted') {
+        const dot = document.getElementById('mic-status-dot');
+        const text = document.getElementById('mic-status-text');
+        if (dot && text) {
+          dot.className = 'pulse-dot green';
+          text.innerText = 'الميكروفون مفعل';
+        }
+        isMicGranted = true;
+        updateStartButtonState();
+        const btn = document.getElementById('btn-grant-mic');
+        if (btn) btn.style.display = 'none';
+        showStatusMessage('تم تفعيل الميكروفون بنجاح!', 'green');
         return;
       }
-    } catch (err) {
-      console.warn('checkPermissions failed, proceeding directly:', err);
+    } catch (e) {
+      console.error('طلب صلاحية الميكروفون فشل:', e);
     }
-    // في جميع الحالات (سواء فشل الفحص أو الصلاحية لم تُمنح بعد)
-    // نستدعي getUserMedia مباشرة — نظام أندرويد سيتعامل معها لأن
-    // MainActivity طلبت الصلاحية مسبقاً عند فتح التطبيق
-    triggerGetUserMedia();
-  } else {
-    triggerGetUserMedia();
+    showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
+    return;
   }
+  // نسخة الويب (PWA) – استدعاء getUserMedia كاحتياطي.
+  triggerGetUserMedia();
 }
 
 function triggerGetUserMedia() {
@@ -401,8 +404,19 @@ function triggerGetUserMedia() {
     })
     .catch((err) => {
       console.error('Microphone access denied:', err);
+      // قد يحدث رفض لأن صلاحية النظام لم تُمنح بعد للـ WebView.
+      // نجرب طلب الصلاحية مرة أخرى عبر المكوّن الأصلي ثم نعيد المحاولة.
+      Capacitor.Plugins.AppUpdater.requestPermissions({ permissions: ['microphone'] })
+        .then(() => {
+          // انتظار قصير لتطبيق الصلاحية
+          setTimeout(triggerGetUserMedia, 500);
+        })
+        .catch((permErr) => {
+          console.error('Native permission request failed again:', permErr);
+          showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
+        });
       showStatusMessage('عذراً، يجب تفعيل الميكروفون لتتبع التلاوة آلياً.', 'red');
-    });
+    })
 }
 
 // تحديث إمكانية بدء الصلاة (الميكروفون + الموديل الصوتي عند الحاجة)

@@ -83,21 +83,41 @@ export default function App() {
       setModelReady(true);
       initializeWhisper(fileInfo.uri);
     } else if (fileInfo.exists) {
-      // Delete corrupt/incomplete file
-      await FileSystem.deleteAsync(fileInfo.uri, { immigrant: true }).catch(console.error);
+      // Delete corrupt/incomplete file safely
+      await FileSystem.deleteAsync(fileInfo.uri, { idempotent: true }).catch(console.error);
     }
   };
 
   const downloadModel = async () => {
     setIsDownloading(true);
     setDownloadProgress(0);
+
+    let finalUrl = MODEL_URL;
+    try {
+      // Resolve redirects beforehand using standard fetch to avoid Android expo-file-system redirect issues
+      const response = await fetch(MODEL_URL, { method: 'HEAD' });
+      if (response.url) {
+        finalUrl = response.url;
+      }
+    } catch (e) {
+      console.warn("Failed to resolve redirect URL with fetch HEAD:", e);
+    }
+
     const downloadResumable = FileSystem.createDownloadResumable(
-      MODEL_URL,
+      finalUrl,
       FileSystem.documentDirectory + MODEL_FILE_NAME,
       {},
       (downloadProgress) => {
-        const progress = downloadProgress.totalBytesWritten / downloadProgress.totalBytesExpectedToWrite;
-        setDownloadProgress(progress * 100);
+        const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgress;
+        if (totalBytesExpectedToWrite && totalBytesExpectedToWrite > 0) {
+          const progress = (totalBytesWritten / totalBytesExpectedToWrite) * 100;
+          setDownloadProgress(progress);
+        } else {
+          // Fallback: estimate progress assuming a model size of 148MB (147,951,465 bytes)
+          const approxTotal = 147951465;
+          const progress = Math.min((totalBytesWritten / approxTotal) * 100, 99.9);
+          setDownloadProgress(progress);
+        }
       }
     );
 
@@ -116,11 +136,11 @@ export default function App() {
       alert("فشل تحميل الموديل الصوتي. يرجى التحقق من اتصال الإنترنت والمحاولة مجدداً.");
       setIsDownloading(false);
       setDownloadProgress(0);
-      // Clean up corrupt downloads
+      // Clean up corrupt downloads safely
       const fileUri = FileSystem.documentDirectory + MODEL_FILE_NAME;
       const fileInfo = await FileSystem.getInfoAsync(fileUri);
       if (fileInfo.exists) {
-        await FileSystem.deleteAsync(fileUri).catch(console.error);
+        await FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(console.error);
       }
     }
   };

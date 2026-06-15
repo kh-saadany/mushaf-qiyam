@@ -1,9 +1,0 @@
-{
-  "appId": "com.khsaadany.mushafqiyam",
-  "appName": "مصحف القيام",
-  "webDir": "www",
-  "server": {
-    "androidScheme": "https",
-    "hostname": "localhost"
-  }
-}

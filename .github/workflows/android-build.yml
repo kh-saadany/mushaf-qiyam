@@ -20,18 +20,18 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '22'
+        node-version: '20'
 
     - name: Install Dependencies
       run: npm install
 
-    - name: Sync Capacitor
-      run: npx cap sync android
+    - name: Run Expo Prebuild
+      run: npx expo prebuild --platform android
 
-    - name: set up JDK 21
+    - name: set up JDK 17
       uses: actions/setup-java@v4
       with:
-        java-version: '21'
+        java-version: '17'
         distribution: 'temurin'
         cache: gradle
 
@@ -40,14 +40,14 @@ jobs:
 
     - name: Build with Gradle
       working-directory: ./android
-      run: ./gradlew assembleDebug
+      run: ./gradlew assembleRelease
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       if: success()
       with:
         name: mushaf-qiyam-apk
-        path: android/app/build/outputs/apk/debug/app-debug.apk
+        path: android/app/build/outputs/apk/release/app-release.apk
 
     - name: Upload Logs on Failure
       uses: actions/upload-artifact@v4
@@ -61,9 +61,9 @@ jobs:
     - name: Create Release
       uses: ncipollo/release-action@v1
       with:
-        artifacts: "android/app/build/outputs/apk/debug/app-debug.apk"
-        tag: "latest"
-        name: "Latest APK Release"
-        body: "Auto-generated APK."
+        artifacts: "android/app/build/outputs/apk/release/app-release.apk"
+        tag: "latest-react-native"
+        name: "React Native APK Release"
+        body: "Auto-generated Expo/React Native APK."
         allowUpdates: true
         makeLatest: true

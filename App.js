@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { initWhisper } from 'whisper.rn';
-import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index';
-import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter';
+import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index.js';
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter.js';
 import * as FileSystem from 'expo-file-system';
 import quranData from './assets/quran-pages.json';
 

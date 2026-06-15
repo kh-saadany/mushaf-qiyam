@@ -40,14 +40,25 @@ jobs:
 
     - name: Build with Gradle
       working-directory: ./android
-      run: ./gradlew assembleDebug
+      run: ./gradlew assembleRelease -x lint || (cat app/build/reports/errors/* && exit 1)
+
+    - name: Sign APK
+      run: |
+        keytool -genkey -v -keystore release.keystore -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Test"
+        # Find apksigner
+        APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -r | head -n 1)
+        # Find the generated APK (could be app-release-unsigned.apk or app-release.apk)
+        APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+        echo "Signing $APK_PATH with $APKSIGNER"
+        $APKSIGNER sign --ks release.keystore --ks-pass pass:password $APK_PATH
+        cp $APK_PATH android/app/build/outputs/apk/release/mushaf-release.apk
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       if: success()
       with:
         name: mushaf-qiyam-apk
-        path: android/app/build/outputs/apk/debug/app-debug.apk
+        path: android/app/build/outputs/apk/release/mushaf-release.apk
 
     - name: Upload Logs on Failure
       uses: actions/upload-artifact@v4
@@ -61,7 +72,7 @@ jobs:
     - name: Create Release
       uses: ncipollo/release-action@v1
       with:
-        artifacts: "android/app/build/outputs/apk/debug/app-debug.apk"
+        artifacts: "android/app/build/outputs/apk/release/mushaf-release.apk"
         tag: "latest-react-native"
         name: "React Native APK Release"
         body: "Auto-generated Expo/React Native APK."

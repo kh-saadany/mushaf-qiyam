@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { initWhisper } from 'whisper.rn';
+import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription';
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter';
 import * as FileSystem from 'expo-file-system';
 import quranData from './assets/quran-pages.json';
 
@@ -16,11 +18,17 @@ export default function App() {
   const [currentSurah, setCurrentSurah] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [whisperContext, setWhisperContext] = useState(null);
+  const transcriberRef = useRef(null);
   
   const surahs = [...new Set(quranData.map(item => item.surahName))];
 
   useEffect(() => {
     checkModelExists();
+    return () => {
+      if (transcriberRef.current) {
+        transcriberRef.current.stop().catch(console.error);
+      }
+    };
   }, []);
 
   const checkModelExists = async () => {
@@ -68,23 +76,48 @@ export default function App() {
     setPrayerState('active');
     
     try {
-      await whisperContext.transcribeRealtime({
-        language: 'ar',
-        realtimeAudioSec: 60,
-        onProgress: (res) => {
-          setRecognizedText(res.text);
-          // matchVerse(res.text);
+      const audioStream = new AudioPcmStreamAdapter();
+      const transcriber = new RealtimeTranscriber(
+        {
+          whisperContext,
+          audioStream,
         },
-      });
+        {
+          audioSliceSec: 30,
+          transcribeOptions: {
+            language: 'ar',
+          },
+        },
+        {
+          onTranscribe: (event) => {
+            if (event.data?.text) {
+              setRecognizedText(event.data.text);
+              // matchVerse(event.data.text);
+            }
+          },
+          onError: (error) => {
+            console.error("Transcriber error:", error);
+          }
+        }
+      );
+      
+      transcriberRef.current = transcriber;
+      await transcriber.start();
     } catch (e) {
       console.error("Transcription error:", e);
+      setPrayerState('setup');
     }
   };
 
   const stopPrayer = async () => {
     setPrayerState('setup');
-    if (whisperContext) {
-      await whisperContext.stopTranscribe();
+    if (transcriberRef.current) {
+      try {
+        await transcriberRef.current.stop();
+      } catch (e) {
+        console.error("Failed to stop transcriber:", e);
+      }
+      transcriberRef.current = null;
     }
   };
 

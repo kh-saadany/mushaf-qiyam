@@ -31,6 +31,7 @@ export default function App() {
   
   const [selectedSurah, setSelectedSurah] = useState({ id: 1, name: "سُورَةُ ٱلْفَاتِحَةِ", page: 1 });
   const [surahList, setSurahList] = useState([]);
+  const [matchedVerseText, setMatchedVerseText] = useState('بانتظار بدء التلاوة...');
 
   const transcriberRef = useRef(null);
   const currentPageRef = useRef(1);
@@ -122,6 +123,7 @@ export default function App() {
     setRakahCount(1);
     spokenHistoryRef.current = '';
     setRecognizedText('بانتظار قراءتك للفاتحة...');
+    setMatchedVerseText('بانتظار تلاوة السورة...');
     
     setPrayerStateAndRef('waiting_fatiha');
 
@@ -246,6 +248,7 @@ export default function App() {
     
     setPrayerStateAndRef('waiting_fatiha');
     setRecognizedText('انتظار قراءة الفاتحة للركعة التالية...');
+    setMatchedVerseText('بانتظار تلاوة السورة...');
     spokenHistoryRef.current = '';
 
     flipPage(checkpointVerseRef.current.page);
@@ -301,47 +304,59 @@ export default function App() {
     return fatihaKeywords.some(keyword => cleanText.includes(normalizeArabic(keyword)));
   };
 
-  const findBestMatchingVerse = (verses, cleanQuery) => {
-    let bestVerse = null;
-    let maxOverlap = 0;
-    const queryTokens = cleanQuery.split(' ');
-
-    verses.forEach(verse => {
-      const cleanVerse = normalizeArabic(verse.text);
-      let overlap = 0;
-      queryTokens.forEach(word => {
-        if (cleanVerse.includes(word)) {
-          overlap++;
-        }
-      });
-
-      if (overlap > maxOverlap) {
-        maxOverlap = overlap;
-        bestVerse = verse;
-      }
-    });
-
-    return bestVerse || verses[0];
-  };
-
-  const checkTextSubSequenceMatch = (fullText, queryText) => {
-    const queryTokens = queryText.split(' ');
-    if (queryTokens.length < 3) return false;
-
-    let lastIndex = -1;
-    let matchCount = 0;
-
-    for (let word of queryTokens) {
-      const index = fullText.indexOf(word, lastIndex + 1);
-      if (index > lastIndex) {
-        if (lastIndex === -1 || (index - lastIndex) < 60) {
-          lastIndex = index;
-          matchCount++;
-        }
+  // 1. Levenshtein Distance character-level computation
+  const levenshteinDistance = (str1, str2) => {
+    const track = Array(str2.length + 1).fill(null).map(() =>
+      Array(str1.length + 1).fill(null));
+    for (let i = 0; i <= str1.length; i += 1) {
+      track[0][i] = i;
+    }
+    for (let j = 0; j <= str2.length; j += 1) {
+      track[j][0] = j;
+    }
+    for (let j = 1; j <= str2.length; j += 1) {
+      for (let i = 1; i <= str1.length; i += 1) {
+        const indicator = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        track[j][i] = Math.min(
+          track[j - 1][i] + 1, // deletion
+          track[j][i - 1] + 1, // insertion
+          track[j - 1][i - 1] + indicator // substitution
+        );
       }
     }
+    return track[str2.length][str1.length];
+  };
 
-    return (matchCount / queryTokens.length) >= 0.7;
+  // 2. Character-level Similarity percentage
+  const getSimilarity = (s1, s2) => {
+    if (s1.length === 0 && s2.length === 0) return 1.0;
+    const dist = levenshteinDistance(s1, s2);
+    const maxLength = Math.max(s1.length, s2.length);
+    return 1.0 - (dist / maxLength);
+  };
+
+  // 3. Word-level sliding window fuzzy matching
+  const fuzzySubstringMatch = (verseText, queryText, threshold = 0.75) => {
+    const queryWords = queryText.split(' ');
+    const verseWords = verseText.split(' ');
+    const qLen = queryWords.length;
+    const vLen = verseWords.length;
+    
+    if (vLen < qLen) {
+      return getSimilarity(verseText, queryText) >= threshold;
+    }
+    
+    let maxSim = 0;
+    for (let i = 0; i <= vLen - qLen; i++) {
+      const windowText = verseWords.slice(i, i + qLen).join(' ');
+      const sim = getSimilarity(windowText, queryText);
+      if (sim > maxSim) {
+        maxSim = sim;
+      }
+      if (maxSim >= threshold) return true;
+    }
+    
+    return false;
   };
 
   const matchRecitationWithQuran = (cleanSpoken) => {
@@ -356,47 +371,43 @@ export default function App() {
     const spokenTokens = cleanSpoken.split(' ');
     const totalTokens = spokenTokens.length;
 
-    const currentPageText = pageData.verses.map(v => normalizeArabic(v.text)).join(' ');
-    const nextPageText = nextPageData ? nextPageData.verses.map(v => normalizeArabic(v.text)).join(' ') : '';
-
     let matchedPage = null;
     let matchedVerse = null;
 
-    // Search currentPage with descending query lengths
-    const currentQueryLengths = [10, 8, 6, 4, 3, 2];
-    for (let len of currentQueryLengths) {
+    // Search with query lengths in descending order (longer matches first)
+    const queryLengths = [10, 8, 6, 4, 3, 2];
+    
+    // First, scan verses of the current page
+    for (let len of queryLengths) {
       if (totalTokens < len) continue;
       const cleanQuery = spokenTokens.slice(-len).join(' ');
 
-      if (currentPageText.includes(cleanQuery)) {
-        matchedPage = currentPageRef.current;
-        matchedVerse = findBestMatchingVerse(pageData.verses, cleanQuery);
-        break;
+      for (let verse of pageData.verses) {
+        const cleanVerse = normalizeArabic(verse.text);
+        if (fuzzySubstringMatch(cleanVerse, cleanQuery, 0.75)) {
+          matchedPage = currentPageRef.current;
+          matchedVerse = verse;
+          break;
+        }
       }
-      if (checkTextSubSequenceMatch(currentPageText, cleanQuery)) {
-        matchedPage = currentPageRef.current;
-        matchedVerse = findBestMatchingVerse(pageData.verses, cleanQuery);
-        break;
-      }
+      if (matchedVerse) break;
     }
 
-    // Search nextPage if no match on current page
-    if (!matchedPage && nextPageText) {
-      const nextQueryLengths = [10, 8, 6, 4];
-      for (let len of nextQueryLengths) {
+    // If no match on current page, scan verses of the next page
+    if (!matchedVerse && nextPageData) {
+      for (let len of queryLengths) {
         if (totalTokens < len) continue;
         const cleanQuery = spokenTokens.slice(-len).join(' ');
 
-        if (nextPageText.includes(cleanQuery)) {
-          matchedPage = currentPageRef.current + 1;
-          matchedVerse = findBestMatchingVerse(nextPageData.verses, cleanQuery);
-          break;
+        for (let verse of nextPageData.verses) {
+          const cleanVerse = normalizeArabic(verse.text);
+          if (fuzzySubstringMatch(cleanVerse, cleanQuery, 0.75)) {
+            matchedPage = currentPageRef.current + 1;
+            matchedVerse = verse;
+            break;
+          }
         }
-        if (checkTextSubSequenceMatch(nextPageText, cleanQuery)) {
-          matchedPage = currentPageRef.current + 1;
-          matchedVerse = findBestMatchingVerse(nextPageData.verses, cleanQuery);
-          break;
-        }
+        if (matchedVerse) break;
       }
     }
 
@@ -406,6 +417,8 @@ export default function App() {
         ayah: matchedVerse.ayah,
         surahName: matchedVerse.surahName
       };
+
+      setMatchedVerseText(`سورة ${getSurahDisplayName(matchedVerse.surahName)} - آية ${matchedVerse.ayah}:\n﴿ ${matchedVerse.text} ﴾`);
 
       if (matchedPage > currentPageRef.current) {
         flipPage(matchedPage);
@@ -532,8 +545,8 @@ export default function App() {
           {prayerState === 'reciting' && '🎙️ تلاوة نشطة متتبعة...'}
           {prayerState === 'ruku' && '🛑 ركوع أو سجود'}
         </Text>
-        <Text style={styles.toastText} numberOfLines={1} ellipsizeMode="tail">
-          {recognizedText}
+        <Text style={styles.toastText} numberOfLines={3} ellipsizeMode="tail">
+          {prayerState === 'reciting' && matchedVerseText ? matchedVerseText : recognizedText}
         </Text>
       </View>
 

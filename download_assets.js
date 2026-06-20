@@ -1,6 +1,8 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const sharp = require('sharp');
+
 
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
@@ -31,8 +33,9 @@ async function downloadAllImages(concurrency = 25) {
   for (let i = 1; i <= 604; i++) {
     const pageStr = String(i).padStart(3, '0');
     const imgUrl = `https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/${pageStr}.png`;
-    const destPath = path.join(__dirname, 'assets', 'mushaf', `${pageStr}.png`);
-    tasks.push({ url: imgUrl, dest: destPath, id: i });
+    const tempPngPath = path.join(__dirname, 'assets', 'mushaf', `${pageStr}.temp.png`);
+    const destWebpPath = path.join(__dirname, 'assets', 'mushaf', `${pageStr}.webp`);
+    tasks.push({ url: imgUrl, tempPng: tempPngPath, destWebp: destWebpPath, id: i });
   }
 
   let index = 0;
@@ -41,11 +44,11 @@ async function downloadAllImages(concurrency = 25) {
       const task = tasks[index++];
       if (!task) break;
       
-      // If file already exists and has size > 10KB, skip download
+      // If WebP file already exists and has size > 5KB, skip download and conversion
       try {
-        if (fs.existsSync(task.dest)) {
-          const stats = fs.statSync(task.dest);
-          if (stats.size > 10 * 1024) {
+        if (fs.existsSync(task.destWebp)) {
+          const stats = fs.statSync(task.destWebp);
+          if (stats.size > 5 * 1024) {
             continue;
           }
         }
@@ -54,13 +57,30 @@ async function downloadAllImages(concurrency = 25) {
       let retries = 3;
       while (retries > 0) {
         try {
-          await downloadFile(task.url, task.dest);
-          console.log(`Downloaded image ${task.id}/604`);
+          // 1. Download temporary PNG
+          await downloadFile(task.url, task.tempPng);
+          
+          // 2. Convert to WebP using sharp with 90% quality
+          await sharp(task.tempPng)
+            .webp({ quality: 90 })
+            .toFile(task.destWebp);
+            
+          // 3. Delete temporary PNG file
+          fs.unlinkSync(task.tempPng);
+          
+          console.log(`Downloaded and converted image ${task.id}/604`);
           break;
         } catch (err) {
+          // Clean up temp file on error if it exists
+          try {
+            if (fs.existsSync(task.tempPng)) {
+              fs.unlinkSync(task.tempPng);
+            }
+          } catch (e) {}
+          
           retries--;
           if (retries === 0) {
-            console.error(`Failed to download image ${task.id}:`, err.message);
+            console.error(`Failed to process image ${task.id}:`, err.message);
             throw err;
           }
           await new Promise(r => setTimeout(r, 1000));
@@ -96,7 +116,7 @@ function generateImagesIndex() {
   let content = 'export const quranImages = {\n';
   for (let i = 1; i <= 604; i++) {
     const pageStr = String(i).padStart(3, '0');
-    content += `  ${i}: require('./mushaf/${pageStr}.png'),\n`;
+    content += `  ${i}: require('./mushaf/${pageStr}.webp'),\n`;
   }
   content += '};\n';
   fs.writeFileSync(indexPath, content);

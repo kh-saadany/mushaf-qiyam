@@ -10,6 +10,7 @@
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
     "react-native": "0.85.3",
+    "sharp": "^0.35.2",
     "whisper.rn": "^0.6.0"
   },
   "scripts": {

@@ -40,6 +40,7 @@ export default function App() {
   const checkpointVerseRef = useRef({ page: 1, surah: 1, ayah: 0, surahName: '' });
   const rakahCountRef = useRef(1);
   const spokenHistoryRef = useRef('');
+  const lastNormalizedTextRef = useRef('');
 
   // Extract Surah List from quranData
   useEffect(() => {
@@ -304,27 +305,34 @@ export default function App() {
     return fatihaKeywords.some(keyword => cleanText.includes(normalizeArabic(keyword)));
   };
 
-  // 1. Levenshtein Distance character-level computation
+  // 1. Levenshtein Distance character-level computation (Optimized 1D Array)
   const levenshteinDistance = (str1, str2) => {
-    const track = Array(str2.length + 1).fill(null).map(() =>
-      Array(str1.length + 1).fill(null));
-    for (let i = 0; i <= str1.length; i += 1) {
-      track[0][i] = i;
+    if (str1.length === 0) return str2.length;
+    if (str2.length === 0) return str1.length;
+    
+    let prevRow = Array(str2.length + 1);
+    let currRow = Array(str2.length + 1);
+    
+    for (let j = 0; j <= str2.length; j++) {
+      prevRow[j] = j;
     }
-    for (let j = 0; j <= str2.length; j += 1) {
-      track[j][0] = j;
-    }
-    for (let j = 1; j <= str2.length; j += 1) {
-      for (let i = 1; i <= str1.length; i += 1) {
-        const indicator = str1[i - 1] === str2[j - 1] ? 0 : 1;
-        track[j][i] = Math.min(
-          track[j - 1][i] + 1, // deletion
-          track[j][i - 1] + 1, // insertion
-          track[j - 1][i - 1] + indicator // substitution
+    
+    for (let i = 1; i <= str1.length; i++) {
+      currRow[0] = i;
+      for (let j = 1; j <= str2.length; j++) {
+        const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        currRow[j] = Math.min(
+          currRow[j - 1] + 1,      // insertion
+          prevRow[j] + 1,          // deletion
+          prevRow[j - 1] + cost    // substitution
         );
       }
+      let temp = prevRow;
+      prevRow = currRow;
+      currRow = temp;
     }
-    return track[str2.length][str1.length];
+    
+    return prevRow[str2.length];
   };
 
   // 2. Character-level Similarity percentage
@@ -362,6 +370,9 @@ export default function App() {
   const matchRecitationWithQuran = (cleanSpoken) => {
     if (!quranData) return;
 
+    if (cleanSpoken === lastNormalizedTextRef.current) return;
+    lastNormalizedTextRef.current = cleanSpoken;
+
     const pageIndex = currentPageRef.current - 1;
     const pageData = quranData[pageIndex];
     const nextPageData = quranData[pageIndex + 1];
@@ -378,13 +389,19 @@ export default function App() {
     const queryLengths = [10, 8, 6, 4, 3, 2];
     
     // First, scan verses of the current page
+    let startIndex = 0;
+    if (lastMatchedVerseRef.current && lastMatchedVerseRef.current.surah === pageData.verses[0]?.surah) {
+      const idx = pageData.verses.findIndex(v => v.ayah === lastMatchedVerseRef.current.ayah);
+      if (idx !== -1) startIndex = idx;
+    }
+
     for (let len of queryLengths) {
       if (totalTokens < len) continue;
       const cleanQuery = spokenTokens.slice(-len).join(' ');
 
-      for (let verse of pageData.verses) {
-        const cleanVerse = normalizeArabic(verse.text);
-        if (fuzzySubstringMatch(cleanVerse, cleanQuery, 0.75)) {
+      for (let i = startIndex; i < pageData.verses.length; i++) {
+        const verse = pageData.verses[i];
+        if (fuzzySubstringMatch(verse.cleanText, cleanQuery, 0.75)) {
           matchedPage = currentPageRef.current;
           matchedVerse = verse;
           break;
@@ -400,8 +417,7 @@ export default function App() {
         const cleanQuery = spokenTokens.slice(-len).join(' ');
 
         for (let verse of nextPageData.verses) {
-          const cleanVerse = normalizeArabic(verse.text);
-          if (fuzzySubstringMatch(cleanVerse, cleanQuery, 0.75)) {
+          if (fuzzySubstringMatch(verse.cleanText, cleanQuery, 0.75)) {
             matchedPage = currentPageRef.current + 1;
             matchedVerse = verse;
             break;
@@ -422,6 +438,20 @@ export default function App() {
 
       if (matchedPage > currentPageRef.current) {
         flipPage(matchedPage);
+      } else {
+        // Preemptive page flip: if we matched the last verse of the current page
+        if (matchedVerse === pageData.verses[pageData.verses.length - 1] && nextPageData) {
+          const verseWords = matchedVerse.cleanText.split(' ');
+          if (verseWords.length >= 3 && totalTokens >= 3) {
+            const queryLastWords = spokenTokens.slice(-3).join(' ');
+            const verseLastWords = verseWords.slice(-3).join(' ');
+            if (getSimilarity(verseLastWords, queryLastWords) >= 0.7) {
+               flipPage(currentPageRef.current + 1);
+            }
+          } else if (verseWords.length < 3) {
+             flipPage(currentPageRef.current + 1);
+          }
+        }
       }
     }
   };

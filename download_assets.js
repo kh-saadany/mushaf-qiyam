@@ -34,8 +34,8 @@ async function downloadAllImages(concurrency = 25) {
     const pageStr = String(i).padStart(3, '0');
     const imgUrl = `https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/${pageStr}.png`;
     const tempPngPath = path.join(__dirname, 'assets', 'mushaf', `${pageStr}.temp.png`);
-    const destWebpPath = path.join(__dirname, 'assets', 'mushaf', `${pageStr}.webp`);
-    tasks.push({ url: imgUrl, tempPng: tempPngPath, destWebp: destWebpPath, id: i });
+    const destPngPath = path.join(__dirname, 'assets', 'mushaf', `${pageStr}.png`);
+    tasks.push({ url: imgUrl, tempPng: tempPngPath, destPng: destPngPath, id: i });
   }
 
   let index = 0;
@@ -44,10 +44,10 @@ async function downloadAllImages(concurrency = 25) {
       const task = tasks[index++];
       if (!task) break;
       
-      // If WebP file already exists and has size > 5KB, skip download and conversion
+      // If PNG file already exists and has size > 5KB, skip download and conversion
       try {
-        if (fs.existsSync(task.destWebp)) {
-          const stats = fs.statSync(task.destWebp);
+        if (fs.existsSync(task.destPng)) {
+          const stats = fs.statSync(task.destPng);
           if (stats.size > 5 * 1024) {
             continue;
           }
@@ -60,10 +60,11 @@ async function downloadAllImages(concurrency = 25) {
           // 1. Download temporary PNG
           await downloadFile(task.url, task.tempPng);
           
-          // 2. Convert to WebP using sharp with 90% quality
+          // 2. Resize to 1200px width and convert to 4-bit PNG (16 colors)
           await sharp(task.tempPng)
-            .webp({ quality: 90 })
-            .toFile(task.destWebp);
+            .resize({ width: 1200 })
+            .png({ palette: true, colors: 16 })
+            .toFile(task.destPng);
             
           // 3. Delete temporary PNG file
           fs.unlinkSync(task.tempPng);
@@ -116,7 +117,7 @@ function generateImagesIndex() {
   let content = 'export const quranImages = {\n';
   for (let i = 1; i <= 604; i++) {
     const pageStr = String(i).padStart(3, '0');
-    content += `  ${i}: require('./mushaf/${pageStr}.webp'),\n`;
+    content += `  ${i}: require('./mushaf/${pageStr}.png'),\n`;
   }
   content += '};\n';
   fs.writeFileSync(indexPath, content);

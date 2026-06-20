@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,3 +47,13 @@ jobs:
         with:
           name: mushaf-qiyam-apk
           path: android/app/build/outputs/apk/release/mushaf-qiyam.apk
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "android/app/build/outputs/apk/release/mushaf-qiyam.apk"
+          tag: "latest-release"
+          name: "Mushaf Qiyam APK Release"
+          body: "Auto-generated Mushaf Qiyam APK."
+          allowUpdates: true
+          makeLatest: true

@@ -39,3 +39,11 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local assets (downloaded on build server)
+/assets/ggml-model.bin
+/assets/mushaf/
+/assets/quran-images.js
+/qrcode.png
+
+

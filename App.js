@@ -14,26 +14,20 @@ import {
 import { initWhisper } from 'whisper.rn';
 import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index.js';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter.js';
-import * as FileSystem from 'expo-file-system';
 import { StatusBar } from 'expo-status-bar';
 import quranData from './assets/quran-pages.json';
-
-const MODEL_URL = "https://huggingface.co/B1uqa/whisper-base-ar-quran-ggml/resolve/main/ggml-model.bin";
-const MODEL_FILE_NAME = "ggml-model-v2.bin";
-const IMAGE_BASE_URL = "https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/";
+import { quranImages } from './assets/quran-images.js';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function App() {
-  const [modelReady, setModelReady] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const [isDownloading, setIsDownloading] = useState(false);
   const [prayerState, setPrayerState] = useState('setup'); // 'setup', 'waiting_fatiha', 'reciting', 'ruku'
   const [rakahCount, setRakahCount] = useState(1);
   const [recognizedText, setRecognizedText] = useState('بانتظار قراءتك...');
   const [currentSurah, setCurrentSurah] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [whisperContext, setWhisperContext] = useState(null);
+  const [initializing, setInitializing] = useState(true);
   
   const [selectedSurah, setSelectedSurah] = useState({ id: 1, name: "سُورَةُ ٱلْفَاتِحَةِ", page: 1 });
   const [surahList, setSurahList] = useState([]);
@@ -68,7 +62,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    checkModelExists();
+    initializeWhisper();
     return () => {
       if (transcriberRef.current) {
         transcriberRef.current.stop().catch(console.error);
@@ -76,82 +70,17 @@ export default function App() {
     };
   }, []);
 
-  const checkModelExists = async () => {
-    const fileInfo = await FileSystem.getInfoAsync(FileSystem.documentDirectory + MODEL_FILE_NAME);
-    // Ensure the file exists and is of correct size (whisper base is ~140MB, let's check > 100MB)
-    if (fileInfo.exists && fileInfo.size > 100 * 1024 * 1024) {
-      setModelReady(true);
-      initializeWhisper(fileInfo.uri);
-    } else if (fileInfo.exists) {
-      // Delete corrupt/incomplete file safely
-      await FileSystem.deleteAsync(fileInfo.uri, { idempotent: true }).catch(console.error);
-    }
-  };
-
-  const downloadModel = async () => {
-    setIsDownloading(true);
-    setDownloadProgress(0);
-
-    let finalUrl = MODEL_URL;
+  const initializeWhisper = async () => {
     try {
-      // Resolve redirects beforehand using standard fetch to avoid Android expo-file-system redirect issues
-      const response = await fetch(MODEL_URL, { method: 'HEAD' });
-      if (response.url) {
-        finalUrl = response.url;
-      }
-    } catch (e) {
-      console.warn("Failed to resolve redirect URL with fetch HEAD:", e);
-    }
-
-    const downloadResumable = FileSystem.createDownloadResumable(
-      finalUrl,
-      FileSystem.documentDirectory + MODEL_FILE_NAME,
-      {},
-      (downloadProgress) => {
-        const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgress;
-        if (totalBytesExpectedToWrite && totalBytesExpectedToWrite > 0) {
-          const progress = (totalBytesWritten / totalBytesExpectedToWrite) * 100;
-          setDownloadProgress(progress);
-        } else {
-          // Fallback: estimate progress assuming a model size of 148MB (147,951,465 bytes)
-          const approxTotal = 147951465;
-          const progress = Math.min((totalBytesWritten / approxTotal) * 100, 99.9);
-          setDownloadProgress(progress);
-        }
-      }
-    );
-
-    try {
-      const { uri } = await downloadResumable.downloadAsync();
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-      if (fileInfo.exists && fileInfo.size > 100 * 1024 * 1024) {
-        setModelReady(true);
-        setIsDownloading(false);
-        initializeWhisper(uri);
-      } else {
-        throw new Error("Downloaded file is incomplete or corrupted");
-      }
-    } catch (e) {
-      console.error("Download model failed:", e);
-      alert("فشل تحميل الموديل الصوتي. يرجى التحقق من اتصال الإنترنت والمحاولة مجدداً.");
-      setIsDownloading(false);
-      setDownloadProgress(0);
-      // Clean up corrupt downloads safely
-      const fileUri = FileSystem.documentDirectory + MODEL_FILE_NAME;
-      const fileInfo = await FileSystem.getInfoAsync(fileUri);
-      if (fileInfo.exists) {
-        await FileSystem.deleteAsync(fileUri, { idempotent: true }).catch(console.error);
-      }
-    }
-  };
-
-  const initializeWhisper = async (path) => {
-    try {
-      const ctx = await initWhisper({ filePath: path });
+      setInitializing(true);
+      // Load the model directly from bundled assets using require
+      const ctx = await initWhisper({ filePath: require('./assets/ggml-model.bin') });
       setWhisperContext(ctx);
+      setInitializing(false);
     } catch (e) {
       console.error("Failed to init whisper:", e);
-      alert("فشل تهيئة محرك الصوت. يرجى إعادة محاولة تشغيل التطبيق.");
+      alert("فشل تهيئة محرك الصوت المحلي أوفلاين. يرجى إغلاق التطبيق وإعادة تشغيله.");
+      setInitializing(false);
     }
   };
 
@@ -363,7 +292,7 @@ export default function App() {
       'الحمد لله رب العالمين',
       'الرحمن الرحيم',
       'مالك يوم الدين',
-      'اياك نعبد واياك نستعين',
+      'ياك نعبد واياك نستعين',
       'اهدنا الصراط المستقيم',
       'صراط الذين انعمت عليهم',
       'غير المغضوب عليهم',
@@ -489,6 +418,20 @@ export default function App() {
   };
 
   // UI Rendering
+  if (initializing || !whisperContext) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" />
+        <Text style={styles.title}>مصحف القيام</Text>
+        <Text style={styles.subtitle}>المساعد الذكي لتتبع التلاوة والتقليب التلقائي</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>جاري تهيئة محرك الصوت المحلي أوفلاين...</Text>
+          <ActivityIndicator size="large" color="#00ffcc" style={{ marginTop: 20 }} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (prayerState === 'setup') {
     return (
       <SafeAreaView style={styles.container}>
@@ -496,63 +439,43 @@ export default function App() {
         <Text style={styles.title}>مصحف القيام</Text>
         <Text style={styles.subtitle}>المساعد الذكي لتتبع التلاوة والتقليب التلقائي</Text>
 
-        {!modelReady ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>تحميل الموديل الصوتي أوفلاين</Text>
-            <Text style={styles.cardSubtitle}>مطلوب لتشغيل ميزة تتبع التلاوة بدون إنترنت (حوالي 148 ميجابايت)</Text>
-            {isDownloading ? (
-              <View style={styles.progressContainer}>
-                <Text style={styles.whiteText}>جاري التحميل... {Math.round(downloadProgress)}%</Text>
-                <View style={styles.progressBarBg}>
-                  <View style={[styles.progressBarFill, { width: `${downloadProgress}%` }]} />
-                </View>
-                <ActivityIndicator size="large" color="#00ffcc" style={{ marginTop: 20 }} />
-              </View>
-            ) : (
-              <TouchableOpacity style={styles.btnPrimary} onPress={downloadModel}>
-                <Text style={styles.btnTextPrimary}>بدء التحميل الآن</Text>
-              </TouchableOpacity>
-            )}
+        <View style={styles.cardExpanded}>
+          <Text style={styles.cardTitle}>تحديد سورة البداية</Text>
+          <View style={styles.selectedIndicator}>
+            <Text style={styles.selectedLabel}>السورة المختارة:</Text>
+            <Text style={styles.selectedValue}>{getSurahDisplayName(selectedSurah.name)} (صفحة {selectedSurah.page})</Text>
           </View>
-        ) : (
-          <View style={styles.cardExpanded}>
-            <Text style={styles.cardTitle}>تحديد سورة البداية</Text>
-            <View style={styles.selectedIndicator}>
-              <Text style={styles.selectedLabel}>السورة المختارة:</Text>
-              <Text style={styles.selectedValue}>{getSurahDisplayName(selectedSurah.name)} (صفحة {selectedSurah.page})</Text>
-            </View>
 
-            <View style={styles.scrollListContainer}>
-              <ScrollView 
-                contentContainerStyle={styles.surahList}
-                showsVerticalScrollIndicator={true}
-              >
-                {surahList.map((surah) => (
-                  <TouchableOpacity 
-                    key={surah.id} 
-                    style={[
-                      styles.surahItem, 
-                      selectedSurah.id === surah.id && styles.surahItemActive
-                    ]} 
-                    onPress={() => setSelectedSurah(surah)}
-                  >
-                    <Text style={[
-                      styles.surahText, 
-                      selectedSurah.id === surah.id && styles.surahTextActive
-                    ]}>
-                      {getSurahDisplayName(surah.name)}
-                    </Text>
-                    <Text style={styles.surahPageText}>صفحة {surah.page}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-
-            <TouchableOpacity style={styles.btnStart} onPress={startPrayer}>
-              <Text style={styles.btnTextPrimary}>ابدأ الصلاة الآن 🎙️</Text>
-            </TouchableOpacity>
+          <View style={styles.scrollListContainer}>
+            <ScrollView 
+              contentContainerStyle={styles.surahList}
+              showsVerticalScrollIndicator={true}
+            >
+              {surahList.map((surah) => (
+                <TouchableOpacity 
+                  key={surah.id} 
+                  style={[
+                    styles.surahItem, 
+                    selectedSurah.id === surah.id && styles.surahItemActive
+                  ]} 
+                  onPress={() => setSelectedSurah(surah)}
+                >
+                  <Text style={[
+                    styles.surahText, 
+                    selectedSurah.id === surah.id && styles.surahTextActive
+                  ]}>
+                    {getSurahDisplayName(surah.name)}
+                  </Text>
+                  <Text style={styles.surahPageText}>صفحة {surah.page}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
-        )}
+
+          <TouchableOpacity style={styles.btnStart} onPress={startPrayer}>
+            <Text style={styles.btnTextPrimary}>ابدأ الصلاة الآن 🎙️</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -591,7 +514,7 @@ export default function App() {
 
         {/* Mushaf Page Image */}
         <Image 
-          source={{ uri: `${IMAGE_BASE_URL}${String(currentPage).padStart(3, '0')}.png` }}
+          source={quranImages[currentPage]}
           style={styles.mushafImage}
           fadeDuration={200}
         />
@@ -970,4 +893,3 @@ const styles = StyleSheet.create({
     fontWeight: 'bold'
   }
 });
-

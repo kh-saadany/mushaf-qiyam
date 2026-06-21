@@ -46,4 +46,11 @@ yarn-error.*
 /assets/quran-images.js
 /qrcode.png
 
+# Build artifacts and temp files
+apk_folder/
+apk_folder2/
+artifact.zip
+test.txt
+
+
 

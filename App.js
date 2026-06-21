@@ -11,12 +11,15 @@ import {
   Dimensions,
   SafeAreaView
 } from 'react-native';
-import { initWhisper } from 'whisper.rn';
+import { initWhisper, initWhisperVad } from 'whisper.rn';
 import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index.js';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter.js';
 import { StatusBar } from 'expo-status-bar';
+import * as FileSystem from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
-import { quranImages } from './assets/quran-images.js';
+
+const APP_VERSION = '1.1.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -27,11 +30,21 @@ export default function App() {
   const [currentSurah, setCurrentSurah] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [whisperContext, setWhisperContext] = useState(null);
+  const [vadContext, setVadContext] = useState(null);
   const [initializing, setInitializing] = useState(true);
   
   const [selectedSurah, setSelectedSurah] = useState({ id: 1, name: "سُورَةُ ٱلْفَاتِحَةِ", page: 1 });
   const [surahList, setSurahList] = useState([]);
   const [matchedVerseText, setMatchedVerseText] = useState('بانتظار بدء التلاوة...');
+
+  // New states for settings and updates
+  const [showSettings, setShowSettings] = useState(false);
+  const [copyingAssets, setCopyingAssets] = useState(false);
+  const [copyProgress, setCopyProgress] = useState(0);
+  const [updateStatus, setUpdateStatus] = useState('idle'); // 'idle', 'checking', 'available', 'downloading', 'upToDate', 'error'
+  const [latestVersion, setLatestVersion] = useState('');
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [updateAssetUrl, setUpdateAssetUrl] = useState('');
 
   const transcriberRef = useRef(null);
   const currentPageRef = useRef(1);
@@ -64,7 +77,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    initializeWhisper();
+    prepareAssets();
     return () => {
       if (transcriberRef.current) {
         transcriberRef.current.stop().catch(console.error);
@@ -72,17 +85,173 @@ export default function App() {
     };
   }, []);
 
+  const prepareAssets = async () => {
+    try {
+      const modelLocalUri = FileSystem.documentDirectory + 'ggml-model.bin';
+      const vadLocalUri = FileSystem.documentDirectory + 'ggml-silero-v6.2.0.bin';
+      
+      const modelInfo = await FileSystem.getInfoAsync(modelLocalUri);
+      const vadInfo = await FileSystem.getInfoAsync(vadLocalUri);
+
+      // If both models already exist and are valid, load them
+      if (modelInfo.exists && modelInfo.size > 100 * 1024 * 1024 && vadInfo.exists && vadInfo.size > 1024 * 1024) {
+        await initializeWhisper();
+        return;
+      }
+
+      // Check if assets are bundled inside the APK (Android raw assets)
+      const modelAssetInfo = await FileSystem.getInfoAsync('asset:/ggml-model.bin');
+      if (!modelAssetInfo.exists) {
+        alert("ملفات النظام غير موجودة. يرجى تثبيت النسخة الكاملة (Full APK) أول مرة.");
+        setInitializing(false);
+        return;
+      }
+
+      setCopyingAssets(true);
+      setCopyProgress(0);
+
+      // Create target directory
+      const mushafDir = FileSystem.documentDirectory + 'mushaf/';
+      await FileSystem.makeDirectoryAsync(mushafDir, { intermediates: true }).catch(() => {});
+
+      // Copy model
+      await FileSystem.copyAsync({
+        from: 'asset:/ggml-model.bin',
+        to: modelLocalUri
+      });
+      setCopyProgress(10);
+      
+      // Copy VAD model
+      const vadAssetInfo = await FileSystem.getInfoAsync('asset:/ggml-silero-v6.2.0.bin');
+      if (vadAssetInfo.exists) {
+        await FileSystem.copyAsync({
+          from: 'asset:/ggml-silero-v6.2.0.bin',
+          to: vadLocalUri
+        });
+      }
+      setCopyProgress(20);
+
+      // Copy Quran images
+      for (let i = 1; i <= 604; i++) {
+        const pageStr = String(i).padStart(3, '0');
+        await FileSystem.copyAsync({
+          from: `asset:/mushaf/${pageStr}.png`,
+          to: `${mushafDir}${pageStr}.png`
+        });
+
+        if (i % 30 === 0 || i === 604) {
+          const progress = 20 + Math.round((i / 604) * 80);
+          setCopyProgress(progress);
+        }
+      }
+
+      setCopyingAssets(false);
+      await initializeWhisper();
+    } catch (error) {
+      console.error("Failed to prepare assets:", error);
+      alert("حدث خطأ أثناء نسخ ملفات النظام: " + error.message);
+      setCopyingAssets(false);
+      setInitializing(false);
+    }
+  };
+
   const initializeWhisper = async () => {
     try {
       setInitializing(true);
-      // Load the model directly from bundled assets using require
-      const ctx = await initWhisper({ filePath: require('./assets/ggml-model.bin') });
+      const modelLocalUri = FileSystem.documentDirectory + 'ggml-model.bin';
+      const vadLocalUri = FileSystem.documentDirectory + 'ggml-silero-v6.2.0.bin';
+      
+      const ctx = await initWhisper({ filePath: modelLocalUri });
       setWhisperContext(ctx);
+      
+      const vadInfo = await FileSystem.getInfoAsync(vadLocalUri);
+      if (vadInfo.exists) {
+        const vCtx = await initWhisperVad({ filePath: vadLocalUri });
+        setVadContext(vCtx);
+      }
+      
       setInitializing(false);
     } catch (e) {
       console.error("Failed to init whisper:", e);
       alert("فشل تهيئة محرك الصوت المحلي أوفلاين. يرجى إغلاق التطبيق وإعادة تشغيله.");
       setInitializing(false);
+    }
+  };
+
+  const checkForUpdates = async () => {
+    try {
+      setUpdateStatus('checking');
+      
+      // Fetch package.json from main branch
+      const response = await fetch('https://raw.githubusercontent.com/kh-saadany/mushaf-qiyam/main/package.json', {
+        headers: {
+          'User-Agent': 'MushafQiyam-App-Updater',
+          'Cache-Control': 'no-cache'
+        }
+      });
+      
+      if (response.status !== 200) {
+        throw new Error(`سيرفر جيتهب عاد برمز: ${response.status}`);
+      }
+      const data = await response.json();
+      const remoteVersion = data.version;
+
+      setLatestVersion(remoteVersion);
+      setUpdateAssetUrl('https://github.com/kh-saadany/mushaf-qiyam/releases/download/latest-react-native/mushaf-lite.apk');
+      
+      if (remoteVersion !== APP_VERSION) {
+        setUpdateStatus('available');
+      } else {
+        setUpdateStatus('upToDate');
+      }
+    } catch (e) {
+      console.error(e);
+      setUpdateStatus('error');
+      alert('فشل التحقق من التحديثات: ' + e.message);
+    }
+  };
+
+  const downloadAndInstallUpdate = async (assetUrl) => {
+    try {
+      setUpdateStatus('downloading');
+      setDownloadProgress(0);
+
+      const downloadResumable = FileSystem.createDownloadResumable(
+        assetUrl,
+        FileSystem.documentDirectory + 'mushaf-update.apk',
+        {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36'
+          }
+        },
+        (progressData) => {
+          const progress = progressData.totalBytesWritten / progressData.totalBytesExpectedToWrite;
+          setDownloadProgress(Math.round(progress * 100));
+        }
+      );
+
+      const { uri } = await downloadResumable.downloadAsync();
+      setUpdateStatus('idle');
+
+      // Prompt installation
+      await installApk(uri);
+    } catch (e) {
+      console.error(e);
+      setUpdateStatus('error');
+      alert('فشل تحميل التحديث: ' + e.message);
+    }
+  };
+
+  const installApk = async (fileUri) => {
+    try {
+      const contentUri = await FileSystem.getContentUriAsync(fileUri);
+      await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
+        data: contentUri,
+        flags: 1, // Intent.FLAG_GRANT_READ_URI_PERMISSION
+      });
+    } catch (e) {
+      console.error("Installation failed:", e);
+      alert("فشل تشغيل مثبت الحزم: " + e.message);
     }
   };
 
@@ -133,19 +302,28 @@ export default function App() {
       const transcriber = new RealtimeTranscriber(
         {
           whisperContext,
+          vadContext,
           audioStream,
         },
         {
-          audioSliceSec: 30,
+          audioSliceSec: 15, // process smaller slices for memory efficiency
+          realtimeProcessingPauseMs: 1000, // pause 1 sec to avoid spamming the JS bridge
+          initRealtimeAfterMs: 1000, // wait 1 sec before initial transcription
           transcribeOptions: {
             language: 'ar',
           },
         },
         {
           onTranscribe: (event) => {
-            if (event.data?.result) {
-              const text = event.data.result;
+            if (typeof event.data?.result === 'string') {
+              const text = event.data.result.trim();
+              if (text === '') return;
               handleSpokenWords(text);
+            }
+          },
+          onVad: (event) => {
+            if (event.type === 'speech_start') {
+              // Optionally show hearing state
             }
           },
           onError: (error) => {
@@ -462,6 +640,20 @@ export default function App() {
   };
 
   // UI Rendering
+  if (copyingAssets) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" />
+        <Text style={styles.title}>مصحف القيام</Text>
+        <Text style={styles.subtitle}>جاري تهيئة وتثبيت ملفات المصحف والذكاء الاصطناعي محلياً لأول مرة...</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>جاري نسخ الملفات: {copyProgress}%</Text>
+          <ActivityIndicator size="large" color="#00ffcc" style={{ marginTop: 20 }} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (initializing || !whisperContext) {
     return (
       <SafeAreaView style={styles.container}>
@@ -476,11 +668,103 @@ export default function App() {
     );
   }
 
+  if (showSettings) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" />
+        <View style={styles.settingsHeader}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => setShowSettings(false)}>
+            <Text style={styles.backBtnText}>↩ العودة</Text>
+          </TouchableOpacity>
+          <Text style={styles.settingsTitle}>إعدادات التطبيق ⚙️</Text>
+        </View>
+
+        <View style={styles.settingsCard}>
+          <Text style={sectionTitleStyle()}>تحديث التطبيق</Text>
+          <View style={styles.settingsRow}>
+            <Text style={styles.settingsLabel}>إصدار التطبيق الحالي:</Text>
+            <Text style={styles.settingsValue}>{APP_VERSION}</Text>
+          </View>
+
+          {updateStatus === 'idle' && (
+            <TouchableOpacity style={styles.btnPrimary} onPress={checkForUpdates}>
+              <Text style={styles.btnTextPrimary}>التحقق من وجود تحديثات 🔍</Text>
+            </TouchableOpacity>
+          )}
+
+          {updateStatus === 'checking' && (
+            <View style={styles.updateStatusContainer}>
+              <ActivityIndicator color="#00ffcc" />
+              <Text style={styles.whiteText}>جاري التحقق من التحديثات...</Text>
+            </View>
+          )}
+
+          {updateStatus === 'upToDate' && (
+            <View style={styles.updateStatusContainer}>
+              <Text style={styles.greenText}>التطبيق محدث لأحدث إصدار! ✅</Text>
+              <TouchableOpacity style={styles.btnSecondary} onPress={checkForUpdates}>
+                <Text style={styles.btnTextSecondary}>إعادة التحقق 🔍</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {updateStatus === 'available' && (
+            <View style={styles.updateStatusContainer}>
+              <Text style={styles.yellowText}>يوجد إصدار جديد متاح: {latestVersion} 🚀</Text>
+              <TouchableOpacity 
+                style={styles.btnStart} 
+                onPress={() => downloadAndInstallUpdate(updateAssetUrl)}
+              >
+                <Text style={styles.btnTextPrimary}>تنزيل وتثبيت التحديث الآن 📥</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {updateStatus === 'downloading' && (
+            <View style={styles.progressContainer}>
+              <Text style={styles.whiteText}>جاري تحميل التحديث... {downloadProgress}%</Text>
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFill, { width: `${downloadProgress}%` }]} />
+              </View>
+              <ActivityIndicator size="large" color="#00ffcc" style={{ marginTop: 20 }} />
+            </View>
+          )}
+
+          {updateStatus === 'error' && (
+            <View style={styles.updateStatusContainer}>
+              <Text style={styles.redText}>فشل التحقق من التحديثات أو التحميل ❌</Text>
+              <TouchableOpacity style={styles.btnSecondary} onPress={checkForUpdates}>
+                <Text style={styles.btnTextSecondary}>حاول مجدداً 🔍</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.settingsCard}>
+          <Text style={sectionTitleStyle()}>إعدادات الصوت (مستقبلاً)</Text>
+          <Text style={styles.settingsDesc}>سيتم إضافة إعدادات حساسية الميكروفون والتعرف المخصص على تلاوتك في الإصدارات القادمة بإذن الله.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // helper to prevent compiler warnings
+  function sectionTitleStyle() {
+    return styles.sectionTitle;
+  }
+
   if (prayerState === 'setup') {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
-        <Text style={styles.title}>مصحف القيام</Text>
+        
+        <View style={styles.setupHeader}>
+          <TouchableOpacity style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
+            <Text style={styles.settingsBtnText}>⚙️ الإعدادات</Text>
+          </TouchableOpacity>
+          <Text style={styles.titleText}>مصحف القيام</Text>
+        </View>
+
         <Text style={styles.subtitle}>المساعد الذكي لتتبع التلاوة والتقليب التلقائي</Text>
 
         <View style={styles.cardExpanded}>
@@ -558,7 +842,7 @@ export default function App() {
 
         {/* Mushaf Page Image */}
         <Image 
-          source={quranImages[currentPage]}
+          source={{ uri: `${FileSystem.documentDirectory}mushaf/${String(currentPage).padStart(3, '0')}.png` }}
           style={styles.mushafImage}
           fadeDuration={200}
         />
@@ -935,5 +1219,127 @@ const styles = StyleSheet.create({
     color: '#000',
     fontSize: 16,
     fontWeight: 'bold'
+  },
+  setupHeader: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 5,
+    marginBottom: 5,
+  },
+  settingsBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#242435',
+  },
+  settingsBtnText: {
+    color: '#00ffcc',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  titleText: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  settingsHeader: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderColor: '#242435',
+    marginBottom: 20,
+  },
+  settingsTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#00ffcc',
+  },
+  backBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: '#242435',
+  },
+  backBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  settingsCard: {
+    backgroundColor: '#16161f',
+    padding: 20,
+    borderRadius: 16,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#242435',
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'right',
+  },
+  settingsRow: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  settingsLabel: {
+    color: '#88889a',
+    fontSize: 15,
+  },
+  settingsValue: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  settingsDesc: {
+    color: '#66667a',
+    fontSize: 13,
+    textAlign: 'right',
+    lineHeight: 18,
+  },
+  updateStatusContainer: {
+    alignItems: 'center',
+    marginVertical: 10,
+    width: '100%',
+  },
+  greenText: {
+    color: '#00ff66',
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  yellowText: {
+    color: '#ffcc00',
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  redText: {
+    color: '#ff3333',
+    fontSize: 15,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  btnSecondary: {
+    backgroundColor: '#242435',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  btnTextSecondary: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
   }
 });

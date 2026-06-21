@@ -1,12 +1,13 @@
 {
   "name": "mushafqiyam",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "index.js",
   "dependencies": {
     "@fugood/react-native-audio-pcm-stream": "^1.1.4",
     "buffer": "^6.0.3",
     "expo": "~56.0.11",
     "expo-file-system": "~56.0.8",
+    "expo-intent-launcher": "~56.0.4",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
     "react-native": "0.85.3",

@@ -112,6 +112,23 @@ async function downloadModel() {
   console.log('Model file downloaded successfully!');
 }
 
+async function downloadVadModel() {
+  const modelUrl = 'https://github.com/mybigday/whisper.rn/raw/master/example/assets/ggml-silero-v6.2.0.bin';
+  const destPath = path.join(__dirname, 'assets', 'ggml-silero-v6.2.0.bin');
+  
+  if (fs.existsSync(destPath)) {
+    const stats = fs.statSync(destPath);
+    if (stats.size > 2 * 1024 * 1024) {
+      console.log('VAD model already exists. Skipping download.');
+      return;
+    }
+  }
+
+  console.log('Downloading VAD model (3.7MB)...');
+  await downloadFile(modelUrl, destPath);
+  console.log('VAD model downloaded successfully!');
+}
+
 function generateImagesIndex() {
   const indexPath = path.join(__dirname, 'assets', 'quran-images.js');
   let content = 'export const quranImages = {\n';
@@ -138,6 +155,7 @@ async function main() {
 
     console.log('Starting assets pre-download and setup...');
     await downloadModel();
+    await downloadVadModel();
     console.log('Downloading Quran images...');
     await downloadAllImages(30); // 30 concurrent downloads
     console.log('Generating code files...');

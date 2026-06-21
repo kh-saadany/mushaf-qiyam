@@ -118,3 +118,4 @@ jobs:
           * **mushaf-lite.apk (~10MB):** Install this for **subsequent updates**. It updates the app logic and code while using the model and images already stored on your device.
         allowUpdates: true
         makeLatest: true
+        allowMissingFiles: true

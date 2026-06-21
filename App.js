@@ -16,10 +16,11 @@ import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index.js'
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter.js';
 import { StatusBar } from 'expo-status-bar';
 import * as FileSystem from 'expo-file-system';
+import { getInfoAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -90,8 +91,8 @@ export default function App() {
       const modelLocalUri = FileSystem.documentDirectory + 'ggml-model.bin';
       const vadLocalUri = FileSystem.documentDirectory + 'ggml-silero-v6.2.0.bin';
       
-      const modelInfo = await FileSystem.getInfoAsync(modelLocalUri);
-      const vadInfo = await FileSystem.getInfoAsync(vadLocalUri);
+      const modelInfo = await getInfoAsync(modelLocalUri);
+      const vadInfo = await getInfoAsync(vadLocalUri);
 
       // If both models already exist and are valid, load them
       if (modelInfo.exists && modelInfo.size > 100 * 1024 * 1024 && vadInfo.exists && vadInfo.size > 1024 * 1024) {
@@ -100,7 +101,7 @@ export default function App() {
       }
 
       // Check if assets are bundled inside the APK (Android raw assets)
-      const modelAssetInfo = await FileSystem.getInfoAsync('asset:/ggml-model.bin');
+      const modelAssetInfo = await getInfoAsync('asset:/ggml-model.bin');
       if (!modelAssetInfo.exists) {
         alert("ملفات النظام غير موجودة. يرجى تثبيت النسخة الكاملة (Full APK) أول مرة.");
         setInitializing(false);
@@ -122,7 +123,7 @@ export default function App() {
       setCopyProgress(10);
       
       // Copy VAD model
-      const vadAssetInfo = await FileSystem.getInfoAsync('asset:/ggml-silero-v6.2.0.bin');
+      const vadAssetInfo = await getInfoAsync('asset:/ggml-silero-v6.2.0.bin');
       if (vadAssetInfo.exists) {
         await FileSystem.copyAsync({
           from: 'asset:/ggml-silero-v6.2.0.bin',
@@ -164,7 +165,7 @@ export default function App() {
       const ctx = await initWhisper({ filePath: modelLocalUri });
       setWhisperContext(ctx);
       
-      const vadInfo = await FileSystem.getInfoAsync(vadLocalUri);
+      const vadInfo = await getInfoAsync(vadLocalUri);
       if (vadInfo.exists) {
         const vCtx = await initWhisperVad({ filePath: vadLocalUri });
         setVadContext(vCtx);

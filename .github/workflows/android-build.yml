@@ -61,7 +61,7 @@ jobs:
       working-directory: ./android
       run: |
         ./gradlew assembleRelease -x lint || (cat app/build/reports/errors/* && exit 1)
-        cp app/build/outputs/apk/release/app-release-unsigned.apk ../mushaf-lite-unsigned.apk
+        cp app/build/outputs/apk/release/app-release.apk ../mushaf-lite-unsigned.apk
         ./gradlew clean
 
     - name: Copy Assets to Android Raw Assets
@@ -77,7 +77,7 @@ jobs:
       working-directory: ./android
       run: |
         ./gradlew assembleRelease -x lint || (cat app/build/reports/errors/* && exit 1)
-        cp app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-full-unsigned.apk
+        cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/mushaf-full-unsigned.apk
 
     - name: Sign Both APKs
       run: |

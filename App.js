@@ -15,12 +15,18 @@ import { initWhisper, initWhisperVad } from 'whisper.rn';
 import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index.js';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter.js';
 import { StatusBar } from 'expo-status-bar';
-import * as FileSystem from 'expo-file-system';
-import { getInfoAsync } from 'expo-file-system/legacy';
+import { documentDirectory } from 'expo-file-system';
+import {
+  getInfoAsync,
+  makeDirectoryAsync,
+  copyAsync,
+  createDownloadResumable,
+  getContentUriAsync,
+} from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -88,8 +94,8 @@ export default function App() {
 
   const prepareAssets = async () => {
     try {
-      const modelLocalUri = FileSystem.documentDirectory + 'ggml-model.bin';
-      const vadLocalUri = FileSystem.documentDirectory + 'ggml-silero-v6.2.0.bin';
+      const modelLocalUri = documentDirectory + 'ggml-model.bin';
+      const vadLocalUri = documentDirectory + 'ggml-silero-v6.2.0.bin';
       
       const modelInfo = await getInfoAsync(modelLocalUri);
       const vadInfo = await getInfoAsync(vadLocalUri);
@@ -112,11 +118,11 @@ export default function App() {
       setCopyProgress(0);
 
       // Create target directory
-      const mushafDir = FileSystem.documentDirectory + 'mushaf/';
-      await FileSystem.makeDirectoryAsync(mushafDir, { intermediates: true }).catch(() => {});
+      const mushafDir = documentDirectory + 'mushaf/';
+      await makeDirectoryAsync(mushafDir, { intermediates: true }).catch(() => {});
 
       // Copy model
-      await FileSystem.copyAsync({
+      await copyAsync({
         from: 'asset:/ggml-model.bin',
         to: modelLocalUri
       });
@@ -125,7 +131,7 @@ export default function App() {
       // Copy VAD model
       const vadAssetInfo = await getInfoAsync('asset:/ggml-silero-v6.2.0.bin');
       if (vadAssetInfo.exists) {
-        await FileSystem.copyAsync({
+        await copyAsync({
           from: 'asset:/ggml-silero-v6.2.0.bin',
           to: vadLocalUri
         });
@@ -135,7 +141,7 @@ export default function App() {
       // Copy Quran images
       for (let i = 1; i <= 604; i++) {
         const pageStr = String(i).padStart(3, '0');
-        await FileSystem.copyAsync({
+        await copyAsync({
           from: `asset:/mushaf/${pageStr}.png`,
           to: `${mushafDir}${pageStr}.png`
         });
@@ -159,8 +165,8 @@ export default function App() {
   const initializeWhisper = async () => {
     try {
       setInitializing(true);
-      const modelLocalUri = FileSystem.documentDirectory + 'ggml-model.bin';
-      const vadLocalUri = FileSystem.documentDirectory + 'ggml-silero-v6.2.0.bin';
+      const modelLocalUri = documentDirectory + 'ggml-model.bin';
+      const vadLocalUri = documentDirectory + 'ggml-silero-v6.2.0.bin';
       
       const ctx = await initWhisper({ filePath: modelLocalUri });
       setWhisperContext(ctx);
@@ -217,9 +223,9 @@ export default function App() {
       setUpdateStatus('downloading');
       setDownloadProgress(0);
 
-      const downloadResumable = FileSystem.createDownloadResumable(
+      const downloadResumable = createDownloadResumable(
         assetUrl,
-        FileSystem.documentDirectory + 'mushaf-update.apk',
+        documentDirectory + 'mushaf-update.apk',
         {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36'
@@ -245,7 +251,7 @@ export default function App() {
 
   const installApk = async (fileUri) => {
     try {
-      const contentUri = await FileSystem.getContentUriAsync(fileUri);
+      const contentUri = await getContentUriAsync(fileUri);
       await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
         data: contentUri,
         flags: 1, // Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -843,7 +849,7 @@ export default function App() {
 
         {/* Mushaf Page Image */}
         <Image 
-          source={{ uri: `${FileSystem.documentDirectory}mushaf/${String(currentPage).padStart(3, '0')}.png` }}
+          source={{ uri: `${documentDirectory}mushaf/${String(currentPage).padStart(3, '0')}.png` }}
           style={styles.mushafImage}
           fadeDuration={200}
         />

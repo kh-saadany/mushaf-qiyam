@@ -75,7 +75,7 @@ jobs:
     - name: Create Release
       uses: ncipollo/release-action@v1
       with:
-        artifacts: "android/app/build/outputs/apk/release/mushaf-release.apk"
+        artifacts: "android/app/build/outputs/apk/release/mushaf-release.apk,assets/ggml-model.bin"
         tag: "latest-react-native"
         name: "React Native APK Release"
         body: "Auto-generated Expo/React Native APK."

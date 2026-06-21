@@ -143,13 +143,14 @@ export default function App() {
         },
         {
           onTranscribe: (event) => {
-            if (event.data?.text) {
-              const text = event.data.text;
+            if (event.data?.result) {
+              const text = event.data.result;
               handleSpokenWords(text);
             }
           },
           onError: (error) => {
             console.error("Transcriber error:", error);
+            setRecognizedText(`خطأ في التعرف على الصوت: ${error}`);
           }
         }
       );
@@ -296,7 +297,7 @@ export default function App() {
       'الحمد لله رب العالمين',
       'الرحمن الرحيم',
       'مالك يوم الدين',
-      'ياك نعبد واياك نستعين',
+      'اياك نعبد واياك نستعين',
       'اهدنا الصراط المستقيم',
       'صراط الذين انعمت عليهم',
       'غير المغضوب عليهم',

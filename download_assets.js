@@ -113,7 +113,7 @@ async function downloadModel() {
 }
 
 async function downloadVadModel() {
-  const modelUrl = 'https://github.com/mybigday/whisper.rn/raw/master/example/assets/ggml-silero-v6.2.0.bin';
+  const modelUrl = 'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin';
   const destPath = path.join(__dirname, 'assets', 'ggml-silero-v6.2.0.bin');
   
   if (fs.existsSync(destPath)) {

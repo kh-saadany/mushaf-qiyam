@@ -80,9 +80,12 @@ jobs:
         ./gradlew assembleRelease -x lint || (cat app/build/reports/errors/* && exit 1)
         cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/mushaf-full-unsigned.apk
 
+    - name: Decode Keystore
+      run: |
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
+
     - name: Sign Both APKs
       run: |
-        keytool -genkey -v -keystore release.keystore -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Test"
         APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -r | head -n 1)
         
         # Create output directory in case gradlew clean deleted it
@@ -90,13 +93,23 @@ jobs:
         
         # Sign Lite APK
         if [ -f mushaf-lite-unsigned.apk ]; then
-          $APKSIGNER sign --ks release.keystore --ks-pass pass:password mushaf-lite-unsigned.apk
+          $APKSIGNER sign \
+            --ks release.keystore \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+            mushaf-lite-unsigned.apk
           mv mushaf-lite-unsigned.apk android/app/build/outputs/apk/release/mushaf-lite.apk
         fi
         
         # Sign Full APK
         if [ -f android/app/build/outputs/apk/release/mushaf-full-unsigned.apk ]; then
-          $APKSIGNER sign --ks release.keystore --ks-pass pass:password android/app/build/outputs/apk/release/mushaf-full-unsigned.apk
+          $APKSIGNER sign \
+            --ks release.keystore \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+            android/app/build/outputs/apk/release/mushaf-full-unsigned.apk
           mv android/app/build/outputs/apk/release/mushaf-full-unsigned.apk android/app/build/outputs/apk/release/mushaf-full.apk
         fi
 

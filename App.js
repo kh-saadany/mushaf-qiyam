@@ -15,8 +15,8 @@ import { initWhisper, initWhisperVad } from 'whisper.rn';
 import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index.js';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter.js';
 import { StatusBar } from 'expo-status-bar';
-import { documentDirectory } from 'expo-file-system';
 import {
+  documentDirectory,
   getInfoAsync,
   makeDirectoryAsync,
   copyAsync,

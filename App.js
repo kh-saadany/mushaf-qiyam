@@ -12,7 +12,7 @@ import {
   SafeAreaView
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
-import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription/index';
+import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.3';
+const APP_VERSION = '1.4.4';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 

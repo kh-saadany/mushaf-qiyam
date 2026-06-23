@@ -1,6 +1,6 @@
 {
   "name": "mushafqiyam",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "main": "index.js",
   "dependencies": {
     "@fugood/react-native-audio-pcm-stream": "^1.1.4",
@@ -15,6 +15,7 @@
     "whisper.rn": "^0.6.0"
   },
   "scripts": {
+    "postinstall": "node patch-whisper-exports.js",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

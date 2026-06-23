@@ -17,30 +17,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Install Dependencies
-      run: npm install
-
-    - name: Download Model and Quran Images
-      run: node download_assets.js
-
-    - name: Run Expo Prebuild
-      run: npx expo prebuild --platform android
-
-    - name: set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: gradle
-
-    - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
-
     - name: Check Build Type
       id: check
       run: |
@@ -55,6 +31,31 @@ jobs:
           echo "build_lite=true" >> $GITHUB_OUTPUT
           echo "build_full=true" >> $GITHUB_OUTPUT
         fi
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install Dependencies
+      run: npm install
+
+    - name: Download Model and Quran Images
+      if: steps.check.outputs.build_full == 'true'
+      run: node download_assets.js
+
+    - name: Run Expo Prebuild
+      run: npx expo prebuild --platform android
+
+    - name: set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x android/gradlew
 
     - name: Build Lite APK
       if: steps.check.outputs.build_lite == 'true'
@@ -83,6 +84,9 @@ jobs:
       run: |
         keytool -genkey -v -keystore release.keystore -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Test"
         APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -r | head -n 1)
+        
+        # Create output directory in case gradlew clean deleted it
+        mkdir -p android/app/build/outputs/apk/release
         
         # Sign Lite APK
         if [ -f mushaf-lite-unsigned.apk ]; then

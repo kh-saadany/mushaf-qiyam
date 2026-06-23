@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -100,20 +100,22 @@ export default function App() {
       const modelInfo = await getInfoAsync(modelLocalUri);
       const vadInfo = await getInfoAsync(vadLocalUri);
 
-      // If both models already exist and are valid, load them
-      if (modelInfo.exists && modelInfo.size > 100 * 1024 * 1024 && vadInfo.exists && vadInfo.size > 1024 * 1024) {
+      // If the model already exists locally (copied previously by Full APK), load it directly
+      if (modelInfo.exists && modelInfo.size > 100 * 1024 * 1024) {
         await initializeWhisper();
         return;
       }
 
-      // Check if assets are bundled inside the APK (Android raw assets)
+      // Check if assets are bundled inside the APK (Full APK only)
       const modelAssetInfo = await getInfoAsync('asset:/ggml-model.bin');
       if (!modelAssetInfo.exists) {
-        alert("ملفات النظام غير موجودة. يرجى تثبيت النسخة الكاملة (Full APK) أول مرة.");
+        // Lite APK: models not bundled and not found locally
+        alert("ملفات الذكاء الاصطناعي غير موجودة.\n\nيرجى تثبيت النسخة الكاملة (Full APK) أولاً حتى يتم نسخ الملفات، ثم يمكنك استخدام النسخة الخفيفة للتحديثات اللاحقة.");
         setInitializing(false);
         return;
       }
 
+      // Full APK: copy bundled assets to local storage
       setCopyingAssets(true);
       setCopyProgress(0);
 
@@ -282,13 +284,16 @@ export default function App() {
   };
 
   const startPrayer = async () => {
+    if (!whisperContext) {
+      alert("محرك الصوت لم يتهيأ بعد.\n\nتأكد من تثبيت النسخة الكاملة (Full APK) أولاً لنسخ ملفات الذكاء الاصطناعي، ثم أعد تشغيل التطبيق.");
+      return;
+    }
+
     const hasPermission = await requestMicrophonePermission();
     if (!hasPermission) {
       alert("يرجى إعطاء صلاحية الميكروفون للتعرف على الصوت.");
       return;
     }
-
-    if (!whisperContext) return;
 
     currentPageRef.current = selectedSurah.page;
     setCurrentPage(selectedSurah.page);
@@ -661,7 +666,7 @@ export default function App() {
     );
   }
 
-  if (initializing || !whisperContext) {
+  if (initializing) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
@@ -807,8 +812,13 @@ export default function App() {
             </ScrollView>
           </View>
 
-          <TouchableOpacity style={styles.btnStart} onPress={startPrayer}>
-            <Text style={styles.btnTextPrimary}>ابدأ الصلاة الآن 🎙️</Text>
+          <TouchableOpacity 
+            style={[styles.btnStart, !whisperContext && styles.btnDisabled]} 
+            onPress={startPrayer}
+          >
+            <Text style={styles.btnTextPrimary}>
+              {whisperContext ? 'ابدأ الصلاة الآن 🎙️' : '⚠️ محرك الصوت غير جاهز'}
+            </Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -1034,6 +1044,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4
+  },
+  btnDisabled: {
+    backgroundColor: '#555',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   btnTextPrimary: { 
     color: '#000', 

@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -52,6 +52,16 @@ export default function App() {
   const [latestVersion, setLatestVersion] = useState('');
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [updateAssetUrl, setUpdateAssetUrl] = useState('');
+
+  // === DIAGNOSTIC LOG ===
+  const [diagLog, setDiagLog] = useState([]);
+  const [showDiagLog, setShowDiagLog] = useState(false);
+  const addLog = (msg, isError = false) => {
+    const ts = new Date().toISOString().substr(11, 12);
+    const entry = `[${ts}] ${isError ? '❌ ' : '✅ '}${msg}`;
+    console.log(entry);
+    setDiagLog(prev => [...prev, entry]);
+  };
 
   const transcriberRef = useRef(null);
   const currentPageRef = useRef(1);
@@ -169,18 +179,26 @@ export default function App() {
       setInitializing(true);
       const modelLocalUri = documentDirectory + 'ggml-model.bin';
       const vadLocalUri = documentDirectory + 'ggml-silero-v6.2.0.bin';
-      
+
+      addLog(`تهيئة Whisper من: ${modelLocalUri}`);
+      const modelInfoCheck = await getInfoAsync(modelLocalUri);
+      addLog(`حجم ملف النموذج: ${modelInfoCheck.size ? (modelInfoCheck.size / 1024 / 1024).toFixed(1) + ' MB' : 'غير موجود'}`);
+
       const ctx = await initWhisper({ filePath: modelLocalUri });
       setWhisperContext(ctx);
+      addLog(`Whisper تهيأ بنجاح. ctx=${ctx ? 'موجود' : 'NULL'}`);
       
       const vadInfo = await getInfoAsync(vadLocalUri);
+      addLog(`ملف VAD: ${vadInfo.exists ? 'موجود (' + (vadInfo.size/1024/1024).toFixed(1) + ' MB)' : 'غير موجود'}`);
       if (vadInfo.exists) {
         const vCtx = await initWhisperVad({ filePath: vadLocalUri });
         setVadContext(vCtx);
+        addLog(`VAD تهيأ بنجاح. vCtx=${vCtx ? 'موجود' : 'NULL'}`);
       }
       
       setInitializing(false);
     } catch (e) {
+      addLog(`فشل initWhisper: ${e?.message || String(e)}`, true);
       console.error("Failed to init whisper:", e);
       alert("فشل تهيئة محرك الصوت المحلي أوفلاين. يرجى إغلاق التطبيق وإعادة تشغيله.");
       setInitializing(false);
@@ -284,12 +302,24 @@ export default function App() {
   };
 
   const startPrayer = async () => {
+    addLog('--- بدء startPrayer ---');
+
     if (!whisperContext) {
+      addLog('whisperContext = NULL → إيقاف', true);
       alert("محرك الصوت لم يتهيأ بعد.\n\nتأكد من تثبيت النسخة الكاملة (Full APK) أولاً لنسخ ملفات الذكاء الاصطناعي، ثم أعد تشغيل التطبيق.");
       return;
     }
+    addLog(`whisperContext موجود: ${typeof whisperContext}`);
+    addLog(`vadContext: ${vadContext ? 'موجود' : 'NULL (غير محمل)'}`);
 
-    const hasPermission = await requestMicrophonePermission();
+    addLog('طلب صلاحية الميكروفون...');
+    let hasPermission = false;
+    try {
+      hasPermission = await requestMicrophonePermission();
+    } catch (permErr) {
+      addLog(`استثناء صلاحية الميكروفون: ${permErr?.message || String(permErr)}`, true);
+    }
+    addLog(`نتيجة صلاحية الميكروفون: ${hasPermission}`);
     if (!hasPermission) {
       alert("يرجى إعطاء صلاحية الميكروفون للتعرف على الصوت.");
       return;
@@ -298,7 +328,6 @@ export default function App() {
     currentPageRef.current = selectedSurah.page;
     setCurrentPage(selectedSurah.page);
     setCurrentSurah(selectedSurah.id);
-
     lastMatchedVerseRef.current = { surah: selectedSurah.id, ayah: 0, surahName: selectedSurah.name };
     checkpointVerseRef.current = { page: selectedSurah.page, surah: selectedSurah.id, ayah: 0, surahName: selectedSurah.name };
     rakahCountRef.current = 1;
@@ -306,11 +335,15 @@ export default function App() {
     spokenHistoryRef.current = '';
     setRecognizedText('بانتظار قراءتك للفاتحة...');
     setMatchedVerseText('بانتظار تلاوة السورة...');
-    
     setPrayerStateAndRef('waiting_fatiha');
+    addLog('تم تغيير الحالة → waiting_fatiha');
 
     try {
+      addLog('إنشاء AudioPcmStreamAdapter...');
       const audioStream = new AudioPcmStreamAdapter();
+      addLog(`AudioPcmStreamAdapter: ${audioStream ? 'تم إنشاؤه' : 'NULL'}`);
+
+      addLog('إنشاء RealtimeTranscriber...');
       const transcriber = new RealtimeTranscriber(
         {
           whisperContext,
@@ -318,9 +351,9 @@ export default function App() {
           audioStream,
         },
         {
-          audioSliceSec: 15, // process smaller slices for memory efficiency
-          realtimeProcessingPauseMs: 1000, // pause 1 sec to avoid spamming the JS bridge
-          initRealtimeAfterMs: 1000, // wait 1 sec before initial transcription
+          audioSliceSec: 15,
+          realtimeProcessingPauseMs: 1000,
+          initRealtimeAfterMs: 1000,
           transcribeOptions: {
             language: 'ar',
           },
@@ -339,17 +372,26 @@ export default function App() {
             }
           },
           onError: (error) => {
+            addLog(`onError من RealtimeTranscriber: ${error}`, true);
             console.error("Transcriber error:", error);
             setRecognizedText(`خطأ في التعرف على الصوت: ${error}`);
           }
         }
       );
-      
+      addLog(`RealtimeTranscriber: ${transcriber ? 'تم إنشاؤه' : 'NULL'}`);
+
       transcriberRef.current = transcriber;
+      addLog('جاري استدعاء transcriber.start()...');
       await transcriber.start();
+      addLog('transcriber.start() اكتمل بنجاح ✅');
     } catch (e) {
+      const errMsg = e?.message || String(e);
+      const errStack = e?.stack ? e.stack.substring(0, 300) : 'لا يوجد stack';
+      addLog(`CATCH في startPrayer: ${errMsg}`, true);
+      addLog(`Stack: ${errStack}`, true);
       console.error("Transcription error:", e);
-      setPrayerStateAndRef('setup');
+      setRecognizedText(`⚠️ خطأ: ${errMsg}`);
+      // Stay on mushaf screen - do NOT return to setup
     }
   };
 
@@ -778,6 +820,33 @@ export default function App() {
         </View>
 
         <Text style={styles.subtitle}>المساعد الذكي لتتبع التلاوة والتقليب التلقائي</Text>
+
+        {/* Diagnostic Log Panel */}
+        {diagLog.length > 0 && (
+          <TouchableOpacity
+            style={styles.diagToggleBtn}
+            onPress={() => setShowDiagLog(v => !v)}
+          >
+            <Text style={styles.diagToggleBtnText}>
+              🔍 سجل التشخيص ({diagLog.length} مدخل) — {showDiagLog ? 'إخفاء ▲' : 'عرض ▼'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {showDiagLog && diagLog.length > 0 && (
+          <ScrollView
+            style={styles.diagBox}
+            contentContainerStyle={{ padding: 8 }}
+          >
+            {diagLog.map((entry, i) => (
+              <Text key={i} style={[
+                styles.diagEntry,
+                entry.includes('❌') && styles.diagEntryError
+              ]}>
+                {entry}
+              </Text>
+            ))}
+          </ScrollView>
+        )}
 
         <View style={styles.cardExpanded}>
           <Text style={styles.cardTitle}>تحديد سورة البداية</Text>
@@ -1363,5 +1432,42 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
-  }
+  },
+  // === Diagnostic Panel Styles ===
+  diagToggleBtn: {
+    backgroundColor: '#1a1a30',
+    borderWidth: 1,
+    borderColor: '#555588',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+    width: '100%',
+    alignItems: 'center',
+  },
+  diagToggleBtnText: {
+    color: '#aaaaff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    fontFamily: 'monospace',
+  },
+  diagBox: {
+    backgroundColor: '#0a0a18',
+    borderWidth: 1,
+    borderColor: '#333355',
+    borderRadius: 8,
+    maxHeight: 200,
+    width: '100%',
+    marginBottom: 8,
+  },
+  diagEntry: {
+    color: '#88ffcc',
+    fontSize: 10,
+    fontFamily: 'monospace',
+    lineHeight: 16,
+    writingDirection: 'ltr',
+  },
+  diagEntryError: {
+    color: '#ff6666',
+  },
 });

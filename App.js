@@ -12,7 +12,7 @@ import {
   SafeAreaView
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
-import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription';
+import { RealtimeTranscriber, RingBufferVad } from 'whisper.rn/realtime-transcription';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter';
 import { StatusBar } from 'expo-status-bar';
 import {
@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.4';
+const APP_VERSION = '1.4.5';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -343,11 +343,24 @@ export default function App() {
       const audioStream = new AudioPcmStreamAdapter();
       addLog(`AudioPcmStreamAdapter: ${audioStream ? 'تم إنشاؤه' : 'NULL'}`);
 
+      let realVadContext = null;
+      if (vadContext) {
+        addLog('إنشاء RingBufferVad...');
+        try {
+          realVadContext = new RingBufferVad(vadContext, {
+            sampleRate: 16000,
+          });
+          addLog(`RingBufferVad: ${realVadContext ? 'تم إنشاؤه' : 'NULL'}`);
+        } catch (vadErr) {
+          addLog(`فشل إنشاء RingBufferVad: ${vadErr?.message || String(vadErr)}`, true);
+        }
+      }
+
       addLog('إنشاء RealtimeTranscriber...');
       const transcriber = new RealtimeTranscriber(
         {
           whisperContext,
-          vadContext,
+          vadContext: realVadContext,
           audioStream,
         },
         {

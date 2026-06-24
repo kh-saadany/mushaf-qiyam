@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.5';
+const APP_VERSION = '1.4.6';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -345,16 +345,42 @@ export default function App() {
 
       let realVadContext = null;
       if (vadContext) {
-        addLog('إنشاء RingBufferVad...');
+        addLog('إنشاء RingBufferVad (0.7s صمت)...');
         try {
           realVadContext = new RingBufferVad(vadContext, {
             sampleRate: 16000,
+            vadOptions: {
+              minSilenceDurationMs: 700,
+              threshold: 0.5,
+              minSpeechDurationMs: 250,
+              maxSpeechDurationS: 15,
+            }
           });
           addLog(`RingBufferVad: ${realVadContext ? 'تم إنشاؤه' : 'NULL'}`);
         } catch (vadErr) {
           addLog(`فشل إنشاء RingBufferVad: ${vadErr?.message || String(vadErr)}`, true);
         }
       }
+
+      // إنشاء التلقين المسبق (Initial Prompt) المدمج من الفاتحة والسورة المختارة
+      const fatihaPrompt = "الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين اهدنا الصراط المستقيم صراط الذين أنعمت عليهم غير المغضوب عليهم ولا الضالين";
+      let surahPrompt = "";
+      if (selectedSurah && selectedSurah.id !== 1) {
+        const versesList = [];
+        quranData.forEach(pageItem => {
+          if (pageItem.verses) {
+            pageItem.verses.forEach(v => {
+              if (v.surah === selectedSurah.id) {
+                versesList.push(v.cleanText);
+              }
+            });
+          }
+        });
+        // أول 10 آيات من السورة
+        surahPrompt = " " + versesList.slice(0, 10).join(' ');
+      }
+      const combinedPrompt = fatihaPrompt + surahPrompt;
+      addLog(`تم إنشاء التلقين المسبق (Prompt) بطول: ${combinedPrompt.length} حرف`);
 
       addLog('إنشاء RealtimeTranscriber...');
       const transcriber = new RealtimeTranscriber(
@@ -367,8 +393,11 @@ export default function App() {
           audioSliceSec: 15,
           realtimeProcessingPauseMs: 1000,
           initRealtimeAfterMs: 1000,
+          initialPrompt: combinedPrompt,
           transcribeOptions: {
             language: 'ar',
+            beamSize: 5,
+            temperature: 0.0,
           },
         },
         {

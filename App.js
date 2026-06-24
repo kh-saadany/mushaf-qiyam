@@ -28,7 +28,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.11';
+const APP_VERSION = '1.4.12';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -441,7 +441,7 @@ export default function App() {
               minSilenceDurationMs: 700,
               threshold: 0.5,
               minSpeechDurationMs: 250,
-              maxSpeechDurationS: 15,
+              maxSpeechDurationS: 4, // Isolation test: cut very early
             }
           });
           addLog(`RingBufferVad: ${realVadContext ? 'تم إنشاؤه' : 'NULL'}`);
@@ -452,10 +452,11 @@ export default function App() {
 
       // إنشاء التلقين المسبق (Initial Prompt) المبدئي للفاتحة
       const fatihaVerses = getNextVerses(1, 1, 7);
-      let combinedPrompt = fatihaVerses.map(v => v.cleanText).join(' ');
+      // Isolation Test: Empty Prompt
+      let combinedPrompt = "";
       promptWindowStartRef.current = { surah: 1, ayah: 1 };
       currentPromptTextRef.current = combinedPrompt;
-      addLog(`تم إنشاء التلقين المسبق للفاتحة بطول: ${combinedPrompt.length} حرف`);
+      addLog(`تم تهيئة نافذة الموجه (فارغة لاختبار العزل)`);
 
       addLog('إنشاء RealtimeTranscriber...');
       const transcriber = new RealtimeTranscriber(
@@ -465,14 +466,14 @@ export default function App() {
           audioStream,
         },
         {
-          audioSliceSec: 15,
+          audioSliceSec: 5, // Isolation test
           audioSource: 9, // 9 for UNPROCESSED (raw audio without AGC or noise suppression)
           realtimeProcessingPauseMs: 15000,
           initRealtimeAfterMs: 15000,
           initialPrompt: combinedPrompt,
           transcribeOptions: {
             language: 'ar',
-            beamSize: 2,
+            beamSize: 1, // Isolation test: reduce load
             temperature: 0.0,
           },
         },

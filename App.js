@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.8';
+const APP_VERSION = '1.4.9';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -100,10 +100,10 @@ export default function App() {
   const updateTranscriberPrompt = (versesArray) => {
     if (transcriberRef.current) {
       let newPrompt = versesArray.map(v => v.cleanText).join(' ');
-      // الاقتطاع إلى آخر 40 كلمة بحد أقصى لحماية الـ Token Limit
+      // الاقتطاع إلى آخر 30 كلمة بحد أقصى لحماية الـ Token Limit
       const words = newPrompt.split(' ');
-      if (words.length > 40) {
-        newPrompt = words.slice(-40).join(' ');
+      if (words.length > 30) {
+        newPrompt = words.slice(-30).join(' ');
       }
 
       transcriberRef.current.options.initialPrompt = newPrompt;
@@ -111,7 +111,7 @@ export default function App() {
         transcriberRef.current.transcriptionResults.clear();
       }
       currentPromptTextRef.current = newPrompt;
-      addLog(`تحديث الموجه (نافذة منزلقة): ${newPrompt.substring(0, 40)}...`);
+      addLog(`تحديث الموجه (نافذة منزلقة): ${newPrompt.substring(0, 30)}...`);
     }
   };
 

@@ -14,8 +14,7 @@ import {
   Share
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
-import { RealtimeTranscriber, RingBufferVad } from 'whisper.rn/realtime-transcription';
-import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters/AudioPcmStreamAdapter';
+import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
 import { StatusBar } from 'expo-status-bar';
 import {
   documentDirectory,
@@ -28,7 +27,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.12';
+const APP_VERSION = '1.5.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -65,7 +64,8 @@ export default function App() {
     setDiagLog(prev => [...prev, entry]);
   };
 
-  const transcriberRef = useRef(null);
+  const recordingIntervalRef = useRef(null);
+  const isChunkOneRef = useRef(true);
   const currentPageRef = useRef(1);
   const prayerStateRef = useRef('setup');
   const lastMatchedVerseRef = useRef({ surah: 1, ayah: 0, surahName: '' });
@@ -100,21 +100,16 @@ export default function App() {
   };
 
   const updateTranscriberPrompt = (versesArray) => {
-    if (transcriberRef.current) {
-      let newPrompt = versesArray.map(v => v.cleanText).join(' ');
-      // الاقتطاع إلى آخر 30 كلمة بحد أقصى لحماية الـ Token Limit
-      const words = newPrompt.split(' ');
-      if (words.length > 30) {
-        newPrompt = words.slice(-30).join(' ');
-      }
-
-      transcriberRef.current.options.initialPrompt = newPrompt;
-      if (transcriberRef.current.transcriptionResults) {
-        transcriberRef.current.transcriptionResults.clear();
-      }
-      currentPromptTextRef.current = newPrompt;
-      addLog(`تحديث الموجه (نافذة منزلقة): ${newPrompt.substring(0, 30)}...`);
+    let newPrompt = versesArray.map(v => v.cleanText).join(' ');
+    // الاقتطاع إلى آخر 30 كلمة بحد أقصى لحماية الـ Token Limit
+    const words = newPrompt.split(' ');
+    if (words.length > 30) {
+      newPrompt = words.slice(-30).join(' ');
     }
+    
+    // حفظ الموجه الجديد في الـ ref ليتم استخدامه في المقطع القادم من التسجيل
+    currentPromptTextRef.current = newPrompt;
+    addLog(`تحديث الموجه (نافذة منزلقة): ${newPrompt.substring(0, 30)}...`);
   };
 
   const shareDiagnosticLog = async () => {
@@ -184,9 +179,10 @@ export default function App() {
   useEffect(() => {
     prepareAssets();
     return () => {
-      if (transcriberRef.current) {
-        transcriberRef.current.stop().catch(console.error);
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
       }
+      LiveAudioStream.stop().catch(console.error);
     };
   }, []);
 
@@ -427,108 +423,93 @@ export default function App() {
     addLog('تم تغيير الحالة → waiting_fatiha');
 
     try {
-      addLog('إنشاء AudioPcmStreamAdapter...');
-      const audioStream = new AudioPcmStreamAdapter();
-      addLog(`AudioPcmStreamAdapter: ${audioStream ? 'تم إنشاؤه' : 'NULL'}`);
-
-      let realVadContext = null;
-      if (vadContext) {
-        addLog('إنشاء RingBufferVad (0.7s صمت, 0.5 حساسية)...');
-        try {
-          realVadContext = new RingBufferVad(vadContext, {
-            sampleRate: 16000,
-            vadOptions: {
-              minSilenceDurationMs: 700,
-              threshold: 0.5,
-              minSpeechDurationMs: 250,
-              maxSpeechDurationS: 4, // Isolation test: cut very early
-            }
-          });
-          addLog(`RingBufferVad: ${realVadContext ? 'تم إنشاؤه' : 'NULL'}`);
-        } catch (vadErr) {
-          addLog(`فشل إنشاء RingBufferVad: ${vadErr?.message || String(vadErr)}`, true);
-        }
-      }
-
-      // إنشاء التلقين المسبق (Initial Prompt) المبدئي للفاتحة
+      addLog('بدء حلقة التسجيل המخصصة (Ping-Pong Loop)...');
+      
       const fatihaVerses = getNextVerses(1, 1, 7);
-      // Isolation Test: Empty Prompt
-      let combinedPrompt = "";
+      let combinedPrompt = fatihaVerses.map(v => v.cleanText).join(' ');
       promptWindowStartRef.current = { surah: 1, ayah: 1 };
       currentPromptTextRef.current = combinedPrompt;
-      addLog(`تم تهيئة نافذة الموجه (فارغة لاختبار العزل)`);
+      addLog(`تم إنشاء التلقين المسبق للفاتحة بطول: ${combinedPrompt.length} حرف`);
 
-      addLog('إنشاء RealtimeTranscriber...');
-      const transcriber = new RealtimeTranscriber(
-        {
-          whisperContext,
-          vadContext: realVadContext,
-          audioStream,
-        },
-        {
-          audioSliceSec: 5, // Isolation test
-          audioSource: 9, // 9 for UNPROCESSED (raw audio without AGC or noise suppression)
-          realtimeProcessingPauseMs: 15000,
-          initRealtimeAfterMs: 15000,
-          initialPrompt: combinedPrompt,
-          transcribeOptions: {
-            language: 'ar',
-            beamSize: 1, // Isolation test: reduce load
-            temperature: 0.0,
-          },
-        },
-        {
-          onTranscribe: (event) => {
-            if (typeof event.data?.result === 'string') {
-              const text = event.data.result.trim();
+      // 1. تهيئة التسجيل الأول
+      LiveAudioStream.init({
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        audioSource: 6, // VOICE_RECOGNITION - Avoid Samsung silence bug
+        wavFile: 'chunk1.wav'
+      });
+      LiveAudioStream.start();
+      isChunkOneRef.current = true;
+      addLog('🎤 المايك يستشعر صوتاً... جاري تسجيل chunk1.wav');
+
+      // 2. حلقة التبديل كل 4 ثوانٍ
+      recordingIntervalRef.current = setInterval(async () => {
+        try {
+          // أ. إيقاف التسجيل الحالي وأخذ مساره
+          const currentFilePath = await LiveAudioStream.stop();
+          addLog(`🛑 توقف التسجيل مؤقتاً لحفظ المقطع...`);
+
+          // ب. التبديل لملف جديد وبدء التسجيل فوراً
+          isChunkOneRef.current = !isChunkOneRef.current;
+          const nextFileName = isChunkOneRef.current ? 'chunk1.wav' : 'chunk2.wav';
+          
+          LiveAudioStream.init({
+            sampleRate: 16000,
+            channels: 1,
+            bitsPerSample: 16,
+            audioSource: 6,
+            wavFile: nextFileName
+          });
+          LiveAudioStream.start();
+          addLog(`🎤 استئناف المايك... جاري تسجيل ${nextFileName}`);
+
+          // ج. إرسال الملف المكتمل لترجمته
+          if (currentFilePath && whisperContext) {
+            addLog(`المقطع في طريقه للمحرك: ${currentFilePath}`);
+            const { promise } = whisperContext.transcribe(currentFilePath, {
+              language: 'ar',
+              beamSize: 1,
+              temperature: 0.0,
+              initialPrompt: currentPromptTextRef.current
+            });
+            
+            const result = await promise;
+            if (result && typeof result.result === 'string') {
+              const text = result.result.trim();
               if (text === '') {
-                addLog('⚠️ الموديل عالج مقطعاً لكن النتيجة كانت نصاً فارغاً (لا كلام)');
-                return;
+                addLog('⚠️ الموديل عالج مقطعاً لكن النتيجة فارغة (سكوت أو ضجيج)');
+              } else {
+                addLog(`🗣️ الموديل استخرج: "${text.substring(0, 30)}..."`);
+                handleSpokenWords(text);
               }
-              addLog(`🗣️ الموديل استخرج: "${text.substring(0, 30)}..."`);
-              handleSpokenWords(text);
             }
-          },
-          onVad: (event) => {
-            if (event.type === 'speech_start') {
-              addLog('🎤 المايك يستشعر صوتاً... VAD جاري التسجيل');
-            } else if (event.type === 'speech_end') {
-              addLog('🛑 توقف الصوت (VAD End). المقطع في طريقه للمحرك...');
-            }
-          },
-          onError: (error) => {
-            addLog(`onError من RealtimeTranscriber: ${error}`, true);
-            console.error("Transcriber error:", error);
-            setRecognizedText(`خطأ في التعرف على الصوت: ${error}`);
           }
+        } catch (loopErr) {
+          addLog(`خطأ داخل حلقة التسجيل: ${loopErr.message}`, true);
         }
-      );
-      addLog(`RealtimeTranscriber: ${transcriber ? 'تم إنشاؤه' : 'NULL'}`);
+      }, 4000);
 
-      transcriberRef.current = transcriber;
-      addLog('جاري استدعاء transcriber.start()...');
-      await transcriber.start();
-      addLog('transcriber.start() اكتمل بنجاح ✅');
+      addLog('startCustomLoop() اكتمل بنجاح ✅');
     } catch (e) {
       const errMsg = e?.message || String(e);
-      const errStack = e?.stack ? e.stack.substring(0, 300) : 'لا يوجد stack';
       addLog(`CATCH في startPrayer: ${errMsg}`, true);
-      addLog(`Stack: ${errStack}`, true);
       console.error("Transcription error:", e);
       setRecognizedText(`⚠️ خطأ: ${errMsg}`);
-      // Stay on mushaf screen - do NOT return to setup
     }
   };
 
   const stopPrayer = async () => {
     setPrayerStateAndRef('setup');
-    if (transcriberRef.current) {
-      try {
-        await transcriberRef.current.stop();
-      } catch (e) {
-        console.error("Failed to stop transcriber:", e);
-      }
-      transcriberRef.current = null;
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+    try {
+      await LiveAudioStream.stop();
+      addLog('تم إيقاف التسجيل وإنهاء الصلاة.');
+    } catch (e) {
+      console.error("Failed to stop custom loop:", e);
     }
   };
 

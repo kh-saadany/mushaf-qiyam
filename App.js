@@ -9,7 +9,9 @@ import {
   ScrollView, 
   PermissionsAndroid, 
   Dimensions,
-  SafeAreaView
+  SafeAreaView,
+  Modal,
+  Share
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
 import { RealtimeTranscriber, RingBufferVad } from 'whisper.rn/realtime-transcription';
@@ -26,7 +28,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.9';
+const APP_VERSION = '1.4.10';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -114,6 +116,49 @@ export default function App() {
       addLog(`تحديث الموجه (نافذة منزلقة): ${newPrompt.substring(0, 30)}...`);
     }
   };
+
+  const shareDiagnosticLog = async () => {
+    try {
+      const logText = diagLog.join('\n');
+      await Share.share({
+        message: logText,
+        title: 'مصحف القيام - سجل التشخيص'
+      });
+    } catch (error) {
+      addLog(`خطأ في مشاركة السجل: ${error.message}`);
+    }
+  };
+
+  const renderDiagnosticOverlay = () => (
+    <>
+      <TouchableOpacity 
+        style={styles.floatingDiagBtn} 
+        onPress={() => setShowDiagLog(true)}>
+        <Text style={{fontSize: 24, textAlign: 'center'}}>🔍</Text>
+      </TouchableOpacity>
+      
+      <Modal visible={showDiagLog} animationType="slide" transparent={false} onRequestClose={() => setShowDiagLog(false)}>
+        <SafeAreaView style={styles.diagModalContainer}>
+          <View style={styles.diagModalHeader}>
+            <Text style={styles.diagModalTitle}>سجل التشخيص المتقدم ({diagLog.length})</Text>
+            <TouchableOpacity onPress={() => setShowDiagLog(false)} style={styles.diagCloseBtn}>
+              <Text style={styles.diagCloseBtnText}>إغلاق</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.diagModalScroll} contentContainerStyle={{padding: 10}}>
+             {diagLog.map((entry, i) => (
+                <Text key={i} style={[styles.diagEntry, entry.includes('❌') && styles.diagEntryError]}>
+                  {entry}
+                </Text>
+              ))}
+          </ScrollView>
+          <TouchableOpacity onPress={shareDiagnosticLog} style={styles.diagShareBtn}>
+            <Text style={styles.diagShareBtnText}>مشاركة ونسخ السجل</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
+    </>
+  );
 
   // Extract Surah List from quranData
   useEffect(() => {
@@ -435,13 +480,19 @@ export default function App() {
           onTranscribe: (event) => {
             if (typeof event.data?.result === 'string') {
               const text = event.data.result.trim();
-              if (text === '') return;
+              if (text === '') {
+                addLog('⚠️ الموديل عالج مقطعاً لكن النتيجة كانت نصاً فارغاً (لا كلام)');
+                return;
+              }
+              addLog(`🗣️ الموديل استخرج: "${text.substring(0, 30)}..."`);
               handleSpokenWords(text);
             }
           },
           onVad: (event) => {
             if (event.type === 'speech_start') {
-              // Optionally show hearing state
+              addLog('🎤 المايك يستشعر صوتاً... VAD جاري التسجيل');
+            } else if (event.type === 'speech_end') {
+              addLog('🛑 توقف الصوت (VAD End). المقطع في طريقه للمحرك...');
             }
           },
           onError: (error) => {
@@ -913,32 +964,7 @@ export default function App() {
 
         <Text style={styles.subtitle}>المساعد الذكي لتتبع التلاوة والتقليب التلقائي</Text>
 
-        {/* Diagnostic Log Panel */}
-        {diagLog.length > 0 && (
-          <TouchableOpacity
-            style={styles.diagToggleBtn}
-            onPress={() => setShowDiagLog(v => !v)}
-          >
-            <Text style={styles.diagToggleBtnText}>
-              🔍 سجل التشخيص ({diagLog.length} مدخل) — {showDiagLog ? 'إخفاء ▲' : 'عرض ▼'}
-            </Text>
-          </TouchableOpacity>
-        )}
-        {showDiagLog && diagLog.length > 0 && (
-          <ScrollView
-            style={styles.diagBox}
-            contentContainerStyle={{ padding: 8 }}
-          >
-            {diagLog.map((entry, i) => (
-              <Text key={i} style={[
-                styles.diagEntry,
-                entry.includes('❌') && styles.diagEntryError
-              ]}>
-                {entry}
-              </Text>
-            ))}
-          </ScrollView>
-        )}
+        {renderDiagnosticOverlay()}
 
         <View style={styles.cardExpanded}>
           <Text style={styles.cardTitle}>تحديد سورة البداية</Text>
@@ -1058,6 +1084,8 @@ export default function App() {
           </View>
         </View>
       )}
+      
+      {renderDiagnosticOverlay()}
     </SafeAreaView>
   );
 }
@@ -1526,40 +1554,77 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   // === Diagnostic Panel Styles ===
-  diagToggleBtn: {
-    backgroundColor: '#1a1a30',
-    borderWidth: 1,
-    borderColor: '#555588',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    marginBottom: 8,
-    width: '100%',
+  floatingDiagBtn: {
+    position: 'absolute',
+    bottom: 30,
+    right: 30,
+    backgroundColor: '#333355',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
     alignItems: 'center',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+    zIndex: 9999
   },
-  diagToggleBtnText: {
-    color: '#aaaaff',
-    fontSize: 12,
-    fontWeight: 'bold',
-    fontFamily: 'monospace',
-  },
-  diagBox: {
+  diagModalContainer: {
+    flex: 1,
     backgroundColor: '#0a0a18',
-    borderWidth: 1,
-    borderColor: '#333355',
+  },
+  diagModalHeader: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#1a1a30',
+    borderBottomWidth: 1,
+    borderBottomColor: '#333355'
+  },
+  diagModalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  diagCloseBtn: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    backgroundColor: '#ff6666',
     borderRadius: 8,
-    maxHeight: 200,
-    width: '100%',
-    marginBottom: 8,
+  },
+  diagCloseBtnText: {
+    color: '#fff',
+    fontWeight: 'bold'
+  },
+  diagModalScroll: {
+    flex: 1,
   },
   diagEntry: {
     color: '#88ffcc',
-    fontSize: 10,
+    fontSize: 12,
     fontFamily: 'monospace',
-    lineHeight: 16,
+    lineHeight: 18,
     writingDirection: 'ltr',
+    marginBottom: 4,
+    borderBottomWidth: 0.5,
+    borderBottomColor: '#222'
   },
   diagEntryError: {
     color: '#ff6666',
+  },
+  diagShareBtn: {
+    backgroundColor: '#00ffcc',
+    padding: 15,
+    alignItems: 'center',
+    margin: 15,
+    borderRadius: 10,
+  },
+  diagShareBtnText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: 'bold'
   },
 });

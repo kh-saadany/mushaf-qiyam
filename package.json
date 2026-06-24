@@ -1,6 +1,6 @@
 {
   "name": "mushafqiyam",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "main": "index.js",
   "dependencies": {
     "@fugood/react-native-audio-pcm-stream": "^1.1.4",

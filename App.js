@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.7';
+const APP_VERSION = '1.4.8';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -99,7 +99,13 @@ export default function App() {
 
   const updateTranscriberPrompt = (versesArray) => {
     if (transcriberRef.current) {
-      const newPrompt = versesArray.map(v => v.cleanText).join(' ');
+      let newPrompt = versesArray.map(v => v.cleanText).join(' ');
+      // الاقتطاع إلى آخر 40 كلمة بحد أقصى لحماية الـ Token Limit
+      const words = newPrompt.split(' ');
+      if (words.length > 40) {
+        newPrompt = words.slice(-40).join(' ');
+      }
+
       transcriberRef.current.options.initialPrompt = newPrompt;
       if (transcriberRef.current.transcriptionResults) {
         transcriberRef.current.transcriptionResults.clear();
@@ -382,13 +388,13 @@ export default function App() {
 
       let realVadContext = null;
       if (vadContext) {
-        addLog('إنشاء RingBufferVad (0.7s صمت)...');
+        addLog('إنشاء RingBufferVad (0.7s صمت, 0.2 حساسية)...');
         try {
           realVadContext = new RingBufferVad(vadContext, {
             sampleRate: 16000,
             vadOptions: {
               minSilenceDurationMs: 700,
-              threshold: 0.5,
+              threshold: 0.2,
               minSpeechDurationMs: 250,
               maxSpeechDurationS: 15,
             }
@@ -415,6 +421,7 @@ export default function App() {
         },
         {
           audioSliceSec: 15,
+          audioSource: 1, // 1 for raw Mic without voice recognition filters
           realtimeProcessingPauseMs: 15000,
           initRealtimeAfterMs: 15000,
           initialPrompt: combinedPrompt,

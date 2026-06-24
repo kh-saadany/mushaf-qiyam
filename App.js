@@ -28,7 +28,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.10';
+const APP_VERSION = '1.4.11';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -433,13 +433,13 @@ export default function App() {
 
       let realVadContext = null;
       if (vadContext) {
-        addLog('إنشاء RingBufferVad (0.7s صمت, 0.2 حساسية)...');
+        addLog('إنشاء RingBufferVad (0.7s صمت, 0.5 حساسية)...');
         try {
           realVadContext = new RingBufferVad(vadContext, {
             sampleRate: 16000,
             vadOptions: {
               minSilenceDurationMs: 700,
-              threshold: 0.2,
+              threshold: 0.5,
               minSpeechDurationMs: 250,
               maxSpeechDurationS: 15,
             }
@@ -466,7 +466,7 @@ export default function App() {
         },
         {
           audioSliceSec: 15,
-          audioSource: 1, // 1 for raw Mic without voice recognition filters
+          audioSource: 9, // 9 for UNPROCESSED (raw audio without AGC or noise suppression)
           realtimeProcessingPauseMs: 15000,
           initRealtimeAfterMs: 15000,
           initialPrompt: combinedPrompt,

@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.4.6';
+const APP_VERSION = '1.4.7';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -71,6 +71,43 @@ export default function App() {
   const rakahCountRef = useRef(1);
   const spokenHistoryRef = useRef('');
   const lastNormalizedTextRef = useRef('');
+  const promptWindowStartRef = useRef({ surah: 1, ayah: 1 });
+  const currentPromptTextRef = useRef('');
+
+  const getNextVerses = (startSurah, startAyah, count) => {
+    let verses = [];
+    let foundStart = false;
+    for (let page of quranData) {
+      if (page.verses) {
+        for (let v of page.verses) {
+          if (!foundStart) {
+            if (v.surah === startSurah && v.ayah === startAyah) {
+              foundStart = true;
+              verses.push(v);
+            }
+          } else {
+            if (verses.length < count) {
+              verses.push(v);
+            }
+          }
+          if (verses.length === count) return verses;
+        }
+      }
+    }
+    return verses;
+  };
+
+  const updateTranscriberPrompt = (versesArray) => {
+    if (transcriberRef.current) {
+      const newPrompt = versesArray.map(v => v.cleanText).join(' ');
+      transcriberRef.current.options.initialPrompt = newPrompt;
+      if (transcriberRef.current.transcriptionResults) {
+        transcriberRef.current.transcriptionResults.clear();
+      }
+      currentPromptTextRef.current = newPrompt;
+      addLog(`تحديث الموجه (نافذة منزلقة): ${newPrompt.substring(0, 40)}...`);
+    }
+  };
 
   // Extract Surah List from quranData
   useEffect(() => {
@@ -362,25 +399,12 @@ export default function App() {
         }
       }
 
-      // إنشاء التلقين المسبق (Initial Prompt) المدمج من الفاتحة والسورة المختارة
-      const fatihaPrompt = "الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين اهدنا الصراط المستقيم صراط الذين أنعمت عليهم غير المغضوب عليهم ولا الضالين";
-      let surahPrompt = "";
-      if (selectedSurah && selectedSurah.id !== 1) {
-        const versesList = [];
-        quranData.forEach(pageItem => {
-          if (pageItem.verses) {
-            pageItem.verses.forEach(v => {
-              if (v.surah === selectedSurah.id) {
-                versesList.push(v.cleanText);
-              }
-            });
-          }
-        });
-        // أول 10 آيات من السورة
-        surahPrompt = " " + versesList.slice(0, 10).join(' ');
-      }
-      const combinedPrompt = fatihaPrompt + surahPrompt;
-      addLog(`تم إنشاء التلقين المسبق (Prompt) بطول: ${combinedPrompt.length} حرف`);
+      // إنشاء التلقين المسبق (Initial Prompt) المبدئي للفاتحة
+      const fatihaVerses = getNextVerses(1, 1, 7);
+      let combinedPrompt = fatihaVerses.map(v => v.cleanText).join(' ');
+      promptWindowStartRef.current = { surah: 1, ayah: 1 };
+      currentPromptTextRef.current = combinedPrompt;
+      addLog(`تم إنشاء التلقين المسبق للفاتحة بطول: ${combinedPrompt.length} حرف`);
 
       addLog('إنشاء RealtimeTranscriber...');
       const transcriber = new RealtimeTranscriber(
@@ -391,12 +415,12 @@ export default function App() {
         },
         {
           audioSliceSec: 15,
-          realtimeProcessingPauseMs: 1000,
-          initRealtimeAfterMs: 1000,
+          realtimeProcessingPauseMs: 15000,
+          initRealtimeAfterMs: 15000,
           initialPrompt: combinedPrompt,
           transcribeOptions: {
             language: 'ar',
-            beamSize: 5,
+            beamSize: 2,
             temperature: 0.0,
           },
         },
@@ -504,6 +528,11 @@ export default function App() {
   const transitionToReciting = () => {
     setPrayerStateAndRef('reciting');
     setRecognizedText('تم كشف الفاتحة - جاري متابعة السورة...');
+
+    // تحديث الموجه ليكون أول 5 آيات من السورة المختارة
+    const nextVerses = getNextVerses(selectedSurah.id, 1, 5);
+    promptWindowStartRef.current = { surah: selectedSurah.id, ayah: 1 };
+    updateTranscriberPrompt(nextVerses);
   };
 
   const triggerRukuState = () => {
@@ -710,6 +739,20 @@ export default function App() {
       };
 
       setMatchedVerseText(`سورة ${getSurahDisplayName(matchedVerse.surahName)} - آية ${matchedVerse.ayah}:\n﴿ ${matchedVerse.text} ﴾`);
+
+      // منطق التحديث المنزلق للموجه
+      let diff = 0;
+      if (matchedVerse.surah === promptWindowStartRef.current.surah) {
+        diff = matchedVerse.ayah - promptWindowStartRef.current.ayah;
+      } else {
+        diff = 3; // لتحديث الموجه فوراً عند تغيير السورة
+      }
+      
+      if (diff >= 3) {
+        const nextVerses = getNextVerses(matchedVerse.surah, matchedVerse.ayah, 5);
+        promptWindowStartRef.current = { surah: matchedVerse.surah, ayah: matchedVerse.ayah };
+        updateTranscriberPrompt(nextVerses);
+      }
 
       if (matchedPage > currentPageRef.current) {
         flipPage(matchedPage);

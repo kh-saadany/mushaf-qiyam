@@ -70,8 +70,6 @@ jobs:
       if: steps.check.outputs.build_full == 'true'
       run: |
         mkdir -p android/app/src/main/assets/mushaf
-        cp assets/ggml-model.bin android/app/src/main/assets/ggml-model.bin
-        cp assets/ggml-silero-v6.2.0.bin android/app/src/main/assets/ggml-silero-v6.2.0.bin
         cp assets/mushaf/* android/app/src/main/assets/mushaf/
 
     - name: Build Full APK

@@ -13,8 +13,7 @@ import {
   Modal,
   Share
 } from 'react-native';
-import { initWhisper, initWhisperVad } from 'whisper.rn';
-import AudioRecord from 'react-native-audio-record';
+import Vosk from 'react-native-vosk';
 import { StatusBar } from 'expo-status-bar';
 import {
   documentDirectory,
@@ -27,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.6.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -37,8 +36,8 @@ export default function App() {
   const [recognizedText, setRecognizedText] = useState('بانتظار قراءتك...');
   const [currentSurah, setCurrentSurah] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
-  const [whisperContext, setWhisperContext] = useState(null);
-  const [vadContext, setVadContext] = useState(null);
+  const [voskContext, setVoskContext] = useState(null);
+  const [voskEvent, setVoskEvent] = useState(null);
   const [initializing, setInitializing] = useState(true);
   
   const [selectedSurah, setSelectedSurah] = useState({ id: 1, name: "سُورَةُ ٱلْفَاتِحَةِ", page: 1 });
@@ -64,10 +63,9 @@ export default function App() {
     setDiagLog(prev => [...prev, entry]);
   };
 
+
+
   const recordingIntervalRef = useRef(null);
-  const isChunkOneRef = useRef(true);
-  const audioQueueRef = useRef([]);
-  const isTranscribingRef = useRef(false);
   const currentPageRef = useRef(1);
   const prayerStateRef = useRef('setup');
   const lastMatchedVerseRef = useRef({ surah: 1, ayah: 0, surahName: '' });
@@ -77,45 +75,6 @@ export default function App() {
   const lastNormalizedTextRef = useRef('');
   const promptWindowStartRef = useRef({ surah: 1, ayah: 1 });
   const currentPromptTextRef = useRef('');
-
-  const processAudioQueue = async () => {
-    if (isTranscribingRef.current || audioQueueRef.current.length === 0) return;
-    
-    isTranscribingRef.current = true;
-    const currentFilePath = audioQueueRef.current.shift();
-    
-    if (currentFilePath && whisperContext) {
-      addLog(`جاري سحب المقطع من الطابور وإرساله للمحرك: ${currentFilePath}`);
-      try {
-        const { promise } = whisperContext.transcribe(currentFilePath, {
-          language: 'ar',
-          beamSize: 2, // زيادة لتخفيف الهلوسة
-          temperature: 0.0,
-          initialPrompt: currentPromptTextRef.current
-        });
-        
-        const result = await promise;
-        if (result && typeof result.result === 'string') {
-          const text = result.result.trim();
-          if (text === '') {
-            addLog('⚠️ الموديل عالج مقطعاً لكن النتيجة فارغة (سكوت أو ضجيج)');
-          } else {
-            addLog(`🗣️ الموديل استخرج: "${text.substring(0, 30)}..."`);
-            handleSpokenWords(text);
-          }
-        }
-      } catch (err) {
-        addLog(`❌ خطأ في المحرك أثناء الترجمة: ${err.message}`, true);
-      }
-    }
-    
-    isTranscribingRef.current = false;
-    
-    // Process next item in queue if available
-    if (audioQueueRef.current.length > 0) {
-      processAudioQueue();
-    }
-  };
 
   const getNextVerses = (startSurah, startAyah, count) => {
     let verses = [];
@@ -223,76 +182,37 @@ export default function App() {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
-      try {
-        AudioRecord.stop();
-      } catch (e) {}
     };
   }, []);
 
   const prepareAssets = async () => {
     try {
-      const modelLocalUri = documentDirectory + 'ggml-model.bin';
-      const vadLocalUri = documentDirectory + 'ggml-silero-v6.2.0.bin';
-      
-      const modelInfo = await getInfoAsync(modelLocalUri);
-      const vadInfo = await getInfoAsync(vadLocalUri);
-
-      // If the model already exists locally (copied previously by Full APK), load it directly
-      if (modelInfo.exists && modelInfo.size > 100 * 1024 * 1024) {
-        await initializeWhisper();
-        return;
-      }
-
-      // Check if assets are bundled inside the APK (Full APK only)
-      const modelAssetInfo = await getInfoAsync('asset:/ggml-model.bin');
-      if (!modelAssetInfo.exists) {
-        // Lite APK: models not bundled and not found locally
-        alert("ملفات الذكاء الاصطناعي غير موجودة.\n\nيرجى تثبيت النسخة الكاملة (Full APK) أولاً حتى يتم نسخ الملفات، ثم يمكنك استخدام النسخة الخفيفة للتحديثات اللاحقة.");
-        setInitializing(false);
-        return;
-      }
-
-      // Full APK: copy bundled assets to local storage
-      setCopyingAssets(true);
-      setCopyProgress(0);
-
       // Create target directory
       const mushafDir = documentDirectory + 'mushaf/';
       await makeDirectoryAsync(mushafDir, { intermediates: true }).catch(() => {});
 
-      // Copy model
-      await copyAsync({
-        from: 'asset:/ggml-model.bin',
-        to: modelLocalUri
-      });
-      setCopyProgress(10);
-      
-      // Copy VAD model
-      const vadAssetInfo = await getInfoAsync('asset:/ggml-silero-v6.2.0.bin');
-      if (vadAssetInfo.exists) {
-        await copyAsync({
-          from: 'asset:/ggml-silero-v6.2.0.bin',
-          to: vadLocalUri
-        });
-      }
-      setCopyProgress(20);
+      setCopyingAssets(true);
+      setCopyProgress(0);
 
       // Copy Quran images
       for (let i = 1; i <= 604; i++) {
         const pageStr = String(i).padStart(3, '0');
-        await copyAsync({
-          from: `asset:/mushaf/${pageStr}.png`,
-          to: `${mushafDir}${pageStr}.png`
-        });
+        const imgInfo = await getInfoAsync(`${mushafDir}${pageStr}.png`);
+        if (!imgInfo.exists) {
+          await copyAsync({
+            from: `asset:/mushaf/${pageStr}.png`,
+            to: `${mushafDir}${pageStr}.png`
+          }).catch(()=>{});
+        }
 
         if (i % 30 === 0 || i === 604) {
-          const progress = 20 + Math.round((i / 604) * 80);
+          const progress = Math.round((i / 604) * 100);
           setCopyProgress(progress);
         }
       }
 
       setCopyingAssets(false);
-      await initializeWhisper();
+      await initializeVosk();
     } catch (error) {
       console.error("Failed to prepare assets:", error);
       alert("حدث خطأ أثناء نسخ ملفات النظام: " + error.message);
@@ -301,32 +221,18 @@ export default function App() {
     }
   };
 
-  const initializeWhisper = async () => {
+  const initializeVosk = async () => {
     try {
       setInitializing(true);
-      const modelLocalUri = documentDirectory + 'ggml-model.bin';
-      const vadLocalUri = documentDirectory + 'ggml-silero-v6.2.0.bin';
-
-      addLog(`تهيئة Whisper من: ${modelLocalUri}`);
-      const modelInfoCheck = await getInfoAsync(modelLocalUri);
-      addLog(`حجم ملف النموذج: ${modelInfoCheck.size ? (modelInfoCheck.size / 1024 / 1024).toFixed(1) + ' MB' : 'غير موجود'}`);
-
-      const ctx = await initWhisper({ filePath: modelLocalUri });
-      setWhisperContext(ctx);
-      addLog(`Whisper تهيأ بنجاح. ctx=${ctx ? 'موجود' : 'NULL'}`);
-      
-      const vadInfo = await getInfoAsync(vadLocalUri);
-      addLog(`ملف VAD: ${vadInfo.exists ? 'موجود (' + (vadInfo.size/1024/1024).toFixed(1) + ' MB)' : 'غير موجود'}`);
-      if (vadInfo.exists) {
-        const vCtx = await initWhisperVad({ filePath: vadLocalUri });
-        setVadContext(vCtx);
-        addLog(`VAD تهيأ بنجاح. vCtx=${vCtx ? 'موجود' : 'NULL'}`);
-      }
-      
+      const v = new Vosk();
+      addLog(`تهيئة Vosk...`);
+      await v.loadModel('model-ar');
+      setVoskContext(v);
+      addLog(`Vosk تهيأ بنجاح.`);
       setInitializing(false);
     } catch (e) {
-      addLog(`فشل initWhisper: ${e?.message || String(e)}`, true);
-      console.error("Failed to init whisper:", e);
+      addLog(`فشل initializeVosk: ${e?.message || String(e)}`, true);
+      console.error("Failed to init vosk:", e);
       alert("فشل تهيئة محرك الصوت المحلي أوفلاين. يرجى إغلاق التطبيق وإعادة تشغيله.");
       setInitializing(false);
     }
@@ -431,13 +337,11 @@ export default function App() {
   const startPrayer = async () => {
     addLog('--- بدء startPrayer ---');
 
-    if (!whisperContext) {
-      addLog('whisperContext = NULL → إيقاف', true);
-      alert("محرك الصوت لم يتهيأ بعد.\n\nتأكد من تثبيت النسخة الكاملة (Full APK) أولاً لنسخ ملفات الذكاء الاصطناعي، ثم أعد تشغيل التطبيق.");
+    if (!voskContext) {
+      addLog('voskContext = NULL → إيقاف', true);
+      alert("محرك الصوت لم يتهيأ بعد.");
       return;
     }
-    addLog(`whisperContext موجود: ${typeof whisperContext}`);
-    addLog(`vadContext: ${vadContext ? 'موجود' : 'NULL (غير محمل)'}`);
 
     addLog('طلب صلاحية الميكروفون...');
     let hasPermission = false;
@@ -446,7 +350,7 @@ export default function App() {
     } catch (permErr) {
       addLog(`استثناء صلاحية الميكروفون: ${permErr?.message || String(permErr)}`, true);
     }
-    addLog(`نتيجة صلاحية الميكروفون: ${hasPermission}`);
+    
     if (!hasPermission) {
       alert("يرجى إعطاء صلاحية الميكروفون للتعرف على الصوت.");
       return;
@@ -466,76 +370,47 @@ export default function App() {
     addLog('تم تغيير الحالة → waiting_fatiha');
 
     try {
-      addLog('بدء حلقة التسجيل המخصصة (Ping-Pong Loop)...');
+      addLog('بدء تشغيل محرك Vosk اللحظي...');
       
-      const fatihaVerses = getNextVerses(1, 1, 7);
-      let combinedPrompt = fatihaVerses.map(v => v.cleanText).join(' ');
-      promptWindowStartRef.current = { surah: 1, ayah: 1 };
-      currentPromptTextRef.current = combinedPrompt;
-      addLog(`تم إنشاء التلقين المسبق للفاتحة بطول: ${combinedPrompt.length} حرف`);
-
-      // 1. تهيئة التسجيل الأول
-      AudioRecord.init({
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        wavFile: 'chunk1.wav'
+      const pageVerses = quranData[selectedSurah.page - 1]?.verses || [];
+      const vocabulary = ['[unk]', 'الله اكبر', 'الحمد لله رب العالمين', 'الرحمن الرحيم', 'مالك يوم الدين', 'اياك نعبد واياك نستعين', 'اهدنا الصراط المستقيم', 'صراط الذين انعمت عليهم', 'غير المغضوب عليهم', 'ولا الضالين'];
+      pageVerses.forEach(v => {
+        const words = normalizeArabic(v.cleanText).split(' ');
+        words.forEach(w => {
+           if (w && !vocabulary.includes(w)) vocabulary.push(w);
+        });
       });
-      AudioRecord.start();
-      isChunkOneRef.current = true;
-      addLog('🎤 المايك يستشعر صوتاً... جاري تسجيل chunk1.wav');
-
-      // 2. حلقة التبديل كل 4 ثوانٍ
-      recordingIntervalRef.current = setInterval(async () => {
-        try {
-          // أ. إيقاف التسجيل الحالي وأخذ مساره
-          const currentFilePath = await AudioRecord.stop();
-          addLog(`🛑 توقف التسجيل مؤقتاً لحفظ المقطع...`);
-
-          // ب. التبديل لملف جديد وبدء التسجيل فوراً
-          isChunkOneRef.current = !isChunkOneRef.current;
-          const nextFileName = isChunkOneRef.current ? 'chunk1.wav' : 'chunk2.wav';
-          
-          AudioRecord.init({
-            sampleRate: 16000,
-            channels: 1,
-            bitsPerSample: 16,
-            wavFile: nextFileName
-          });
-          AudioRecord.start();
-          addLog(`🎤 استئناف المايك... جاري تسجيل ${nextFileName}`);
-
-          // ج. إضافة الملف المكتمل للطابور واستدعاء المعالجة
-          if (currentFilePath && whisperContext) {
-            audioQueueRef.current.push(currentFilePath);
-            addLog(`تم وضع المقطع في الطابور. حجم الطابور: ${audioQueueRef.current.length}`);
-            processAudioQueue();
-          }
-        } catch (loopErr) {
-          addLog(`خطأ داخل حلقة التسجيل: ${loopErr.message}`, true);
+      
+      await voskContext.start({ grammar: vocabulary });
+      
+      const evt = voskContext.onPartialResult((res) => {
+        if (res && res.trim()) {
+           handleSpokenWords(res);
         }
-      }, 4000);
+      });
+      setVoskEvent(evt);
 
-      addLog('startCustomLoop() اكتمل بنجاح ✅');
+      addLog('Vosk بدأ الاستماع اللحظي ✅');
     } catch (e) {
       const errMsg = e?.message || String(e);
       addLog(`CATCH في startPrayer: ${errMsg}`, true);
-      console.error("Transcription error:", e);
       setRecognizedText(`⚠️ خطأ: ${errMsg}`);
     }
   };
 
   const stopPrayer = async () => {
     setPrayerStateAndRef('setup');
-    if (recordingIntervalRef.current) {
-      clearInterval(recordingIntervalRef.current);
-      recordingIntervalRef.current = null;
-    }
     try {
-      await AudioRecord.stop();
+      if (voskEvent) {
+        voskEvent.remove();
+        setVoskEvent(null);
+      }
+      if (voskContext) {
+        voskContext.stop();
+      }
       addLog('تم إيقاف التسجيل وإنهاء الصلاة.');
     } catch (e) {
-      console.error("Failed to stop custom loop:", e);
+      console.error("Failed to stop Vosk:", e);
     }
   };
 

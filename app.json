@@ -25,6 +25,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "react-native-vosk",
+        {
+          "models": ["assets/model-ar"],
+          "iOSMicrophonePermission": "We need your microphone to listen to Quran recitation."
+        }
+      ]
+    ]
   }
 }

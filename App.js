@@ -27,7 +27,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -433,16 +433,16 @@ export default function App() {
       currentPromptTextRef.current = combinedPrompt;
       addLog(`تم إنشاء التلقين المسبق للفاتحة بطول: ${combinedPrompt.length} حرف`);
 
-      // 1. تهيئة التسجيل الأول
+      // 1. تهيئة التسجيل (مرة واحدة فقط) لتجنب انهيار המيكروفون
       AudioRecord.init({
         sampleRate: 16000,
         channels: 1,
         bitsPerSample: 16,
-        wavFile: 'chunk1.wav'
+        wavFile: 'chunk.wav'
       });
       AudioRecord.start();
-      isChunkOneRef.current = true;
-      addLog('🎤 المايك يستشعر صوتاً... جاري تسجيل chunk1.wav');
+      let chunkCounter = 1;
+      addLog('🎤 المايك يستشعر صوتاً... جاري تسجيل chunk.wav');
 
       // 2. حلقة التبديل كل 4 ثوانٍ
       recordingIntervalRef.current = setInterval(async () => {
@@ -451,23 +451,22 @@ export default function App() {
           const currentFilePath = await AudioRecord.stop();
           addLog(`🛑 توقف التسجيل مؤقتاً لحفظ المقطع...`);
 
-          // ب. التبديل لملف جديد وبدء التسجيل فوراً
-          isChunkOneRef.current = !isChunkOneRef.current;
-          const nextFileName = isChunkOneRef.current ? 'chunk1.wav' : 'chunk2.wav';
-          
-          AudioRecord.init({
-            sampleRate: 16000,
-            channels: 1,
-            bitsPerSample: 16,
-            wavFile: nextFileName
-          });
-          AudioRecord.start();
-          addLog(`🎤 استئناف المايك... جاري تسجيل ${nextFileName}`);
+          // ب. تأخير بسيط جداً لإراحة الـ Native AudioRecord في نظام أندرويد وتجنب הCrash
+          await new Promise(resolve => setTimeout(resolve, 200));
 
-          // ج. إرسال الملف المكتمل لترجمته
+          // ج. بدء التسجيل من جديد فوراً في نفس الملف (chunk.wav سيتم إعادة الكتابة عليه بأمان)
+          AudioRecord.start();
+          chunkCounter++;
+          addLog(`🎤 استئناف المايك... جاري التسجيل مرة أخرى (مقطع ${chunkCounter})`);
+
+          // د. نسخ الملف القديم لمسار زمني لكي يقرأه המوديل بحريّة دون أن تتضرر القراءة بالاستئناف
           if (currentFilePath && whisperContext) {
-            addLog(`المقطع في طريقه للمحرك: ${currentFilePath}`);
-            const { promise } = whisperContext.transcribe(currentFilePath, {
+            const timestamp = Date.now();
+            const copyPath = documentDirectory + `chunk_${timestamp}.wav`;
+            await copyAsync({ from: currentFilePath, to: copyPath });
+
+            addLog(`المقطع في طريقه للمحرك: ${copyPath}`);
+            const { promise } = whisperContext.transcribe(copyPath, {
               language: 'ar',
               beamSize: 1,
               temperature: 0.0,

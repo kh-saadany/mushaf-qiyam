@@ -1,6 +1,6 @@
 {
   "name": "mushafqiyam",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "main": "index.js",
   "dependencies": {
     "react-native-audio-record": "^0.2.2",

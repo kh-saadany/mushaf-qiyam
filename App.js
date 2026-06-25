@@ -66,6 +66,8 @@ export default function App() {
 
   const recordingIntervalRef = useRef(null);
   const isChunkOneRef = useRef(true);
+  const audioQueueRef = useRef([]);
+  const isTranscribingRef = useRef(false);
   const currentPageRef = useRef(1);
   const prayerStateRef = useRef('setup');
   const lastMatchedVerseRef = useRef({ surah: 1, ayah: 0, surahName: '' });
@@ -75,6 +77,45 @@ export default function App() {
   const lastNormalizedTextRef = useRef('');
   const promptWindowStartRef = useRef({ surah: 1, ayah: 1 });
   const currentPromptTextRef = useRef('');
+
+  const processAudioQueue = async () => {
+    if (isTranscribingRef.current || audioQueueRef.current.length === 0) return;
+    
+    isTranscribingRef.current = true;
+    const currentFilePath = audioQueueRef.current.shift();
+    
+    if (currentFilePath && whisperContext) {
+      addLog(`جاري سحب المقطع من الطابور وإرساله للمحرك: ${currentFilePath}`);
+      try {
+        const { promise } = whisperContext.transcribe(currentFilePath, {
+          language: 'ar',
+          beamSize: 2, // زيادة لتخفيف الهلوسة
+          temperature: 0.0,
+          initialPrompt: currentPromptTextRef.current
+        });
+        
+        const result = await promise;
+        if (result && typeof result.result === 'string') {
+          const text = result.result.trim();
+          if (text === '') {
+            addLog('⚠️ الموديل عالج مقطعاً لكن النتيجة فارغة (سكوت أو ضجيج)');
+          } else {
+            addLog(`🗣️ الموديل استخرج: "${text.substring(0, 30)}..."`);
+            handleSpokenWords(text);
+          }
+        }
+      } catch (err) {
+        addLog(`❌ خطأ في المحرك أثناء الترجمة: ${err.message}`, true);
+      }
+    }
+    
+    isTranscribingRef.current = false;
+    
+    // Process next item in queue if available
+    if (audioQueueRef.current.length > 0) {
+      processAudioQueue();
+    }
+  };
 
   const getNextVerses = (startSurah, startAyah, count) => {
     let verses = [];
@@ -433,16 +474,16 @@ export default function App() {
       currentPromptTextRef.current = combinedPrompt;
       addLog(`تم إنشاء التلقين المسبق للفاتحة بطول: ${combinedPrompt.length} حرف`);
 
-      // 1. تهيئة التسجيل (مرة واحدة فقط) لتجنب انهيار המيكروفون
+      // 1. تهيئة التسجيل الأول
       AudioRecord.init({
         sampleRate: 16000,
         channels: 1,
         bitsPerSample: 16,
-        wavFile: 'chunk.wav'
+        wavFile: 'chunk1.wav'
       });
       AudioRecord.start();
-      let chunkCounter = 1;
-      addLog('🎤 المايك يستشعر صوتاً... جاري تسجيل chunk.wav');
+      isChunkOneRef.current = true;
+      addLog('🎤 المايك يستشعر صوتاً... جاري تسجيل chunk1.wav');
 
       // 2. حلقة التبديل كل 4 ثوانٍ
       recordingIntervalRef.current = setInterval(async () => {
@@ -451,38 +492,24 @@ export default function App() {
           const currentFilePath = await AudioRecord.stop();
           addLog(`🛑 توقف التسجيل مؤقتاً لحفظ المقطع...`);
 
-          // ب. تأخير بسيط جداً لإراحة الـ Native AudioRecord في نظام أندرويد وتجنب הCrash
-          await new Promise(resolve => setTimeout(resolve, 200));
-
-          // ج. بدء التسجيل من جديد فوراً في نفس الملف (chunk.wav سيتم إعادة الكتابة عليه بأمان)
+          // ب. التبديل لملف جديد وبدء التسجيل فوراً
+          isChunkOneRef.current = !isChunkOneRef.current;
+          const nextFileName = isChunkOneRef.current ? 'chunk1.wav' : 'chunk2.wav';
+          
+          AudioRecord.init({
+            sampleRate: 16000,
+            channels: 1,
+            bitsPerSample: 16,
+            wavFile: nextFileName
+          });
           AudioRecord.start();
-          chunkCounter++;
-          addLog(`🎤 استئناف المايك... جاري التسجيل مرة أخرى (مقطع ${chunkCounter})`);
+          addLog(`🎤 استئناف المايك... جاري تسجيل ${nextFileName}`);
 
-          // د. نسخ الملف القديم لمسار زمني لكي يقرأه המوديل بحريّة دون أن تتضرر القراءة بالاستئناف
+          // ج. إضافة الملف المكتمل للطابور واستدعاء المعالجة
           if (currentFilePath && whisperContext) {
-            const timestamp = Date.now();
-            const copyPath = documentDirectory + `chunk_${timestamp}.wav`;
-            await copyAsync({ from: currentFilePath, to: copyPath });
-
-            addLog(`المقطع في طريقه للمحرك: ${copyPath}`);
-            const { promise } = whisperContext.transcribe(copyPath, {
-              language: 'ar',
-              beamSize: 1,
-              temperature: 0.0,
-              initialPrompt: currentPromptTextRef.current
-            });
-            
-            const result = await promise;
-            if (result && typeof result.result === 'string') {
-              const text = result.result.trim();
-              if (text === '') {
-                addLog('⚠️ الموديل عالج مقطعاً لكن النتيجة فارغة (سكوت أو ضجيج)');
-              } else {
-                addLog(`🗣️ الموديل استخرج: "${text.substring(0, 30)}..."`);
-                handleSpokenWords(text);
-              }
-            }
+            audioQueueRef.current.push(currentFilePath);
+            addLog(`تم وضع المقطع في الطابور. حجم الطابور: ${audioQueueRef.current.length}`);
+            processAudioQueue();
           }
         } catch (loopErr) {
           addLog(`خطأ داخل حلقة التسجيل: ${loopErr.message}`, true);

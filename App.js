@@ -14,7 +14,7 @@ import {
   Share
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
-import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
+import AudioRecord from 'react-native-audio-record';
 import { StatusBar } from 'expo-status-bar';
 import {
   documentDirectory,
@@ -27,7 +27,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -182,7 +182,9 @@ export default function App() {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
-      LiveAudioStream.stop().catch(console.error);
+      try {
+        AudioRecord.stop();
+      } catch (e) {}
     };
   }, []);
 
@@ -432,14 +434,13 @@ export default function App() {
       addLog(`تم إنشاء التلقين المسبق للفاتحة بطول: ${combinedPrompt.length} حرف`);
 
       // 1. تهيئة التسجيل الأول
-      LiveAudioStream.init({
+      AudioRecord.init({
         sampleRate: 16000,
         channels: 1,
         bitsPerSample: 16,
-        audioSource: 6, // VOICE_RECOGNITION - Avoid Samsung silence bug
         wavFile: 'chunk1.wav'
       });
-      LiveAudioStream.start();
+      AudioRecord.start();
       isChunkOneRef.current = true;
       addLog('🎤 المايك يستشعر صوتاً... جاري تسجيل chunk1.wav');
 
@@ -447,21 +448,20 @@ export default function App() {
       recordingIntervalRef.current = setInterval(async () => {
         try {
           // أ. إيقاف التسجيل الحالي وأخذ مساره
-          const currentFilePath = await LiveAudioStream.stop();
+          const currentFilePath = await AudioRecord.stop();
           addLog(`🛑 توقف التسجيل مؤقتاً لحفظ المقطع...`);
 
           // ب. التبديل لملف جديد وبدء التسجيل فوراً
           isChunkOneRef.current = !isChunkOneRef.current;
           const nextFileName = isChunkOneRef.current ? 'chunk1.wav' : 'chunk2.wav';
           
-          LiveAudioStream.init({
+          AudioRecord.init({
             sampleRate: 16000,
             channels: 1,
             bitsPerSample: 16,
-            audioSource: 6,
             wavFile: nextFileName
           });
-          LiveAudioStream.start();
+          AudioRecord.start();
           addLog(`🎤 استئناف المايك... جاري تسجيل ${nextFileName}`);
 
           // ج. إرسال الملف المكتمل لترجمته
@@ -506,7 +506,7 @@ export default function App() {
       recordingIntervalRef.current = null;
     }
     try {
-      await LiveAudioStream.stop();
+      await AudioRecord.stop();
       addLog('تم إيقاف التسجيل وإنهاء الصلاة.');
     } catch (e) {
       console.error("Failed to stop custom loop:", e);

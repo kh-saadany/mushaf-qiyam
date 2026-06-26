@@ -13,7 +13,7 @@ import {
   Modal,
   Share
 } from 'react-native';
-import Vosk from 'react-native-vosk';
+import Voice from '@react-native-voice/voice';
 import { StatusBar } from 'expo-status-bar';
 import {
   documentDirectory,
@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.6.2';
+const APP_VERSION = '1.6.3';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -36,9 +36,7 @@ export default function App() {
   const [recognizedText, setRecognizedText] = useState('بانتظار قراءتك...');
   const [currentSurah, setCurrentSurah] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
-  const [voskContext, setVoskContext] = useState(null);
-  const [voskEvent, setVoskEvent] = useState(null);
-  const [initializing, setInitializing] = useState(true);
+  const [initializing, setInitializing] = useState(false);
   
   const [selectedSurah, setSelectedSurah] = useState({ id: 1, name: "سُورَةُ ٱلْفَاتِحَةِ", page: 1 });
   const [surahList, setSurahList] = useState([]);
@@ -178,12 +176,54 @@ export default function App() {
 
   useEffect(() => {
     prepareAssets();
+    
+    // Voice Listeners setup
+    Voice.onSpeechPartialResults = onSpeechPartialResults;
+    Voice.onSpeechResults = onSpeechResults;
+    Voice.onSpeechEnd = onSpeechEnd;
+    Voice.onSpeechError = onSpeechError;
+
     return () => {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
+      Voice.destroy().then(Voice.removeAllListeners);
     };
   }, []);
+
+  const onSpeechPartialResults = (e) => {
+    if (e.value && e.value.length > 0) {
+      handleSpokenWords(e.value[0]);
+    }
+  };
+
+  const onSpeechResults = (e) => {
+    if (e.value && e.value.length > 0) {
+      handleSpokenWords(e.value[0]);
+    }
+  };
+
+  const onSpeechEnd = (e) => {
+    if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
+      addLog('الاستماع توقف (صمت أو نهاية مقطع)، إعادة التشغيل تلقائياً...');
+      setTimeout(() => {
+        if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
+          Voice.start('ar-SA').catch(err => addLog(`خطأ إعادة التشغيل: ${err}`, true));
+        }
+      }, 500);
+    }
+  };
+
+  const onSpeechError = (e) => {
+    addLog(`رسالة خطأ من المحرك: ${e.error?.message}`, true);
+    if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
+      setTimeout(() => {
+        if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
+          Voice.start('ar-SA').catch(err => addLog(`خطأ إعادة التشغيل بعد خطأ: ${err}`, true));
+        }
+      }, 1000);
+    }
+  };
 
   const prepareAssets = async () => {
     try {
@@ -212,28 +252,11 @@ export default function App() {
       }
 
       setCopyingAssets(false);
-      await initializeVosk();
+      setInitializing(false);
     } catch (error) {
       console.error("Failed to prepare assets:", error);
-      alert("حدث خطأ أثناء نسخ ملفات النظام: " + error.message);
+      alert("حدث خطأ أثناء نسخ ملفات المصحف: " + error.message);
       setCopyingAssets(false);
-      setInitializing(false);
-    }
-  };
-
-  const initializeVosk = async () => {
-    try {
-      setInitializing(true);
-      const v = new Vosk();
-      addLog(`تهيئة Vosk...`);
-      await v.loadModel('model-ar');
-      setVoskContext(v);
-      addLog(`Vosk تهيأ بنجاح.`);
-      setInitializing(false);
-    } catch (e) {
-      addLog(`فشل initializeVosk: ${e?.message || String(e)}`, true);
-      console.error("Failed to init vosk:", e);
-      alert("فشل تهيئة محرك الصوت المحلي أوفلاين. يرجى إغلاق التطبيق وإعادة تشغيله.");
       setInitializing(false);
     }
   };
@@ -337,12 +360,6 @@ export default function App() {
   const startPrayer = async () => {
     addLog('--- بدء startPrayer ---');
 
-    if (!voskContext) {
-      addLog('voskContext = NULL → إيقاف', true);
-      alert("محرك الصوت لم يتهيأ بعد.");
-      return;
-    }
-
     addLog('طلب صلاحية الميكروفون...');
     let hasPermission = false;
     try {
@@ -370,27 +387,9 @@ export default function App() {
     addLog('تم تغيير الحالة → waiting_fatiha');
 
     try {
-      addLog('بدء تشغيل محرك Vosk اللحظي...');
-      
-      const pageVerses = quranData[selectedSurah.page - 1]?.verses || [];
-      const vocabulary = ['[unk]', 'الله اكبر', 'الحمد لله رب العالمين', 'الرحمن الرحيم', 'مالك يوم الدين', 'اياك نعبد واياك نستعين', 'اهدنا الصراط المستقيم', 'صراط الذين انعمت عليهم', 'غير المغضوب عليهم', 'ولا الضالين'];
-      pageVerses.forEach(v => {
-        const words = normalizeArabic(v.cleanText).split(' ');
-        words.forEach(w => {
-           if (w && !vocabulary.includes(w)) vocabulary.push(w);
-        });
-      });
-      
-      await voskContext.start({ grammar: vocabulary });
-      
-      const evt = voskContext.onPartialResult((res) => {
-        if (res && res.trim()) {
-           handleSpokenWords(res);
-        }
-      });
-      setVoskEvent(evt);
-
-      addLog('Vosk بدأ الاستماع اللحظي ✅');
+      addLog('بدء تشغيل محرك أندرويد المدمج للاستماع اللحظي...');
+      await Voice.start('ar-SA');
+      addLog('الاستماع بدأ بنجاح ✅');
     } catch (e) {
       const errMsg = e?.message || String(e);
       addLog(`CATCH في startPrayer: ${errMsg}`, true);
@@ -401,16 +400,10 @@ export default function App() {
   const stopPrayer = async () => {
     setPrayerStateAndRef('setup');
     try {
-      if (voskEvent) {
-        voskEvent.remove();
-        setVoskEvent(null);
-      }
-      if (voskContext) {
-        voskContext.stop();
-      }
+      await Voice.stop();
       addLog('تم إيقاف التسجيل وإنهاء الصلاة.');
     } catch (e) {
-      console.error("Failed to stop Vosk:", e);
+      console.error("Failed to stop Voice:", e);
     }
   };
 
@@ -883,11 +876,12 @@ export default function App() {
           </View>
 
           <TouchableOpacity 
-            style={[styles.btnStart, !whisperContext && styles.btnDisabled]} 
+            style={[styles.btnStart, initializing && styles.btnDisabled]} 
             onPress={startPrayer}
+            disabled={initializing}
           >
             <Text style={styles.btnTextPrimary}>
-              {whisperContext ? 'ابدأ الصلاة الآن 🎙️' : '⚠️ محرك الصوت غير جاهز'}
+              {initializing ? '⚠️ جاري التهيئة...' : 'ابدأ الصلاة الآن 🎙️'}
             </Text>
           </TouchableOpacity>
         </View>

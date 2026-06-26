@@ -28,10 +28,9 @@
     },
     "plugins": [
       [
-        "react-native-vosk",
+        "@react-native-voice/voice",
         {
-          "models": ["assets/model-ar"],
-          "iOSMicrophonePermission": "We need your microphone to listen to Quran recitation."
+          "microphonePermission": "We need your microphone to listen to Quran recitation."
         }
       ]
     ]

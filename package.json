@@ -1,6 +1,6 @@
 {
   "name": "mushafqiyam",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "main": "index.js",
   "dependencies": {
     "buffer": "^6.0.3",
@@ -11,7 +11,8 @@
     "react": "19.2.3",
     "react-native": "0.85.3",
     "react-native-vosk": "^2.1.7",
-    "sharp": "^0.35.2"
+    "sharp": "^0.35.2",
+    "unzipper": "^0.12.5"
   },
   "scripts": {
     "start": "expo start",

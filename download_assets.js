@@ -2,8 +2,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-
-
+const unzipper = require('unzipper');
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
@@ -94,7 +93,35 @@ async function downloadAllImages(concurrency = 25) {
   await Promise.all(workers);
 }
 
+async function downloadVoskModel() {
+  const modelUrl = 'https://alphacephei.com/vosk/models/vosk-model-small-ar-0.3.zip';
+  const zipPath = path.join(__dirname, 'assets', 'vosk-model-small-ar.zip');
+  const destDir = path.join(__dirname, 'assets', 'model-ar');
+  
+  if (fs.existsSync(destDir) && fs.existsSync(path.join(destDir, 'am'))) {
+    console.log('Vosk model already exists. Skipping download.');
+    return;
+  }
 
+  console.log('Downloading Vosk model (104MB)...');
+  await downloadFile(modelUrl, zipPath);
+  console.log('Model downloaded. Extracting...');
+  
+  await new Promise((resolve, reject) => {
+    const stream = fs.createReadStream(zipPath).pipe(unzipper.Extract({ path: path.join(__dirname, 'assets') }));
+    stream.on('close', resolve);
+    stream.on('error', reject);
+  });
+  
+  const extractedDir = path.join(__dirname, 'assets', 'vosk-model-small-ar-0.3');
+  if (fs.existsSync(extractedDir)) {
+    if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true });
+    fs.renameSync(extractedDir, destDir);
+  }
+  
+  if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+  console.log('Vosk model setup successfully!');
+}
 
 function generateImagesIndex() {
   const indexPath = path.join(__dirname, 'assets', 'quran-images.js');
@@ -121,7 +148,7 @@ async function main() {
     }
 
     console.log('Starting assets pre-download and setup...');
-
+    await downloadVoskModel();
     console.log('Downloading Quran images...');
     await downloadAllImages(30); // 30 concurrent downloads
     console.log('Generating code files...');

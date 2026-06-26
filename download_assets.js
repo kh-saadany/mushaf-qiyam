@@ -2,7 +2,8 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
-const unzipper = require('unzipper');
+const axios = require('axios');
+const AdmZip = require('adm-zip');
 function downloadFile(url, destPath) {
   return new Promise((resolve, reject) => {
     https.get(url, (res) => {
@@ -103,15 +104,32 @@ async function downloadVoskModel() {
     return;
   }
 
-  console.log('Downloading Vosk model (104MB)...');
-  await downloadFile(modelUrl, zipPath);
-  console.log('Model downloaded. Extracting...');
+  console.log('Downloading Vosk model (104MB) via axios...');
   
-  await new Promise((resolve, reject) => {
-    const stream = fs.createReadStream(zipPath).pipe(unzipper.Extract({ path: path.join(__dirname, 'assets') }));
-    stream.on('close', resolve);
-    stream.on('error', reject);
+  const writer = fs.createWriteStream(zipPath);
+  const response = await axios({
+    url: modelUrl,
+    method: 'GET',
+    responseType: 'stream'
   });
+
+  await new Promise((resolve, reject) => {
+    response.data.pipe(writer);
+    let error = null;
+    writer.on('error', err => {
+      error = err;
+      writer.close();
+      reject(err);
+    });
+    writer.on('close', () => {
+      if (!error) resolve();
+    });
+  });
+
+  console.log('Model downloaded. Extracting using adm-zip...');
+  
+  const zip = new AdmZip(zipPath);
+  zip.extractAllTo(path.join(__dirname, 'assets'), true);
   
   const extractedDir = path.join(__dirname, 'assets', 'vosk-model-small-ar-0.3');
   if (fs.existsSync(extractedDir)) {

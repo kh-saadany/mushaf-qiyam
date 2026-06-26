@@ -93,7 +93,55 @@ async function downloadAllImages(concurrency = 25) {
   await Promise.all(workers);
 }
 
-// Removed downloadVoskModel()
+async function downloadWhisperModel() {
+  const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin';
+  const destPath = path.join(__dirname, 'assets', 'ggml-tiny.bin');
+  
+  if (fs.existsSync(destPath) && fs.statSync(destPath).size > 70 * 1024 * 1024) {
+    console.log('Whisper model already exists and is valid size. Skipping download.');
+  } else {
+    console.log('Downloading Whisper model (75MB)... This may take a while.');
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        await downloadFile(modelUrl, destPath);
+        console.log('Whisper model downloaded successfully.');
+        break;
+      } catch (err) {
+        retries--;
+        console.error(`Error downloading model. Retries left: ${retries}`, err.message);
+        if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+        if (retries === 0) throw err;
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }
+
+  // Download VAD model
+  const vadUrl = 'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin';
+  const vadDestPath = path.join(__dirname, 'assets', 'ggml-silero-v6.2.0.bin');
+  
+  if (fs.existsSync(vadDestPath) && fs.statSync(vadDestPath).size > 1 * 1024 * 1024) {
+    console.log('VAD model already exists. Skipping download.');
+  } else {
+    console.log('Downloading VAD model (~3MB)...');
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        await downloadFile(vadUrl, vadDestPath);
+        console.log('VAD model downloaded successfully.');
+        break;
+      } catch (err) {
+        retries--;
+        console.error(`Error downloading VAD model. Retries left: ${retries}`, err.message);
+        if (fs.existsSync(vadDestPath)) fs.unlinkSync(vadDestPath);
+        if (retries === 0) throw err;
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }
+}
+
 
 function generateImagesIndex() {
   const indexPath = path.join(__dirname, 'assets', 'quran-images.js');
@@ -123,6 +171,8 @@ async function main() {
   
     console.log('Downloading Quran images...');
     await downloadAllImages(30); // 30 concurrent downloads
+    console.log('Downloading Whisper model...');
+    await downloadWhisperModel();
     console.log('Generating code files...');
     generateImagesIndex();
     console.log('Assets setup completed successfully!');

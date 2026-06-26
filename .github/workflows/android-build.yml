@@ -71,6 +71,7 @@ jobs:
       run: |
         mkdir -p android/app/src/main/assets/mushaf
         cp assets/mushaf/* android/app/src/main/assets/mushaf/
+        cp assets/*.bin android/app/src/main/assets/ || true
 
     - name: Build Full APK
       if: steps.check.outputs.build_full == 'true'

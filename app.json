@@ -26,13 +26,8 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      [
-        "@react-native-voice/voice",
-        {
-          "microphonePermission": "We need your microphone to listen to Quran recitation."
-        }
-      ]
-    ]
+    "packagerOpts": {
+      "assetExts": ["bin", "txt", "jpg", "png", "ttf", "json"]
+    }
   }
 }

@@ -13,7 +13,7 @@ import {
   Modal,
   Share
 } from 'react-native';
-import Voice from '@react-native-voice/voice';
+import { initWhisper, initWhisperVad } from 'whisper.rn';
 import { StatusBar } from 'expo-status-bar';
 import {
   documentDirectory,
@@ -26,7 +26,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.6.3';
+const APP_VERSION = '1.7.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -41,6 +41,8 @@ export default function App() {
   const [selectedSurah, setSelectedSurah] = useState({ id: 1, name: "سُورَةُ ٱلْفَاتِحَةِ", page: 1 });
   const [surahList, setSurahList] = useState([]);
   const [matchedVerseText, setMatchedVerseText] = useState('بانتظار بدء التلاوة...');
+  const [whisperContext, setWhisperContext] = useState(null);
+  const [vadContext, setVadContext] = useState(null);
 
   // New states for settings and updates
   const [showSettings, setShowSettings] = useState(false);
@@ -176,52 +178,52 @@ export default function App() {
 
   useEffect(() => {
     prepareAssets();
-    
-    // Voice Listeners setup
-    Voice.onSpeechPartialResults = onSpeechPartialResults;
-    Voice.onSpeechResults = onSpeechResults;
-    Voice.onSpeechEnd = onSpeechEnd;
-    Voice.onSpeechError = onSpeechError;
 
     return () => {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
-      Voice.destroy().then(Voice.removeAllListeners);
+      if (whisperContext) {
+         whisperContext.release();
+      }
+      if (vadContext) {
+         vadContext.release();
+      }
     };
   }, []);
 
-  const onSpeechPartialResults = (e) => {
-    if (e.value && e.value.length > 0) {
-      handleSpokenWords(e.value[0]);
+  const initWhisperEngine = async () => {
+    try {
+      if (whisperContext && vadContext) return true;
+      addLog('جاري تحميل الموديلات (Whisper & VAD)...');
+      
+      let vCtx = vadContext;
+      if (!vCtx) {
+        vCtx = await initWhisperVad({ filePath: documentDirectory + 'mushaf/ggml-silero-v6.2.0.bin' });
+        setVadContext(vCtx);
+      }
+
+      let wCtx = whisperContext;
+      if (!wCtx) {
+        wCtx = await initWhisper({ filePath: documentDirectory + 'mushaf/ggml-tiny.bin' });
+        setWhisperContext(wCtx);
+      }
+      
+      addLog('تم تهيئة المحركات بنجاح.');
+      return true;
+    } catch (e) {
+      addLog(`خطأ في تهيئة Whisper: ${e.message}`, true);
+      alert('فشل تهيئة محرك التعرف على الصوت. الرجاء التأكد من مساحة الجهاز.');
+      return false;
     }
   };
 
-  const onSpeechResults = (e) => {
-    if (e.value && e.value.length > 0) {
-      handleSpokenWords(e.value[0]);
-    }
-  };
-
-  const onSpeechEnd = (e) => {
-    if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
-      addLog('الاستماع توقف (صمت أو نهاية مقطع)، إعادة التشغيل تلقائياً...');
-      setTimeout(() => {
-        if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
-          Voice.start('ar-SA').catch(err => addLog(`خطأ إعادة التشغيل: ${err}`, true));
-        }
-      }, 500);
-    }
-  };
-
-  const onSpeechError = (e) => {
-    addLog(`رسالة خطأ من المحرك: ${e.error?.message}`, true);
-    if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
-      setTimeout(() => {
-        if (prayerStateRef.current !== 'setup' && prayerStateRef.current !== 'ruku') {
-          Voice.start('ar-SA').catch(err => addLog(`خطأ إعادة التشغيل بعد خطأ: ${err}`, true));
-        }
-      }, 1000);
+  const handleTranscribeResult = (data) => {
+    if (data && data.result) {
+      const text = data.result.trim();
+      if (text.length > 0) {
+        handleSpokenWords(text);
+      }
     }
   };
 
@@ -249,6 +251,23 @@ export default function App() {
           const progress = Math.round((i / 604) * 100);
           setCopyProgress(progress);
         }
+      }
+
+      // Copy Whisper models
+      const modelInfo = await getInfoAsync(`${mushafDir}ggml-tiny.bin`);
+      if (!modelInfo.exists) {
+        await copyAsync({
+          from: `asset:/ggml-tiny.bin`,
+          to: `${mushafDir}ggml-tiny.bin`
+        }).catch(()=>{});
+      }
+
+      const vadInfo = await getInfoAsync(`${mushafDir}ggml-silero-v6.2.0.bin`);
+      if (!vadInfo.exists) {
+        await copyAsync({
+          from: `asset:/ggml-silero-v6.2.0.bin`,
+          to: `${mushafDir}ggml-silero-v6.2.0.bin`
+        }).catch(()=>{});
       }
 
       setCopyingAssets(false);
@@ -387,8 +406,26 @@ export default function App() {
     addLog('تم تغيير الحالة → waiting_fatiha');
 
     try {
-      addLog('بدء تشغيل محرك أندرويد المدمج للاستماع اللحظي...');
-      await Voice.start('ar-SA');
+      addLog('تجهيز محرك Whisper اللحظي...');
+      const isReady = await initWhisperEngine();
+      if (!isReady) return;
+
+      addLog('بدء تشغيل الاستماع اللحظي (Streaming)...');
+      
+      const vCtx = vadContext || await initWhisperVad({ filePath: documentDirectory + 'mushaf/ggml-silero-v6.2.0.bin' });
+      const wCtx = whisperContext || await initWhisper({ filePath: documentDirectory + 'mushaf/ggml-tiny.bin' });
+      
+      if (!vadContext) setVadContext(vCtx);
+      if (!whisperContext) setWhisperContext(wCtx);
+
+      wCtx.transcribeRealtime({
+        language: 'ar',
+        realtimeAudioSec: 5,
+        useBackground: true,
+        vad: vCtx,
+        onProgress: (progress) => {},
+        onNewSegments: (data) => handleTranscribeResult(data)
+      }).catch(err => addLog(`خطأ في بدء Realtime: ${err.message}`, true));
       addLog('الاستماع بدأ بنجاح ✅');
     } catch (e) {
       const errMsg = e?.message || String(e);
@@ -400,10 +437,12 @@ export default function App() {
   const stopPrayer = async () => {
     setPrayerStateAndRef('setup');
     try {
-      await Voice.stop();
+      if (whisperContext) {
+        await whisperContext.stopTranscribe();
+      }
       addLog('تم إيقاف التسجيل وإنهاء الصلاة.');
     } catch (e) {
-      console.error("Failed to stop Voice:", e);
+      console.error("Failed to stop Whisper:", e);
     }
   };
 

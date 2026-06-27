@@ -38,7 +38,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.7.5';
+const APP_VERSION = '1.7.6';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -241,6 +241,7 @@ export default function App() {
     if (resultText) {
       const text = resultText.trim();
       if (text.length > 0) {
+        addLog(`[Whisper] تم التقاط نص: "${text}"`);
         handleSpokenWords(text);
       }
     }
@@ -450,12 +451,21 @@ export default function App() {
           minSilenceDurationMs: 700
         }
       });
-      transcriberRef.current = new RealtimeTranscriber({
-        whisperContext: wCtx,
-        vadContext: realtimeVad,
-        audioStream,
-        onTranscribe: (event) => handleTranscribeResult(event)
-      });
+      transcriberRef.current = new RealtimeTranscriber(
+        {
+          whisperContext: wCtx,
+          vadContext: realtimeVad,
+          audioStream
+        },
+        {},
+        {
+          onTranscribe: (event) => handleTranscribeResult(event),
+          onVad: (event) => {
+            const confidencePercent = event.confidence ? Math.round(event.confidence * 100) : 0;
+            addLog(`[VAD] نشاط صوتي: ${event.type} (الثقة: ${confidencePercent}%)`);
+          }
+        }
+      );
 
       transcriberRef.current.start().catch(err => addLog(`خطأ في بدء Realtime: ${err.message}`, true));
       addLog('الاستماع بدأ بنجاح ✅');

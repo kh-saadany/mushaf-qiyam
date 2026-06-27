@@ -1,6 +1,6 @@
 {
   "name": "mushafqiyam",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "main": "index.js",
   "dependencies": {
     "buffer": "^6.0.3",

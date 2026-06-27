@@ -1,8 +1,9 @@
 {
   "name": "mushafqiyam",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "main": "index.js",
   "dependencies": {
+    "@fugood/react-native-audio-pcm-stream": "^1.1.4",
     "buffer": "^6.0.3",
     "expo": "~56.0.11",
     "expo-file-system": "~56.0.8",

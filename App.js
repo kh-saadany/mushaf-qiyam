@@ -14,10 +14,19 @@ import {
   Share
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
-import { RealtimeTranscriber } from 'whisper.rn/lib/commonjs/realtime-transcription';
+import { RealtimeTranscriber, RingBufferVad } from 'whisper.rn/lib/commonjs/realtime-transcription';
 import { AudioPcmStreamAdapter } from 'whisper.rn/lib/commonjs/realtime-transcription/adapters/AudioPcmStreamAdapter';
 import RNFS from 'react-native-fs';
 import { StatusBar } from 'expo-status-bar';
+
+class CustomAudioStreamAdapter extends AudioPcmStreamAdapter {
+  async initialize(config) {
+    return super.initialize({
+      ...config,
+      audioSource: 9 // FORCE UNPROCESSED (Raw Microphone) to avoid Samsung audio filtering issues
+    });
+  }
+}
 import {
   documentDirectory,
   getInfoAsync,
@@ -29,7 +38,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.7.4';
+const APP_VERSION = '1.7.5';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -434,10 +443,16 @@ export default function App() {
         transcriberRef.current.stop();
       }
 
-      const audioStream = new AudioPcmStreamAdapter(); 
+      const audioStream = new CustomAudioStreamAdapter(); 
+      const realtimeVad = new RingBufferVad(vCtx, {
+        vadOptions: {
+          threshold: 0.5,
+          minSilenceDurationMs: 700
+        }
+      });
       transcriberRef.current = new RealtimeTranscriber({
         whisperContext: wCtx,
-        vadContext: vCtx,
+        vadContext: realtimeVad,
         audioStream,
         onTranscribe: (event) => handleTranscribeResult(event)
       });

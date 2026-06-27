@@ -16,6 +16,7 @@ import {
 import { initWhisper, initWhisperVad } from 'whisper.rn';
 import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription';
 import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters';
+import RNFS from 'react-native-fs';
 import { StatusBar } from 'expo-status-bar';
 import {
   documentDirectory,
@@ -28,7 +29,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.2';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -262,21 +263,23 @@ export default function App() {
         }
       }
 
-      // Copy Whisper models
+      // Copy Whisper models using react-native-fs since they are raw assets
       const modelInfo = await getInfoAsync(`${mushafDir}ggml-tiny.bin`);
       if (!modelInfo.exists) {
-        await copyAsync({
-          from: `asset:/ggml-tiny.bin`,
-          to: `${mushafDir}ggml-tiny.bin`
-        }).catch(()=>{});
+        try {
+          await RNFS.copyFileAssets('ggml-tiny.bin', RNFS.DocumentDirectoryPath + '/mushaf/ggml-tiny.bin');
+        } catch (err) {
+          console.warn("Failed to copy ggml-tiny.bin from assets:", err);
+        }
       }
 
       const vadInfo = await getInfoAsync(`${mushafDir}ggml-silero-v6.2.0.bin`);
       if (!vadInfo.exists) {
-        await copyAsync({
-          from: `asset:/ggml-silero-v6.2.0.bin`,
-          to: `${mushafDir}ggml-silero-v6.2.0.bin`
-        }).catch(()=>{});
+        try {
+          await RNFS.copyFileAssets('ggml-silero-v6.2.0.bin', RNFS.DocumentDirectoryPath + '/mushaf/ggml-silero-v6.2.0.bin');
+        } catch (err) {
+          console.warn("Failed to copy ggml-silero-v6.2.0.bin from assets:", err);
+        }
       }
 
       setCopyingAssets(false);

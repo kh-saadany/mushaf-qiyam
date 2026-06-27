@@ -14,6 +14,8 @@ import {
   Share
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
+import { RealtimeTranscriber } from 'whisper.rn/realtime-transcription';
+import { AudioPcmStreamAdapter } from 'whisper.rn/realtime-transcription/adapters';
 import { StatusBar } from 'expo-status-bar';
 import {
   documentDirectory,
@@ -26,7 +28,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -75,6 +77,7 @@ export default function App() {
   const lastNormalizedTextRef = useRef('');
   const promptWindowStartRef = useRef({ surah: 1, ayah: 1 });
   const currentPromptTextRef = useRef('');
+  const transcriberRef = useRef(null);
 
   const getNextVerses = (startSurah, startAyah, count) => {
     let verses = [];
@@ -183,6 +186,10 @@ export default function App() {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
+      if (transcriberRef.current) {
+        transcriberRef.current.stop();
+        transcriberRef.current = null;
+      }
       if (whisperContext) {
          whisperContext.release();
       }
@@ -218,9 +225,11 @@ export default function App() {
     }
   };
 
-  const handleTranscribeResult = (data) => {
-    if (data && data.result) {
-      const text = data.result.trim();
+  const handleTranscribeResult = (event) => {
+    // The event from RealtimeTranscriber has a different structure: event.data.result
+    const resultText = event?.data?.result || event?.result;
+    if (resultText) {
+      const text = resultText.trim();
       if (text.length > 0) {
         handleSpokenWords(text);
       }
@@ -418,14 +427,19 @@ export default function App() {
       if (!vadContext) setVadContext(vCtx);
       if (!whisperContext) setWhisperContext(wCtx);
 
-      wCtx.transcribeRealtime({
-        language: 'ar',
-        realtimeAudioSec: 5,
-        useBackground: true,
-        vad: vCtx,
-        onProgress: (progress) => {},
-        onNewSegments: (data) => handleTranscribeResult(data)
-      }).catch(err => addLog(`خطأ في بدء Realtime: ${err.message}`, true));
+      if (transcriberRef.current) {
+        transcriberRef.current.stop();
+      }
+
+      const audioStream = new AudioPcmStreamAdapter(); 
+      transcriberRef.current = new RealtimeTranscriber({
+        whisperContext: wCtx,
+        vadContext: vCtx,
+        audioStream,
+        onTranscribe: (event) => handleTranscribeResult(event)
+      });
+
+      transcriberRef.current.start().catch(err => addLog(`خطأ في بدء Realtime: ${err.message}`, true));
       addLog('الاستماع بدأ بنجاح ✅');
     } catch (e) {
       const errMsg = e?.message || String(e);
@@ -437,8 +451,8 @@ export default function App() {
   const stopPrayer = async () => {
     setPrayerStateAndRef('setup');
     try {
-      if (whisperContext) {
-        await whisperContext.stopTranscribe();
+      if (transcriberRef.current) {
+        await transcriberRef.current.stop();
       }
       addLog('تم إيقاف التسجيل وإنهاء الصلاة.');
     } catch (e) {

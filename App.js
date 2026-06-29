@@ -14,19 +14,9 @@ import {
   Share
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
-import { RealtimeTranscriber, RingBufferVad } from 'whisper.rn/lib/commonjs/realtime-transcription';
-import { AudioPcmStreamAdapter } from 'whisper.rn/lib/commonjs/realtime-transcription/adapters/AudioPcmStreamAdapter';
+import { RealtimeTranscriber } from 'whisper.rn/src/realtime-transcription/RealtimeTranscriber';
+import { AudioPcmStreamAdapter } from 'whisper.rn/src/realtime-transcription/adapters/AudioPcmStreamAdapter';
 import RNFS from 'react-native-fs';
-import { StatusBar } from 'expo-status-bar';
-
-class CustomAudioStreamAdapter extends AudioPcmStreamAdapter {
-  async initialize(config) {
-    return super.initialize({
-      ...config,
-      audioSource: 9 // FORCE UNPROCESSED (Raw Microphone) to avoid Samsung audio filtering issues
-    });
-  }
-}
 import {
   documentDirectory,
   getInfoAsync,
@@ -38,7 +28,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.7.6';
+const APP_VERSION = '1.2.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -196,10 +186,9 @@ export default function App() {
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current);
       }
-      if (transcriberRef.current) {
-        transcriberRef.current.stop();
-        transcriberRef.current = null;
-      }
+      try {
+        AudioRecord.stop();
+      } catch (e) {}
       if (whisperContext) {
          whisperContext.release();
       }
@@ -232,18 +221,6 @@ export default function App() {
       addLog(`خطأ في تهيئة Whisper: ${e.message}`, true);
       alert('فشل تهيئة محرك التعرف على الصوت. الرجاء التأكد من مساحة الجهاز.');
       return false;
-    }
-  };
-
-  const handleTranscribeResult = (event) => {
-    // The event from RealtimeTranscriber has a different structure: event.data.result
-    const resultText = event?.data?.result || event?.result;
-    if (resultText) {
-      const text = resultText.trim();
-      if (text.length > 0) {
-        addLog(`[Whisper] تم التقاط نص: "${text}"`);
-        handleSpokenWords(text);
-      }
     }
   };
 
@@ -428,11 +405,11 @@ export default function App() {
     addLog('تم تغيير الحالة → waiting_fatiha');
 
     try {
-      addLog('تجهيز محرك Whisper اللحظي...');
+      addLog('تجهيز محرك Whisper...');
       const isReady = await initWhisperEngine();
       if (!isReady) return;
 
-      addLog('بدء تشغيل الاستماع اللحظي (Streaming)...');
+      addLog('بدء تشغيل الاستماع اللحظي (Manual Streaming)...');
       
       const vCtx = vadContext || await initWhisperVad({ filePath: documentDirectory + 'mushaf/ggml-silero-v6.2.0.bin' });
       const wCtx = whisperContext || await initWhisper({ filePath: documentDirectory + 'mushaf/ggml-tiny.bin' });
@@ -440,35 +417,37 @@ export default function App() {
       if (!vadContext) setVadContext(vCtx);
       if (!whisperContext) setWhisperContext(wCtx);
 
-      if (transcriberRef.current) {
-        transcriberRef.current.stop();
-      }
+      // 1. Setup Audio Stream Adapter
+      const audioStream = new AudioPcmStreamAdapter();
 
-      const audioStream = new CustomAudioStreamAdapter(); 
-      const realtimeVad = new RingBufferVad(vCtx, {
-        vadOptions: {
-          threshold: 0.5,
-          minSilenceDurationMs: 700
-        }
-      });
+      // 2. Create Transcriber
       transcriberRef.current = new RealtimeTranscriber(
+        { whisperContext: wCtx, vadContext: vCtx, audioStream, fs: RNFS },
         {
-          whisperContext: wCtx,
-          vadContext: realtimeVad,
-          audioStream
+          audioSliceSec: 30,
+          vadPreset: 'default',
+          autoSliceOnSpeechEnd: true,
+          transcribeOptions: { language: 'ar', prompt: currentPromptTextRef.current || 'بسم الله الرحمن الرحيم' },
         },
-        {},
         {
-          onTranscribe: (event) => handleTranscribeResult(event),
-          onVad: (event) => {
-            const confidencePercent = event.confidence ? Math.round(event.confidence * 100) : 0;
-            addLog(`[VAD] نشاط صوتي: ${event.type} (الثقة: ${confidencePercent}%)`);
+          onTranscribe: (event) => {
+            const text = event.data?.result?.trim();
+            if (text && text.length > 0) {
+              addLog(`[Whisper] تم التقاط نص: "${text}"`);
+              handleSpokenWords(text);
+            }
+          },
+          onError: (error) => {
+            addLog(`خطأ في الترجمة اللحظية: ${error?.message || String(error)}`, true);
+          },
+          onStatusChange: (isActive) => {
+            if (isActive) addLog('الاستماع بدأ بنجاح ✅');
           }
         }
       );
 
-      transcriberRef.current.start().catch(err => addLog(`خطأ في بدء Realtime: ${err.message}`, true));
-      addLog('الاستماع بدأ بنجاح ✅');
+      // 3. Start Recording
+      await transcriberRef.current.start();
     } catch (e) {
       const errMsg = e?.message || String(e);
       addLog(`CATCH في startPrayer: ${errMsg}`, true);
@@ -481,10 +460,11 @@ export default function App() {
     try {
       if (transcriberRef.current) {
         await transcriberRef.current.stop();
+        transcriberRef.current = null;
       }
       addLog('تم إيقاف التسجيل وإنهاء الصلاة.');
     } catch (e) {
-      console.error("Failed to stop Whisper:", e);
+      console.error("Failed to stop transcriber:", e);
     }
   };
 

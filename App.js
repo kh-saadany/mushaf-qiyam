@@ -14,8 +14,8 @@ import {
   Share
 } from 'react-native';
 import { initWhisper, initWhisperVad } from 'whisper.rn';
-import { RealtimeTranscriber } from 'whisper.rn/src/realtime-transcription/RealtimeTranscriber';
-import { AudioPcmStreamAdapter } from 'whisper.rn/src/realtime-transcription/adapters/AudioPcmStreamAdapter';
+import { RealtimeTranscriber } from 'whisper.rn/lib/commonjs/realtime-transcription/RealtimeTranscriber';
+import { AudioPcmStreamAdapter } from 'whisper.rn/lib/commonjs/realtime-transcription/adapters/AudioPcmStreamAdapter';
 import RNFS from 'react-native-fs';
 import {
   documentDirectory,
@@ -28,7 +28,7 @@ import {
 import * as IntentLauncher from 'expo-intent-launcher';
 import quranData from './assets/quran-pages.json';
 
-const APP_VERSION = '1.7.8';
+const APP_VERSION = '1.8.0';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 

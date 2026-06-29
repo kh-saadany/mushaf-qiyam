@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Native Android APK
 
 on:
   push:
@@ -17,37 +17,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Check Build Type
-      id: check
-      env:
-        COMMIT_MSG: ${{ github.event.head_commit.message }}
-      run: |
-        if [[ "$COMMIT_MSG" == *"[lite]"* ]]; then
-          echo "build_lite=true" >> $GITHUB_OUTPUT
-          echo "build_full=false" >> $GITHUB_OUTPUT
-        elif [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "build_lite=false" >> $GITHUB_OUTPUT
-          echo "build_full=true" >> $GITHUB_OUTPUT
-        else
-          echo "build_lite=true" >> $GITHUB_OUTPUT
-          echo "build_full=true" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - name: Install Dependencies
-      run: npm install
-
-    - name: Download Model and Quran Images
-      if: steps.check.outputs.build_full == 'true'
-      run: node download_assets.js
-
-    - name: Run Expo Prebuild
-      run: npx expo prebuild --platform android
-
     - name: set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -55,30 +24,21 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    # Setup Android NDK for CMake / C++ Compilation
+    - name: Setup Android NDK
+      run: |
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.1.8937393" "cmake;3.22.1"
+
+    # We manually create the gradlew wrapper if not present, because we created the harness without Android Studio
+    - name: Setup Gradle Wrapper
+      run: |
+        gradle wrapper --gradle-version 8.6
+
     - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
+      run: chmod +x gradlew
 
-    - name: Build Lite APK
-      if: steps.check.outputs.build_lite == 'true'
-      working-directory: ./android
-      run: |
-        ./gradlew assembleRelease -x lint || (cat app/build/reports/errors/* && exit 1)
-        cp app/build/outputs/apk/release/app-release.apk ../mushaf-lite-unsigned.apk
-        ./gradlew clean
-
-    - name: Copy Assets to Android Raw Assets
-      if: steps.check.outputs.build_full == 'true'
-      run: |
-        mkdir -p android/app/src/main/assets/mushaf
-        cp assets/mushaf/* android/app/src/main/assets/mushaf/
-        cp assets/*.bin android/app/src/main/assets/ || true
-
-    - name: Build Full APK
-      if: steps.check.outputs.build_full == 'true'
-      working-directory: ./android
-      run: |
-        ./gradlew assembleRelease -x lint || (cat app/build/reports/errors/* && exit 1)
-        cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/mushaf-full-unsigned.apk
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug
 
     - name: Decode Keystore
       env:
@@ -86,59 +46,35 @@ jobs:
       run: |
         echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
 
-    - name: Sign Both APKs
+    - name: Build Release APK
+      run: ./gradlew assembleRelease
+
+    - name: Sign Release APK
       env:
         KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: |
         APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -r | head -n 1)
-        
-        # Create output directory in case gradlew clean deleted it
-        mkdir -p android/app/build/outputs/apk/release
-        
-        # Sign Lite APK
-        if [ -f mushaf-lite-unsigned.apk ]; then
+        if [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
           $APKSIGNER sign \
             --ks release.keystore \
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass pass:"$KEYSTORE_PASSWORD" \
             --key-pass pass:"$KEY_PASSWORD" \
-            mushaf-lite-unsigned.apk
-          mv mushaf-lite-unsigned.apk android/app/build/outputs/apk/release/mushaf-lite.apk
+            app/build/outputs/apk/release/app-release-unsigned.apk
+          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-native-release.apk
         fi
-        
-        # Sign Full APK
-        if [ -f android/app/build/outputs/apk/release/mushaf-full-unsigned.apk ]; then
-          $APKSIGNER sign \
-            --ks release.keystore \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass pass:"$KEYSTORE_PASSWORD" \
-            --key-pass pass:"$KEY_PASSWORD" \
-            android/app/build/outputs/apk/release/mushaf-full-unsigned.apk
-          mv android/app/build/outputs/apk/release/mushaf-full-unsigned.apk android/app/build/outputs/apk/release/mushaf-full.apk
-        fi
-
-    - name: Upload Logs on Failure
-      uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: gradle-logs
-        path: |
-          android/app/build/reports/
-          android/app/build/outputs/logs/
 
     - name: Create Release
       uses: ncipollo/release-action@v1
       with:
-        artifacts: "android/app/build/outputs/apk/release/mushaf-full.apk,android/app/build/outputs/apk/release/mushaf-lite.apk"
-        tag: "latest-react-native"
-        name: "React Native APK Release"
+        artifacts: "app/build/outputs/apk/release/mushaf-native-release.apk,app/build/outputs/apk/debug/app-debug.apk"
+        tag: "latest-native-android"
+        name: "Native Android APK Release"
         body: |
-          ### Mushaf Qiyam Dual-APK Release
-          
-          * **mushaf-full.apk (~300MB):** Install this for the **first time**. It bundles the voice model and Quran images, copying them to local storage.
-          * **mushaf-lite.apk (~10MB):** Install this for **subsequent updates**. It updates the app logic and code while using the model and images already stored on your device.
+          ### Mushaf Qiyam (Native Android V2)
+          This is the new natively compiled version of Mushaf Qiyam utilizing Kotlin, Jetpack Compose, and C++ (whisper.cpp).
         allowUpdates: true
         makeLatest: true
         allowMissingFiles: true

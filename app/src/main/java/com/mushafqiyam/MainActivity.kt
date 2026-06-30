@@ -71,10 +71,15 @@ class MainActivity : ComponentActivity() {
     private fun copyAsset(filename: String): String {
         val file = File(filesDir, filename)
         if (!file.exists()) {
-            assets.open(filename).use { inputStream ->
-                FileOutputStream(file).use { outputStream ->
-                    inputStream.copyTo(outputStream)
+            try {
+                assets.open(filename).use { inputStream ->
+                    FileOutputStream(file).use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                return ""
             }
         }
         return file.absolutePath

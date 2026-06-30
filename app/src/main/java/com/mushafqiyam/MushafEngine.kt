@@ -4,8 +4,17 @@ import java.nio.ByteBuffer
 
 class MushafEngine {
     companion object {
+        var isNativeReady = false
+            private set
+
         init {
-            System.loadLibrary("mushafqiyam")
+            try {
+                System.loadLibrary("mushafqiyam")
+                isNativeReady = true
+            } catch (e: UnsatisfiedLinkError) {
+                // Log error but don't crash the app
+                e.printStackTrace()
+            }
         }
     }
 

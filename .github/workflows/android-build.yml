@@ -24,19 +24,12 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    # Setup Android NDK for CMake / C++ Compilation
-    - name: Setup Android NDK
-      run: |
-        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.1.8937393" "cmake;3.22.1"
-
-    # We manually create the gradlew wrapper if not present, because we created the harness without Android Studio
     - name: Setup Gradle Wrapper
       run: |
         gradle wrapper --gradle-version 8.6
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
-
 
     - name: Decode Keystore
       env:
@@ -61,18 +54,18 @@ jobs:
             --ks-pass pass:"$KEYSTORE_PASSWORD" \
             --key-pass pass:"$KEY_PASSWORD" \
             app/build/outputs/apk/release/app-release-unsigned.apk
-          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-native-release.apk
+          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-release.apk
         fi
 
     - name: Create Release
       uses: ncipollo/release-action@v1
       with:
-        artifacts: "app/build/outputs/apk/release/mushaf-native-release.apk"
+        artifacts: "app/build/outputs/apk/release/mushaf-qiyam-release.apk"
         tag: "latest-native-android"
-        name: "Native Android APK Release"
+        name: "مصحف القيام — Native Android"
         body: |
-          ### Mushaf Qiyam (Native Android V2)
-          This is the new natively compiled version of Mushaf Qiyam utilizing Kotlin, Jetpack Compose, and C++ (whisper.cpp).
+          ### مصحف القيام (V3.0.0)
+          النسخة الأصلية المحلية بالكامل — Kotlin + Jetpack Compose.
         allowUpdates: true
         makeLatest: true
         allowMissingFiles: true

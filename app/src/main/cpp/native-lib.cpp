@@ -5,7 +5,9 @@
 #include <mutex>
 #include <atomic>
 #include <android/log.h>
+#if defined(__ARM_NEON)
 #include <arm_neon.h>
+#endif
 
 #define LOG_TAG "MushafEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)

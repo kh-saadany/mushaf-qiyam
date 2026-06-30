@@ -7,7 +7,24 @@ add_library(
         native-lib.cpp
         silero_vad.cpp)
 
-find_package(onnxruntime REQUIRED CONFIG)
+# Download and extract onnxruntime-android AAR to get headers and jniLibs
+set(ONNXRUNTIME_VERSION "1.26.0")
+set(ONNX_AAR_URL "https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/${ONNXRUNTIME_VERSION}/onnxruntime-android-${ONNXRUNTIME_VERSION}.aar")
+set(ONNX_AAR_PATH "${CMAKE_BINARY_DIR}/onnxruntime-android.aar")
+set(ONNX_EXTRACT_DIR "${CMAKE_BINARY_DIR}/onnxruntime")
+
+if (NOT EXISTS "${ONNX_EXTRACT_DIR}/headers/onnxruntime_c_api.h")
+    message(STATUS "Downloading ONNX Runtime AAR...")
+    file(DOWNLOAD ${ONNX_AAR_URL} ${ONNX_AAR_PATH} SHOW_PROGRESS)
+    message(STATUS "Extracting ONNX Runtime AAR...")
+    file(ARCHIVE_EXTRACT INPUT ${ONNX_AAR_PATH} DESTINATION ${ONNX_EXTRACT_DIR})
+endif()
+
+add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+set_target_properties(onnxruntime::onnxruntime PROPERTIES
+    IMPORTED_LOCATION "${ONNX_EXTRACT_DIR}/jni/${ANDROID_ABI}/libonnxruntime.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${ONNX_EXTRACT_DIR}/headers"
+)
 
 find_library(
         log-lib

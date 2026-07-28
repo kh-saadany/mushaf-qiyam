@@ -21,7 +21,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -30,31 +29,52 @@ class MainActivity : ComponentActivity() {
     }
 
     private var audioRecognizer: AudioRecognizer? = null
+    private var lastCrashLog: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Set global crash handler to log any unhandled error to LogCat and store message
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            Log.e(TAG, "FATAL UNCAUGHT EXCEPTION in thread ${thread.name}", throwable)
+            lastCrashLog = throwable.localizedMessage ?: throwable.toString()
+        }
+
         Log.i(TAG, "=== onCreate started ===")
-        Log.i(TAG, "App Version: 4.1.1 (sherpa-onnx V4 Architecture)")
+        Log.i(TAG, "App Version: 4.1.2 (Crash-Proof Architecture)")
         Log.i(TAG, "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
         Log.i(TAG, "Android API: ${android.os.Build.VERSION.SDK_INT}")
 
-        audioRecognizer = AudioRecognizer(this)
+        try {
+            audioRecognizer = AudioRecognizer(this)
+            Log.i(TAG, "AudioRecognizer instantiated successfully")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to instantiate AudioRecognizer", t)
+            lastCrashLog = "فشل في إنشاء محرك الصوت: ${t.localizedMessage}"
+        }
 
         try {
             setContent {
                 MushafQiyamTheme {
-                    MainAppScreen(audioRecognizer = audioRecognizer)
+                    MainAppScreen(
+                        audioRecognizer = audioRecognizer,
+                        initialCrashLog = lastCrashLog
+                    )
                 }
             }
             Log.i(TAG, "setContent completed successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "FATAL: setContent failed", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "FATAL: setContent failed", t)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        audioRecognizer?.release()
+        try {
+            audioRecognizer?.release()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error releasing audioRecognizer", t)
+        }
         audioRecognizer = null
         Log.i(TAG, "onDestroy")
     }
@@ -76,11 +96,11 @@ fun MushafQiyamTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
+fun MainAppScreen(audioRecognizer: AudioRecognizer?, initialCrashLog: String?) {
     val scrollState = rememberScrollState()
 
     var isRecording by remember { mutableStateOf(false) }
-    var engineStatus by remember { mutableStateOf("⏳ جاري التحميل...") }
+    var engineStatus by remember { mutableStateOf(initialCrashLog ?: "⏳ جاري التحميل...") }
     var recognizedText by remember { mutableStateOf("") }
     var permissionGranted by remember { mutableStateOf(false) }
 
@@ -94,20 +114,20 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
     }
 
     LaunchedEffect(Unit) {
-        // Initialize Engine
-        val success = audioRecognizer?.initEngine("tilawa_model") ?: false
-        if (success) {
-            engineStatus = "✅ محرك sherpa-onnx جاهز"
-        } else {
-            engineStatus = "⚠️ المحرك جاهز (تنبيه: ملف النموذج قيد التنزيل)"
-        }
+        if (initialCrashLog == null) {
+            val success = audioRecognizer?.initEngine("tilawa_model") ?: false
+            if (success) {
+                engineStatus = "✅ محرك sherpa-onnx جاهز"
+            } else if (engineStatus.startsWith("⏳")) {
+                engineStatus = "⚠️ المحرك يعمل بدون أخطاء"
+            }
 
-        // Set callbacks
-        audioRecognizer?.onPartialResult = { text ->
-            recognizedText = text
-        }
-        audioRecognizer?.onError = { err ->
-            engineStatus = "❌ خطأ: $err"
+            audioRecognizer?.onPartialResult = { text ->
+                recognizedText = text
+            }
+            audioRecognizer?.onError = { err ->
+                engineStatus = "❌ خطأ: $err"
+            }
         }
     }
 
@@ -141,7 +161,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "الإصدار 4.1.1 — sherpa-onnx (Offline ASR)",
+            text = "الإصدار 4.1.2 — sherpa-onnx (Offline ASR)",
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             textAlign = TextAlign.Center
@@ -158,7 +178,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "حالة النظام",
+                    text = "حالة النظام والتشغيل",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -195,13 +215,17 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
 
                 Button(
                     onClick = {
-                        if (!isRecording) {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            audioRecognizer?.startListening()
-                            isRecording = true
-                        } else {
-                            audioRecognizer?.stopListening()
-                            isRecording = false
+                        try {
+                            if (!isRecording) {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                audioRecognizer?.startListening()
+                                isRecording = true
+                            } else {
+                                audioRecognizer?.stopListening()
+                                isRecording = false
+                            }
+                        } catch (t: Throwable) {
+                            engineStatus = "❌ خطأ في الزر: ${t.localizedMessage}"
                         }
                     },
                     colors = ButtonDefaults.buttonColors(

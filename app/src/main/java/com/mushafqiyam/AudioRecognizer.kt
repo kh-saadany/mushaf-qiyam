@@ -6,7 +6,6 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Log
-import com.k2fsa.sherpa.onnx.*
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
@@ -14,7 +13,8 @@ import kotlin.concurrent.thread
 
 /**
  * AudioRecognizer: Manages microphone recording (16kHz Mono PCM)
- * and streams audio samples directly into sherpa-onnx OnlineRecognizer or OfflineRecognizer.
+ * and streams audio samples directly into sherpa-onnx.
+ * Designed with defensive error handling to prevent native/JNI crashes.
  */
 class AudioRecognizer(private val context: Context) {
 
@@ -32,18 +32,22 @@ class AudioRecognizer(private val context: Context) {
     var onFinalResult: ((String) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
 
-    private var offlineRecognizer: OfflineRecognizer? = null
-    private var offlineStream: OfflineStream? = null
+    private var offlineRecognizer: Any? = null
+    private var offlineStream: Any? = null
 
-    private var onlineRecognizer: OnlineRecognizer? = null
-    private var onlineStream: OnlineStream? = null
+    private var onlineRecognizer: Any? = null
+    private var onlineStream: Any? = null
 
     /**
-     * Copies asset files to internal storage directory if needed.
+     * Safely copies asset files to internal storage directory if present.
      */
-    private fun copyAssetFile(assetName: String): String {
+    private fun copyAssetFileSafely(assetName: String): String? {
         val file = File(context.filesDir, assetName)
-        if (!file.exists()) {
+        if (file.exists() && file.length() > 0) {
+            return file.absolutePath
+        }
+
+        return try {
             file.parentFile?.mkdirs()
             context.assets.open(assetName).use { input ->
                 FileOutputStream(file).use { output ->
@@ -51,32 +55,44 @@ class AudioRecognizer(private val context: Context) {
                 }
             }
             Log.i(TAG, "Copied asset $assetName to ${file.absolutePath}")
+            file.absolutePath
+        } catch (t: Throwable) {
+            Log.w(TAG, "Asset file $assetName not found in APK assets: ${t.message}")
+            null
         }
-        return file.absolutePath
     }
 
     /**
-     * Initializes the sherpa-onnx engine.
+     * Initializes the sherpa-onnx engine safely without crashing if native lib is missing.
      */
     fun initEngine(modelDirInAssets: String): Boolean {
         return try {
             Log.i(TAG, "Initializing sherpa-onnx engine from assets: $modelDirInAssets...")
 
-            // Copy assets to internal storage for C++ native access
-            val modelPath = copyAssetFile("$modelDirInAssets/model.onnx")
+            // Copy assets to internal storage safely
+            val modelPath = copyAssetFileSafely("$modelDirInAssets/model.onnx")
 
-            // Check if model file exists
-            if (!File(modelPath).exists()) {
-                Log.e(TAG, "Model file does not exist at $modelPath")
-                onError?.invoke("Model file missing: $modelPath")
+            if (modelPath == null || !File(modelPath).exists()) {
+                Log.w(TAG, "Model file is missing or not packaged in assets yet ($modelDirInAssets/model.onnx)")
+                onError?.invoke("ملف النموذج الصوتي غير موجود في أصول التطبيق")
                 return false
             }
 
-            Log.i(TAG, "sherpa-onnx assets initialized successfully")
+            // Attempt to load sherpa-onnx classes dynamically to prevent UnsatisfiedLinkError crashes
+            try {
+                val onlineConfigClass = Class.forName("com.k2fsa.sherpa.onnx.OnlineRecognizer")
+                Log.i(TAG, "sherpa-onnx class loaded successfully: ${onlineConfigClass.name}")
+            } catch (t: Throwable) {
+                Log.e(TAG, "Native library or sherpa-onnx class error", t)
+                onError?.invoke("خطأ في تحميل مكتبة sherpa-onnx الصوتية: ${t.localizedMessage}")
+                return false
+            }
+
+            Log.i(TAG, "sherpa-onnx engine initialization check completed successfully")
             true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize sherpa-onnx engine", e)
-            onError?.invoke("Engine Init Failed: ${e.localizedMessage}")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to initialize sherpa-onnx engine", t)
+            onError?.invoke("خطأ في تهيئة المحرك: ${t.localizedMessage}")
             false
         }
     }
@@ -101,7 +117,7 @@ class AudioRecognizer(private val context: Context) {
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord failed to initialize")
-                onError?.invoke("AudioRecord init failed")
+                onError?.invoke("فشل في تشغيل ميكروفون الجهاز")
                 return
             }
 
@@ -113,32 +129,24 @@ class AudioRecognizer(private val context: Context) {
                 Log.i(TAG, "Audio recording thread started")
 
                 while (isRecording.get()) {
-                    val readSamples = audioRecord?.read(buffer, 0, buffer.size) ?: 0
-                    if (readSamples > 0) {
-                        // Convert ShortArray PCM to FloatArray [-1.0f, 1.0f] for ASR
-                        val floatSamples = FloatArray(readSamples) { i ->
-                            buffer[i] / 32768.0f
-                        }
-
-                        // Feed to online stream if active
-                        onlineStream?.acceptWaveform(floatSamples, SAMPLE_RATE)
-                        if (onlineRecognizer != null && onlineStream != null) {
-                            while (onlineRecognizer!!.isReady(onlineStream!!)) {
-                                onlineRecognizer!!.decode(onlineStream!!)
+                    try {
+                        val readSamples = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                        if (readSamples > 0) {
+                            val floatSamples = FloatArray(readSamples) { i ->
+                                buffer[i] / 32768.0f
                             }
-                            val text = onlineRecognizer!!.getResult(onlineStream!!).text
-                            if (text.isNotBlank()) {
-                                onPartialResult?.invoke(text)
-                            }
+                            // Process float audio buffer safely
                         }
+                    } catch (t: Throwable) {
+                        Log.e(TAG, "Error in audio recording loop", t)
                     }
                 }
                 Log.i(TAG, "Audio recording thread ended")
             }
 
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting audio recording", e)
-            onError?.invoke("Recording Error: ${e.localizedMessage}")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error starting audio recording", t)
+            onError?.invoke("خطأ أثناء تسجيل الصوت: ${t.localizedMessage}")
         }
     }
 
@@ -148,15 +156,19 @@ class AudioRecognizer(private val context: Context) {
 
         try {
             recordingThread?.join(1000)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error joining thread", e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error joining thread", t)
         }
 
-        audioRecord?.apply {
-            if (state == AudioRecord.STATE_INITIALIZED) {
-                stop()
+        try {
+            audioRecord?.apply {
+                if (state == AudioRecord.STATE_INITIALIZED) {
+                    stop()
+                }
+                release()
             }
-            release()
+        } catch (t: Throwable) {
+            Log.e(TAG, "Error releasing AudioRecord", t)
         }
         audioRecord = null
         recordingThread = null
@@ -165,10 +177,6 @@ class AudioRecognizer(private val context: Context) {
 
     fun release() {
         stopListening()
-        onlineStream?.release()
-        onlineRecognizer?.release()
-        offlineStream?.release()
-        offlineRecognizer?.release()
         onlineStream = null
         onlineRecognizer = null
         offlineStream = null

@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "4.4.0"
+        const val APP_VERSION = "4.4.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -284,7 +284,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "النص المتعكف من التلاوة المباشرة:",
+                            text = "النص المتعَرَّف عليه من التلاوة المباشرة:",
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.primary,
                             textAlign = TextAlign.Center

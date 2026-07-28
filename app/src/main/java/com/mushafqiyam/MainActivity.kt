@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.i(TAG, "=== onCreate started ===")
-        Log.i(TAG, "App Version: 4.1.0 (sherpa-onnx V4 Architecture)")
+        Log.i(TAG, "App Version: 4.1.1 (sherpa-onnx V4 Architecture)")
         Log.i(TAG, "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
         Log.i(TAG, "Android API: ${android.os.Build.VERSION.SDK_INT}")
 
@@ -141,7 +141,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "الإصدار 4.1.0 — sherpa-onnx (Offline ASR)",
+            text = "الإصدار 4.1.1 — sherpa-onnx (Offline ASR)",
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             textAlign = TextAlign.Center

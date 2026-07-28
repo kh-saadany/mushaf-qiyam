@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "4.3.0"
+        const val APP_VERSION = "4.4.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.i(TAG, "=== onCreate started ===")
-        Log.i(TAG, "App Version: $APP_VERSION (ONNX Runtime Integration)")
+        Log.i(TAG, "App Version: $APP_VERSION (Live Audio-to-Text Pipeline)")
         Log.i(TAG, "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
         Log.i(TAG, "Android API: ${android.os.Build.VERSION.SDK_INT}")
 
@@ -80,9 +80,9 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
 
     var isRecording by remember { mutableStateOf(false) }
     var audioLevel by remember { mutableFloatStateOf(0f) }
-    var onnxStatus by remember { mutableStateOf("⏳ جاري تهيئة المحرك...") }
+    var engineStatus by remember { mutableStateOf("⏳ جاري تهيئة محرك التلاوة العربي...") }
     var recognizedText by remember { mutableStateOf("") }
-    var statusMessage by remember { mutableStateOf("جاهز للاستماع") }
+    var statusMessage by remember { mutableStateOf("جاهز للاستماع والتعرف") }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -100,7 +100,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
             }
             audioRecognizer?.startListening()
             isRecording = true
-            statusMessage = "🎤 يستمع..."
+            statusMessage = "🎤 يستمع ويحول الصوت إلى نص..."
         } else {
             statusMessage = "❌ إذن الميكروفون مرفوض"
         }
@@ -109,9 +109,9 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
     LaunchedEffect(Unit) {
         val success = audioRecognizer?.initEngine("tilawa_model") ?: false
         if (success) {
-            onnxStatus = "✅ Microsoft ONNX Runtime (نشط ورسمي)"
+            engineStatus = "✅ محرك Sherpa-ONNX ونموذج Tilawa جاهز"
         } else {
-            onnxStatus = "⚠️ ONNX Runtime (محمي من الانهيار)"
+            engineStatus = "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
         }
     }
 
@@ -157,7 +157,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "الإصدار ${MainActivity.APP_VERSION} — ONNX Runtime (Offline ASR)",
+            text = "الإصدار ${MainActivity.APP_VERSION} — Live ASR & Quran Tracker",
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             textAlign = TextAlign.Center
@@ -182,8 +182,8 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 StatusRow(label = "واجهة المستخدم (Compose)", status = "✅ يعمل")
-                StatusRow(label = "التقاط الصوت (AudioRecord)", status = "✅ يعمل")
-                StatusRow(label = "محرك ONNX Runtime", status = onnxStatus)
+                StatusRow(label = "التقاط الصوت (16kHz Mono)", status = "✅ يعمل")
+                StatusRow(label = "محرك ASR اللحظي", status = engineStatus)
                 StatusRow(label = "مطابقة الآيات (FuzzyMatcher)", status = "✅ جاهز")
             }
         }
@@ -271,16 +271,34 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
                     textAlign = TextAlign.Center
                 )
 
-                if (recognizedText.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = recognizedText,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Output Recognized Text Box
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = Color(0xFF0A2744)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "النص المتعكف من التلاوة المباشرة:",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (recognizedText.isBlank()) "اقرأ شيئاً من القرآن وسوف يظهر النص المكتوب هنا فوراً..." else recognizedText,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (recognizedText.isBlank()) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }

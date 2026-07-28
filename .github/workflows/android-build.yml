@@ -31,6 +31,12 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    - name: Download Tilawa Model Assets for Offline ASR
+      run: |
+        mkdir -p app/src/main/assets/tilawa_model
+        curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
+        curl -L -o app/src/main/assets/tilawa_model/tokens.txt https://github.com/yazinsai/tilawa/releases/download/v0.2.0/tokens.txt || true
+
     - name: Decode Keystore
       env:
         KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -62,11 +68,10 @@ jobs:
       with:
         artifacts: "app/build/outputs/apk/release/mushaf-qiyam-release.apk"
         tag: "latest-native-android"
-        name: "مصحف القيام — Native Android V4.2.0"
+        name: "مصحف القيام — Native Android V4.4.0"
         body: |
-          ### مصحف القيام (V4.2.0)
-          النسخة المحلية — Kotlin + Jetpack Compose.
-          Phase 1: واجهة مستخدم + التقاط صوت مباشر.
+          ### مصحف القيام (V4.4.0)
+          تحديث التعرف الصوتي المباشر والربط مع محرك Sherpa-ONNX ونموذج Tilawa العربي.
         allowUpdates: true
         makeLatest: true
         allowMissingFiles: true

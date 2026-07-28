@@ -13,6 +13,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
@@ -27,7 +29,8 @@ jobs:
       run: |
         mkdir -p app/src/main/assets/tilawa_model
         curl -L -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json || true
-        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        COMMIT_MSG=$(git log -1 --pretty=%B)
+        echo "Commit message: $COMMIT_MSG"
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           echo "Downloading 88MB ONNX model for FULL build..."
           curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
@@ -61,7 +64,7 @@ jobs:
             --key-pass pass:"$KEY_PASSWORD" \
             app/build/outputs/apk/release/app-release-unsigned.apk
         fi
-        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk
         else

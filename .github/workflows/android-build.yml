@@ -27,14 +27,7 @@ jobs:
       run: |
         mkdir -p app/src/main/assets/tilawa_model
         curl -L -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json || true
-        COMMIT_MSG="${{ github.event.head_commit.message }}"
-        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Downloading 88MB ONNX model for FULL build..."
-          curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
-        else
-          echo "Lite build: Creating dummy 100-byte model file for asset packaging..."
-          echo "LITE_DUMMY_MODEL" > app/src/main/assets/tilawa_model/model.onnx
-        fi
+        curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
 
     - name: Decode Keystore
       env:
@@ -55,18 +48,23 @@ jobs:
         KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       run: |
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
+          echo "Full build: Retaining embedded 88MB ONNX model..."
+          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk
+        else
+          echo "Lite build: Stripping 88MB ONNX model from APK zip..."
+          zip -d app/build/outputs/apk/release/app-release-unsigned.apk assets/tilawa_model/model.onnx || true
+          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-lite.apk
+        fi
+
+        TARGET_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
         if [ -f "app/keystore.jks" ]; then
           $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks app/keystore.jks \
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass pass:"$KEYSTORE_PASSWORD" \
             --key-pass pass:"$KEY_PASSWORD" \
-            app/build/outputs/apk/release/app-release-unsigned.apk
-        fi
-        COMMIT_MSG="${{ github.event.head_commit.message }}"
-        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk
-        else
-          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-lite.apk
+            "$TARGET_APK"
         fi
 
     - name: Create Single Release Asset

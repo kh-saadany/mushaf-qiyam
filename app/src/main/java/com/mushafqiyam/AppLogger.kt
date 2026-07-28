@@ -1,6 +1,5 @@
 package com.mushafqiyam
 
-import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,8 +27,10 @@ object AppLogger {
 
     private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
-    private fun addEntry(entry: LogEntry) {
+    private fun addEntry(level: String, tag: String, message: String, throwable: Throwable? = null) {
         synchronized(this) {
+            val timestamp = dateFormat.format(Date())
+            val entry = LogEntry(timestamp, level, tag, message, throwable)
             val currentList = _logs.value.toMutableList()
             if (currentList.size >= 100) {
                 currentList.removeAt(0)
@@ -41,19 +42,19 @@ object AppLogger {
 
     fun i(tag: String, msg: String) {
         Log.i(tag, msg)
-        addEntry(LogEntry(dateFormat.format(Date()), "INFO", tag, msg))
+        addEntry("INFO", tag, msg)
     }
 
     fun w(tag: String, msg: String, t: Throwable? = null) {
         Log.w(tag, msg, t)
         val stackMsg = if (t != null) "$msg -> ${t.localizedMessage}" else msg
-        addEntry(LogEntry(dateFormat.format(Date()), "WARN", tag, stackMsg, t))
+        addEntry("WARN", tag, stackMsg, t)
     }
 
     fun e(tag: String, msg: String, t: Throwable? = null) {
         Log.e(tag, msg, t)
         val stackMsg = if (t != null) "$msg -> ${t.localizedMessage}\n${t.stackTraceToString().take(300)}" else msg
-        addEntry(LogEntry(dateFormat.format(Date()), "ERROR", tag, stackMsg, t))
+        addEntry("ERROR", tag, stackMsg, t)
     }
 
     fun clear() {

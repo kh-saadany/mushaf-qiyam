@@ -19,6 +19,14 @@ local.properties
 /app/libs/
 /app/src/main/assets/*.onnx
 /app/src/main/assets/*.json
+/app/src/main/assets/tilawa_model/model.onnx
+/app/src/main/assets/tilawa_model/*.bin
+
+# Large binary model files
+assets/*.bin
+assets/*.onnx
+*.onnx
+*.bin
 
 # Scratch scripts
 scratch/node_modules/

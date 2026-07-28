@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
@@ -298,22 +297,18 @@ fun DiagnosticLogsConsole(context: Context) {
 
                 Row {
                     if (isExpanded) {
-                        IconButton(
+                        TextButton(
                             onClick = {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 val clip = ClipData.newPlainText("Mushaf Qiyam Logs", AppLogger.getAllLogsText())
                                 clipboard.setPrimaryClip(clip)
                                 Toast.makeText(context, "تم نسخ سجل التشخيص بنجاح", Toast.LENGTH_SHORT).show()
                             },
-                            modifier = Modifier.size(24.dp)
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copy Logs",
-                                tint = Color.Green
-                            )
+                            Text("نسخ السجل", fontSize = 11.sp, color = Color.Green)
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
 
                     Icon(

@@ -26,8 +26,8 @@ jobs:
     - name: Download Model Assets for Offline ASR
       run: |
         mkdir -p app/src/main/assets/tilawa_model
-        curl -sSL -H "User-Agent: Mozilla/5.0" -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json || true
-        curl -sSL -H "User-Agent: Mozilla/5.0" -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
+        curl -L --retry 5 -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json
+        curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx
 
     - name: Decode Keystore
       env:

@@ -5,7 +5,6 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.util.Log
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -17,7 +16,7 @@ import kotlin.concurrent.thread
 
 /**
  * AudioRecognizer: Manages microphone recording (16kHz Mono PCM)
- * and feeds audio samples into Microsoft ONNX Runtime + CtcDecoder for offline ASR.
+ * and streams audio into ONNX Runtime + CtcDecoder for live Quran ASR.
  */
 class AudioRecognizer(private val context: Context) {
 
@@ -40,27 +39,53 @@ class AudioRecognizer(private val context: Context) {
     var onError: ((String) -> Unit)? = null
 
     /**
-     * Safely copies asset file to internal storage directory if present.
+     * Resolves model path: checks filesDir first, then asset directory.
      */
-    private fun copyAssetFileSafely(assetName: String): String? {
-        val file = File(context.filesDir, assetName)
-        if (file.exists() && file.length() > 0) {
-            return file.absolutePath
+    private fun resolveModelPath(modelDirInAssets: String): String? {
+        // 1. Check internal storage (filesDir/tilawa_model/model.onnx)
+        val internalFile = File(context.filesDir, "$modelDirInAssets/model.onnx")
+        if (internalFile.exists() && internalFile.length() > 1000000) {
+            AppLogger.i(TAG, "Found existing model in internal storage: ${internalFile.absolutePath} (${internalFile.length() / 1024 / 1024}MB)")
+            return internalFile.absolutePath
         }
 
+        // 2. Try copying from assets if packaged in Full APK
         return try {
-            file.parentFile?.mkdirs()
-            context.assets.open(assetName).use { input ->
-                FileOutputStream(file).use { output ->
+            internalFile.parentFile?.mkdirs()
+            context.assets.open("$modelDirInAssets/model.onnx").use { input ->
+                FileOutputStream(internalFile).use { output ->
                     input.copyTo(output)
                 }
             }
-            Log.i(TAG, "Copied asset $assetName to ${file.absolutePath}")
-            file.absolutePath
+            AppLogger.i(TAG, "Copied model from APK assets to ${internalFile.absolutePath}")
+            internalFile.absolutePath
         } catch (t: Throwable) {
-            Log.w(TAG, "Asset $assetName not found: ${t.message}")
+            AppLogger.w(TAG, "Model not in APK assets: ${t.message}")
             null
         }
+    }
+
+    /**
+     * Resolves vocab path: checks filesDir first, then assets.
+     */
+    private fun resolveVocabPath(modelDirInAssets: String): String {
+        val internalFile = File(context.filesDir, "$modelDirInAssets/vocab.json")
+        if (internalFile.exists() && internalFile.length() > 0) {
+            return internalFile.absolutePath
+        }
+
+        // Try copying asset
+        try {
+            internalFile.parentFile?.mkdirs()
+            context.assets.open("$modelDirInAssets/vocab.json").use { input ->
+                FileOutputStream(internalFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            return internalFile.absolutePath
+        } catch (_: Throwable) {}
+
+        return "$modelDirInAssets/vocab.json"
     }
 
     /**
@@ -68,24 +93,28 @@ class AudioRecognizer(private val context: Context) {
      */
     fun initEngine(modelDirInAssets: String): Boolean {
         return try {
-            Log.i(TAG, "Initializing ONNX Runtime engine from assets: $modelDirInAssets...")
+            AppLogger.i(TAG, "Starting ONNX Runtime init (Dir: $modelDirInAssets)...")
             ortEnv = OrtEnvironment.getEnvironment()
-            ctcDecoder = CtcDecoder(context, "$modelDirInAssets/vocab.json")
+            AppLogger.i(TAG, "OrtEnvironment initialized successfully")
 
-            val modelPath = copyAssetFileSafely("$modelDirInAssets/model.onnx")
+            val vocabPath = resolveVocabPath(modelDirInAssets)
+            ctcDecoder = CtcDecoder(context, vocabPath)
+
+            val modelPath = resolveModelPath(modelDirInAssets)
             if (modelPath != null && File(modelPath).exists()) {
                 val opts = OrtSession.SessionOptions()
                 opts.setInterOpNumThreads(2)
                 opts.setIntraOpNumThreads(2)
                 ortSession = ortEnv?.createSession(modelPath, opts)
-                Log.i(TAG, "ONNX model session loaded successfully from $modelPath")
+                AppLogger.i(TAG, "ONNX model session loaded successfully from $modelPath")
+                true
             } else {
-                Log.w(TAG, "ONNX model file not found at $modelPath")
+                AppLogger.w(TAG, "Model file not found at $modelPath")
+                onError?.invoke("نموذج التلاوة غير موجود برقم الذاكرة المحلية")
+                false
             }
-
-            true
         } catch (t: Throwable) {
-            Log.e(TAG, "ONNX Runtime init warning/error", t)
+            AppLogger.e(TAG, "ONNX Runtime init error", t)
             onError?.invoke("تنبيه المحرك: ${t.localizedMessage}")
             false
         }
@@ -99,7 +128,7 @@ class AudioRecognizer(private val context: Context) {
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, channelConfig, audioFormat)
-            val bufferSize = maxOf(minBufferSize, SAMPLE_RATE * 2 / 5) // ~200ms buffer
+            val bufferSize = maxOf(minBufferSize, SAMPLE_RATE * 2 / 5)
 
             audioRecord = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
@@ -110,19 +139,19 @@ class AudioRecognizer(private val context: Context) {
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioRecord failed to initialize")
+                AppLogger.e(TAG, "AudioRecord failed to initialize")
                 onError?.invoke("فشل في تشغيل الميكروفون")
                 return
             }
 
             audioRecord?.startRecording()
             isRecording.set(true)
-            Log.i(TAG, "AudioRecord started (16kHz Mono)")
+            AppLogger.i(TAG, "AudioRecord recording started (16kHz Mono)")
 
             recordingThread = thread(start = true, name = "AudioRecognizerThread") {
                 val buffer = ShortArray(bufferSize / 2)
                 val audioWindow = mutableListOf<Float>()
-                Log.i(TAG, "Audio capture thread started")
+                AppLogger.i(TAG, "Audio capture thread running")
 
                 while (isRecording.get()) {
                     try {
@@ -138,21 +167,21 @@ class AudioRecognizer(private val context: Context) {
                             val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
                             onAudioLevel?.invoke(level)
 
-                            // Keep rolling window of ~1.5 seconds of audio for CTC inference
+                            // Process 1.5s audio chunk for live CTC inference
                             if (audioWindow.size >= SAMPLE_RATE * 3 / 2) {
                                 runInference(audioWindow.toFloatArray())
                                 audioWindow.clear()
                             }
                         }
                     } catch (t: Throwable) {
-                        Log.e(TAG, "Error in audio loop", t)
+                        AppLogger.e(TAG, "Error in audio capture loop", t)
                     }
                 }
-                Log.i(TAG, "Audio capture thread ended")
+                AppLogger.i(TAG, "Audio capture thread stopped")
             }
 
         } catch (t: Throwable) {
-            Log.e(TAG, "Error starting audio", t)
+            AppLogger.e(TAG, "Error starting audio recording", t)
             onError?.invoke("خطأ: ${t.localizedMessage}")
         }
     }
@@ -163,27 +192,26 @@ class AudioRecognizer(private val context: Context) {
         val decoder = ctcDecoder ?: return
 
         try {
-            // Input shape [1, num_samples]
             val shape = longArrayOf(1, audioSamples.size.toLong())
             val tensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(audioSamples), shape)
 
             val inputName = session.inputNames.iterator().next()
             val result = session.run(mapOf(inputName to tensor))
 
-            // Get logits output
             val outputValue = result.get(0).value
             if (outputValue is Array<*>) {
                 @Suppress("UNCHECKED_CAST")
                 val logits2D = (outputValue as Array<Array<FloatArray>>)[0]
                 val text = decoder.decode(logits2D)
                 if (text.isNotBlank()) {
+                    AppLogger.i(TAG, "Recognized text: $text")
                     onPartialResult?.invoke(text)
                 }
             }
             tensor.close()
             result.close()
         } catch (t: Throwable) {
-            Log.e(TAG, "Error during ONNX inference", t)
+            AppLogger.e(TAG, "Error during ONNX inference", t)
         }
     }
 
@@ -202,7 +230,7 @@ class AudioRecognizer(private val context: Context) {
 
         audioRecord = null
         recordingThread = null
-        Log.i(TAG, "Audio recording stopped")
+        AppLogger.i(TAG, "Audio recording stopped")
     }
 
     fun release() {
@@ -212,6 +240,6 @@ class AudioRecognizer(private val context: Context) {
         ortSession = null
         ortEnv = null
         ctcDecoder = null
-        Log.i(TAG, "AudioRecognizer released")
+        AppLogger.i(TAG, "AudioRecognizer released")
     }
 }

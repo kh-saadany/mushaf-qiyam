@@ -1,16 +1,17 @@
 package com.mushafqiyam
 
 import android.content.Context
-import android.util.Log
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
 import java.io.InputStreamReader
 
 /**
  * CtcDecoder: Performs CTC Greedy Decoding for Tilawa ONNX FastConformer model.
  * Loads vocab.json (1025 tokens) with blank_id = 1024 and SentencePiece BPE decoding.
  */
-class CtcDecoder(context: Context, vocabAssetPath: String) {
+class CtcDecoder(context: Context, vocabFileOrAssetPath: String) {
 
     companion object {
         private const val TAG = "CtcDecoder"
@@ -21,8 +22,12 @@ class CtcDecoder(context: Context, vocabAssetPath: String) {
 
     init {
         try {
-            val jsonString = context.assets.open(vocabAssetPath).use { input ->
-                BufferedReader(InputStreamReader(input)).readText()
+            val jsonString = if (File(vocabFileOrAssetPath).exists()) {
+                BufferedReader(InputStreamReader(FileInputStream(vocabFileOrAssetPath))).readText()
+            } else {
+                context.assets.open(vocabFileOrAssetPath).use { input ->
+                    BufferedReader(InputStreamReader(input)).readText()
+                }
             }
             val jsonObj = JSONObject(jsonString)
             val keys = jsonObj.keys()
@@ -33,9 +38,9 @@ class CtcDecoder(context: Context, vocabAssetPath: String) {
                     vocabMap[id] = jsonObj.getString(key)
                 }
             }
-            Log.i(TAG, "Loaded ${vocabMap.size} tokens from $vocabAssetPath (Blank ID: $BLANK_INDEX)")
+            AppLogger.i(TAG, "Loaded ${vocabMap.size} tokens from $vocabFileOrAssetPath (Blank ID: $BLANK_INDEX)")
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to load vocab from $vocabAssetPath", t)
+            AppLogger.e(TAG, "Failed to load vocab from $vocabFileOrAssetPath", t)
         }
     }
 
@@ -75,7 +80,6 @@ class CtcDecoder(context: Context, vocabAssetPath: String) {
             builder.append(token)
         }
 
-        // Replace SentencePiece lower block / underscore symbol with space
         return builder.toString()
             .replace(" ", " ")
             .replace("_", " ")

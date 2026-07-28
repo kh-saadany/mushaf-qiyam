@@ -1,29 +1,44 @@
 package com.mushafqiyam
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.mushafqiyam.ui.theme.MushafQiyamTheme
+import kotlinx.coroutines.flow.asStateFlow
 
 class MainActivity : ComponentActivity() {
 
@@ -36,335 +51,305 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.i(TAG, "=== onCreate started ===")
-        Log.i(TAG, "App Version: $APP_VERSION (Live Audio-to-Text Pipeline)")
-        Log.i(TAG, "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-        Log.i(TAG, "Android API: ${android.os.Build.VERSION.SDK_INT}")
+        AppLogger.i(TAG, "Mushaf Qiyam App Started (Version: $APP_VERSION)")
 
         audioRecognizer = AudioRecognizer(this)
 
         setContent {
             MushafQiyamTheme {
-                MainAppScreen(audioRecognizer = audioRecognizer)
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    MainAppScreen(
+                        appVersion = APP_VERSION,
+                        audioRecognizer = audioRecognizer
+                    )
+                }
             }
         }
-        Log.i(TAG, "setContent completed successfully")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         audioRecognizer?.release()
-        audioRecognizer = null
-        Log.i(TAG, "onDestroy")
+        AppLogger.i(TAG, "Mushaf Qiyam App Destroyed")
     }
 }
 
 @Composable
-fun MushafQiyamTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = Color(0xFFF4D03F),
-            onPrimary = Color(0xFF0D3B66),
-            surface = Color(0xFF0D3B66),
-            onSurface = Color(0xFFF5F5F5),
-            background = Color(0xFF0A2744),
-            onBackground = Color(0xFFF5F5F5),
-        ),
-        content = content
-    )
-}
-
-@Composable
-fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
-    val scrollState = rememberScrollState()
-
-    var isRecording by remember { mutableStateOf(false) }
-    var audioLevel by remember { mutableFloatStateOf(0f) }
-    var engineStatus by remember { mutableStateOf("⏳ جاري تهيئة محرك التلاوة العربي...") }
+fun MainAppScreen(
+    appVersion: String,
+    audioRecognizer: AudioRecognizer?
+) {
+    val context = LocalContext.current
+    var isListening by remember { mutableStateOf(false) }
+    var engineStatus by remember { mutableStateOf("جاري تهيئة المحرك...") }
     var recognizedText by remember { mutableStateOf("") }
-    var statusMessage by remember { mutableStateOf("جاهز للاستماع والتعرف") }
+    var audioLevel by remember { mutableFloatStateOf(0f) }
+
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
+        hasMicPermission = isGranted
         if (isGranted) {
-            audioRecognizer?.onAudioLevel = { level ->
-                audioLevel = level
-            }
-            audioRecognizer?.onPartialResult = { text ->
-                recognizedText = text
-            }
-            audioRecognizer?.onError = { err ->
-                statusMessage = "❌ $err"
-                isRecording = false
-            }
-            audioRecognizer?.startListening()
-            isRecording = true
-            statusMessage = "🎤 يستمع ويحول الصوت إلى نص..."
+            AppLogger.i("UI", "Microphone permission granted")
         } else {
-            statusMessage = "❌ إذن الميكروفون مرفوض"
+            AppLogger.w("UI", "Microphone permission denied by user")
         }
     }
 
     LaunchedEffect(Unit) {
+        AppLogger.i("UI", "Initializing ASR engine...")
         val success = audioRecognizer?.initEngine("tilawa_model") ?: false
         if (success) {
-            engineStatus = "✅ محرك Sherpa-ONNX ونموذج Tilawa جاهز"
+            engineStatus = "✅ محرك ONNX Runtime وتطابق مفردات القوآن جاهز"
         } else {
             engineStatus = "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
         }
     }
 
-    // Pulsing animation for mic indicator
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseScale"
-    )
+    audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
+    audioRecognizer?.onPartialResult = { text ->
+        if (text.isNotBlank()) {
+            recognizedText = if (recognizedText.isEmpty()) text else "$recognizedText $text"
+        }
+    }
+    audioRecognizer?.onError = { err -> engineStatus = err }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp)
-            .verticalScroll(scrollState),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
+        // App Header
         Text(
             text = "مصحف القيام",
-            fontSize = 36.sp,
+            fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-            textAlign = TextAlign.Center
+            color = MaterialTheme.colorScheme.primary
         )
-
-        Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "الإصدار ${MainActivity.APP_VERSION} — Live ASR & Quran Tracker",
-            fontSize = 16.sp,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            textAlign = TextAlign.Center
+            text = "الإصدار $appVersion (محرك تلاوة ONNX)",
+            fontSize = 12.sp,
+            color = Color.Gray,
+            modifier = Modifier.padding(bottom = 12.dp)
         )
 
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // System Status Card
+        // Engine Status Card
         Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            )
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    text = "حالة النظام",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = engineStatus,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp)
+            )
+        }
 
-                StatusRow(label = "واجهة المستخدم (Compose)", status = "✅ يعمل")
-                StatusRow(label = "التقاط الصوت (16kHz Mono)", status = "✅ يعمل")
-                StatusRow(label = "محرك ASR اللحظي", status = engineStatus)
-                StatusRow(label = "مطابقة الآيات (FuzzyMatcher)", status = "✅ جاهز")
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Mic Permission / Start Button
+        if (!hasMicPermission) {
+            Button(
+                onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("منح صلاحية الميكروفون")
+            }
+        } else {
+            Button(
+                onClick = {
+                    if (isListening) {
+                        audioRecognizer?.stopListening()
+                        isListening = false
+                        AppLogger.i("UI", "User clicked Stop Listening")
+                    } else {
+                        recognizedText = ""
+                        audioRecognizer?.startListening()
+                        isListening = true
+                        AppLogger.i("UI", "User clicked Start Listening")
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isListening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+            ) {
+                Icon(
+                    imageVector = if (isListening) Icons.Default.Stop else Icons.Default.Mic,
+                    contentDescription = null
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (isListening) "إيقاف الاستماع" else "بدء الاستماع والتعرف")
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        // Live Audio Volume Wave Bar
+        if (isListening) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(10.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color.LightGray)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(fraction = audioLevel.coerceIn(0.05f, 1.0f))
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
 
-        // Live Audio Test Card
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Exact Requested Text Box Label & Content
         Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            )
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(14.dp)
             ) {
                 Text(
-                    text = "اختبار الاستماع المباشر والتعرف",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Audio level indicator
-                if (isRecording) {
-                    Box(
-                        modifier = Modifier
-                            .size(80.dp)
-                            .scale(1f + audioLevel * 0.5f)
-                            .scale(if (audioLevel > 0.1f) pulseScale else 1f)
-                            .clip(CircleShape)
-                            .background(
-                                Color(0xFFF4D03F).copy(
-                                    alpha = 0.3f + audioLevel * 0.7f
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "🎤",
-                            fontSize = 36.sp
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "مستوى الصوت: ${(audioLevel * 100).toInt()}%",
-                        fontSize = 16.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(
-                    onClick = {
-                        if (!isRecording) {
-                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        } else {
-                            audioRecognizer?.stopListening()
-                            isRecording = false
-                            audioLevel = 0f
-                            statusMessage = "جاهز للاستماع"
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isRecording) Color(0xFFE74C3C) else MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Text(
-                        text = if (isRecording) "إيقاف 🛑" else "بدء الاستماع والتعرف 🎤",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isRecording) Color.White else MaterialTheme.colorScheme.onPrimary
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = statusMessage,
+                    text = "النص الذي تم التعرف عليه من التلاوة المباشرة:",
                     fontSize = 14.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Output Recognized Text Box
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.medium,
-                    color = Color(0xFF0A2744)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "النص المتعَرَّف عليه من التلاوة المباشرة:",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = if (recognizedText.isBlank()) "اقرأ شيئاً من القرآن وسوف يظهر النص المكتوب هنا فوراً..." else recognizedText,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = if (recognizedText.isBlank()) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f) else MaterialTheme.colorScheme.onSurface,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Sample Surah Al-Fatiha Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            )
-        ) {
-            Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    text = "سورة الفاتحة (نموذج التتبع)",
-                    fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-
-                val testVerses = listOf(
-                    "ٱلْحَمْدُ لِلَّهِ رَبِّ ٱلْعَٰلَمِينَ ﴿٢﴾",
-                    "ٱلرَّحْمَٰنِ ٱلرَّحِيمِ ﴿٣﴾",
-                    "مَٰلِكِ يَوْمِ ٱلدِّينِ ﴿٤﴾",
-                    "إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ ﴿٥﴾",
-                    "ٱهْدِنَا ٱلصِّرَٰطَ ٱلْمُسْتَقِيمَ ﴿٦﴾",
-                    "صِرَٰطَ ٱلَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ ٱلْمَغْضُوبِ عَلَيْهِمْ وَلَا ٱلضَّآلِّينَ ﴿٧﴾"
+                    color = MaterialTheme.colorScheme.primary,
+                    textAlign = TextAlign.Right,
+                    modifier = Modifier.fillMaxWidth()
                 )
 
-                testVerses.forEach { verse ->
+                Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface),
+                    contentAlignment = Alignment.TopRight
+                ) {
                     Text(
-                        text = verse,
-                        fontSize = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                        text = if (recognizedText.isEmpty()) "في انتظار التلاوة الصوتية..." else recognizedText,
+                        fontSize = 18.sp,
+                        color = if (recognizedText.isEmpty()) Color.Gray else MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Right,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Collapsible Diagnostic Logs Console Section
+        DiagnosticLogsConsole(context = context)
     }
 }
 
 @Composable
-fun StatusRow(label: String, status: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+fun DiagnosticLogsConsole(context: Context) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val logsList by AppLogger.logs.collectAsState()
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
     ) {
-        Text(
-            text = label,
-            fontSize = 15.sp,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = status,
-            fontSize = 15.sp,
-            color = MaterialTheme.colorScheme.onSurface
-        )
+        Column(modifier = Modifier.padding(8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { isExpanded = !isExpanded },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "📋 سجل التشخيص الفني (Diagnostic Console - ${logsList.size})",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+
+                Row {
+                    if (isExpanded) {
+                        IconButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("Mushaf Qiyam Logs", AppLogger.getAllLogsText())
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "تم نسخ سجل التشخيص بنجاح", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Copy Logs",
+                                tint = Color.Green
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = "Toggle Logs",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = isExpanded) {
+                Column(modifier = Modifier.padding(top = 8.dp)) {
+                    Divider(color = Color.DarkGray)
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .padding(top = 4.dp)
+                    ) {
+                        items(logsList) { entry ->
+                            val color = when (entry.level) {
+                                "ERROR" -> Color(0xFFFF6B6B)
+                                "WARN" -> Color(0xFFFFD93D)
+                                else -> Color(0xFF6BCB77)
+                            }
+                            Text(
+                                text = "[${entry.timestamp}] [${entry.tag}] ${entry.message}",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = color,
+                                modifier = Modifier.padding(vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

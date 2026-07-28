@@ -23,23 +23,12 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Determine Build Mode (Lite vs Full)
-      id: mode
-      run: |
-        COMMIT_MSG="${{ github.event.head_commit.message }}"
-        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "IS_FULL=true" >> $GITHUB_ENV
-          echo "Build mode: FULL"
-        else
-          echo "IS_FULL=false" >> $GITHUB_ENV
-          echo "Build mode: LITE"
-        fi
-
     - name: Download Model Assets for Offline ASR
       run: |
         mkdir -p app/src/main/assets/tilawa_model
         curl -L -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json || true
-        if [ "$IS_FULL" = "true" ]; then
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           echo "Downloading 88MB ONNX model for FULL build..."
           curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
         else
@@ -59,7 +48,7 @@ jobs:
         chmod +x gradlew
         ./gradlew assembleRelease
 
-    - name: Sign APK
+    - name: Sign APK & Package Single File
       env:
         KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -72,7 +61,8 @@ jobs:
             --key-pass pass:"$KEY_PASSWORD" \
             app/build/outputs/apk/release/app-release-unsigned.apk
         fi
-        if [ "$IS_FULL" = "true" ]; then
+        COMMIT_MSG="${{ github.event.head_commit.message }}"
+        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk
         else
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-lite.apk
@@ -82,10 +72,11 @@ jobs:
       uses: ncipollo/release-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        artifacts: ${{ env.IS_FULL == 'true' && 'app/build/outputs/apk/release/mushaf-qiyam-full.apk' || 'app/build/outputs/apk/release/mushaf-qiyam-lite.apk' }}
+        artifacts: "app/build/outputs/apk/release/*.apk"
         tag: "v4.5.0"
         name: "مصحف القيام — V4.5.0 Lite"
         allowUpdates: true
+        recreate: true
         body: |
           ### مصحف القيام — V4.5.0 Lite (تحديث خفيف)
-          تحديث خفيف كود وواجهة وسجل تشخيص فني، يستغل نموذج التلاوة المحفوظ سابقاً على الجهاز.
+          تحديث خفيف يتضمن كود جديد، واجهة مصححة، وسجل تشخيص فني داخلي.

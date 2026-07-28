@@ -63,16 +63,16 @@ jobs:
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-v4.4.0.apk
         fi
 
-    - name: Create Tagged Release
+    - name: Create Release V4.4.0
       uses: ncipollo/release-action@v1
       with:
+        token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/mushaf-qiyam-v4.4.0.apk"
         tag: "v4.4.0"
         name: "مصحف القيام — V4.4.0"
         body: |
           ### مصحف القيام (V4.4.0)
-          النسخة المباشرة الجديدة بحجم 67MB وتتضمن نموذج التلاوة العربي كاملاً.
-        replacesArtifacts: true
+          نسخة رسمية جديدة تتضمن المربع النصي التفاعلي والمحرك العربي.
         allowUpdates: true
         makeLatest: true
         allowMissingFiles: true

@@ -9,17 +9,6 @@
 /.idea/assetWizardSettings.xml
 .DS_Store
 /build
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
 /captures
 .externalNativeBuild
 .cxx
@@ -30,4 +19,8 @@ local.properties
 /app/libs/
 /app/src/main/assets/*.onnx
 /app/src/main/assets/*.json
-s c r a t c h / n o d e _ m o d u l e s /  
+
+# Scratch scripts
+scratch/node_modules/
+scratch/package-lock.json
+node_modules/

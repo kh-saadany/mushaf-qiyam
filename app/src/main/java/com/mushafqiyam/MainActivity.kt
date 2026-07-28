@@ -1,21 +1,24 @@
 package com.mushafqiyam
 
 import android.Manifest
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -26,55 +29,31 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
+        const val APP_VERSION = "4.2.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
-    private var lastCrashLog: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Set global crash handler to log any unhandled error to LogCat and store message
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            Log.e(TAG, "FATAL UNCAUGHT EXCEPTION in thread ${thread.name}", throwable)
-            lastCrashLog = throwable.localizedMessage ?: throwable.toString()
-        }
-
         Log.i(TAG, "=== onCreate started ===")
-        Log.i(TAG, "App Version: 4.1.2 (Crash-Proof Architecture)")
+        Log.i(TAG, "App Version: $APP_VERSION")
         Log.i(TAG, "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
         Log.i(TAG, "Android API: ${android.os.Build.VERSION.SDK_INT}")
 
-        try {
-            audioRecognizer = AudioRecognizer(this)
-            Log.i(TAG, "AudioRecognizer instantiated successfully")
-        } catch (t: Throwable) {
-            Log.e(TAG, "Failed to instantiate AudioRecognizer", t)
-            lastCrashLog = "فشل في إنشاء محرك الصوت: ${t.localizedMessage}"
-        }
+        audioRecognizer = AudioRecognizer(this)
 
-        try {
-            setContent {
-                MushafQiyamTheme {
-                    MainAppScreen(
-                        audioRecognizer = audioRecognizer,
-                        initialCrashLog = lastCrashLog
-                    )
-                }
+        setContent {
+            MushafQiyamTheme {
+                MainAppScreen(audioRecognizer = audioRecognizer)
             }
-            Log.i(TAG, "setContent completed successfully")
-        } catch (t: Throwable) {
-            Log.e(TAG, "FATAL: setContent failed", t)
         }
+        Log.i(TAG, "setContent completed successfully")
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            audioRecognizer?.release()
-        } catch (t: Throwable) {
-            Log.e(TAG, "Error releasing audioRecognizer", t)
-        }
+        audioRecognizer?.release()
         audioRecognizer = null
         Log.i(TAG, "onDestroy")
     }
@@ -96,40 +75,43 @@ fun MushafQiyamTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun MainAppScreen(audioRecognizer: AudioRecognizer?, initialCrashLog: String?) {
+fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
     val scrollState = rememberScrollState()
 
     var isRecording by remember { mutableStateOf(false) }
-    var engineStatus by remember { mutableStateOf(initialCrashLog ?: "⏳ جاري التحميل...") }
-    var recognizedText by remember { mutableStateOf("") }
-    var permissionGranted by remember { mutableStateOf(false) }
+    var audioLevel by remember { mutableFloatStateOf(0f) }
+    var statusMessage by remember { mutableStateOf("جاهز للاستماع") }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        permissionGranted = isGranted
-        if (!isGranted) {
-            engineStatus = "❌ إذن الميكروفون مرفوض"
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        if (initialCrashLog == null) {
-            val success = audioRecognizer?.initEngine("tilawa_model") ?: false
-            if (success) {
-                engineStatus = "✅ محرك sherpa-onnx جاهز"
-            } else if (engineStatus.startsWith("⏳")) {
-                engineStatus = "⚠️ المحرك يعمل بدون أخطاء"
-            }
-
-            audioRecognizer?.onPartialResult = { text ->
-                recognizedText = text
+        if (isGranted) {
+            audioRecognizer?.onAudioLevel = { level ->
+                audioLevel = level
             }
             audioRecognizer?.onError = { err ->
-                engineStatus = "❌ خطأ: $err"
+                statusMessage = "❌ $err"
+                isRecording = false
             }
+            audioRecognizer?.startListening()
+            isRecording = true
+            statusMessage = "🎤 يستمع..."
+        } else {
+            statusMessage = "❌ إذن الميكروفون مرفوض"
         }
     }
+
+    // Pulsing animation for mic indicator
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
 
     Column(
         modifier = Modifier
@@ -161,7 +143,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?, initialCrashLog: String?) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "الإصدار 4.1.2 — sherpa-onnx (Offline ASR)",
+            text = "الإصدار ${MainActivity.APP_VERSION}",
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             textAlign = TextAlign.Center
@@ -178,7 +160,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?, initialCrashLog: String?) {
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "حالة النظام والتشغيل",
+                    text = "حالة النظام",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -186,15 +168,15 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?, initialCrashLog: String?) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 StatusRow(label = "واجهة المستخدم (Compose)", status = "✅ يعمل")
-                StatusRow(label = "محرك ASR (sherpa-onnx)", status = "✅ مُدمج (AAR 1.12)")
-                StatusRow(label = "حالة المحرك", status = engineStatus)
-                StatusRow(label = "مطابقة الآيات (FuzzyMatcher)", status = "✅ جاهز")
+                StatusRow(label = "التقاط الصوت (AudioRecord)", status = "✅ جاهز")
+                StatusRow(label = "محرك ASR (sherpa-onnx)", status = "⏳ المرحلة القادمة")
+                StatusRow(label = "مطابقة الآيات", status = "⏳ المرحلة القادمة")
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Live Recognition Card
+        // Live Audio Test Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -206,26 +188,52 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?, initialCrashLog: String?) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "اختبار الاستماع المباشر",
+                    text = "اختبار التقاط الصوت",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Audio level indicator
+                if (isRecording) {
+                    Box(
+                        modifier = Modifier
+                            .size(80.dp)
+                            .scale(1f + audioLevel * 0.5f)
+                            .scale(if (audioLevel > 0.1f) pulseScale else 1f)
+                            .clip(CircleShape)
+                            .background(
+                                Color(0xFFF4D03F).copy(
+                                    alpha = 0.3f + audioLevel * 0.7f
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "🎤",
+                            fontSize = 36.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "مستوى الصوت: ${(audioLevel * 100).toInt()}%",
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 Button(
                     onClick = {
-                        try {
-                            if (!isRecording) {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                audioRecognizer?.startListening()
-                                isRecording = true
-                            } else {
-                                audioRecognizer?.stopListening()
-                                isRecording = false
-                            }
-                        } catch (t: Throwable) {
-                            engineStatus = "❌ خطأ في الزر: ${t.localizedMessage}"
+                        if (!isRecording) {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        } else {
+                            audioRecognizer?.stopListening()
+                            isRecording = false
+                            audioLevel = 0f
+                            statusMessage = "جاهز للاستماع"
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -233,22 +241,20 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?, initialCrashLog: String?) {
                     )
                 ) {
                     Text(
-                        text = if (isRecording) "إيقاف الاستماع 🛑" else "بدء الاستماع المباشر 🎤",
+                        text = if (isRecording) "إيقاف 🛑" else "بدء الاستماع 🎤",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isRecording) Color.White else MaterialTheme.colorScheme.onPrimary
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = if (recognizedText.isBlank()) "اقرأ شيئاً من القرآن وسوف يظهر النص المكتوب هنا..." else recognizedText,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+                    text = statusMessage,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center
                 )
             }
         }

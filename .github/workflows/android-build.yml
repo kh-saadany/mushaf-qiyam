@@ -60,18 +60,19 @@ jobs:
             --ks-pass pass:"$KEYSTORE_PASSWORD" \
             --key-pass pass:"$KEY_PASSWORD" \
             app/build/outputs/apk/release/app-release-unsigned.apk
-          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-release.apk
+          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-v4.4.0.apk
         fi
 
-    - name: Create Release
+    - name: Create Tagged Release
       uses: ncipollo/release-action@v1
       with:
-        artifacts: "app/build/outputs/apk/release/mushaf-qiyam-release.apk"
-        tag: "latest-native-android"
-        name: "مصحف القيام — Native Android V4.4.0"
+        artifacts: "app/build/outputs/apk/release/mushaf-qiyam-v4.4.0.apk"
+        tag: "v4.4.0"
+        name: "مصحف القيام — V4.4.0"
         body: |
           ### مصحف القيام (V4.4.0)
-          تحديث التعرف الصوتي المباشر والربط مع محرك Sherpa-ONNX ونموذج Tilawa العربي.
+          النسخة المباشرة الجديدة بحجم 67MB وتتضمن نموذج التلاوة العربي كاملاً.
+        replacesArtifacts: true
         allowUpdates: true
         makeLatest: true
         allowMissingFiles: true

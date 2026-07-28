@@ -70,7 +70,7 @@ class AudioRecognizer(private val context: Context) {
         return try {
             Log.i(TAG, "Initializing ONNX Runtime engine from assets: $modelDirInAssets...")
             ortEnv = OrtEnvironment.getEnvironment()
-            ctcDecoder = CtcDecoder(context, "$modelDirInAssets/tokens.txt")
+            ctcDecoder = CtcDecoder(context, "$modelDirInAssets/vocab.json")
 
             val modelPath = copyAssetFileSafely("$modelDirInAssets/model.onnx")
             if (modelPath != null && File(modelPath).exists()) {

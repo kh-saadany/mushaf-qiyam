@@ -35,7 +35,7 @@ jobs:
       run: |
         mkdir -p app/src/main/assets/tilawa_model
         curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
-        curl -L -o app/src/main/assets/tilawa_model/tokens.txt https://github.com/yazinsai/tilawa/releases/download/v0.2.0/tokens.txt || true
+        curl -L -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json || true
 
     - name: Decode Keystore
       env:
@@ -60,16 +60,16 @@ jobs:
             --ks-pass pass:"$KEYSTORE_PASSWORD" \
             --key-pass pass:"$KEY_PASSWORD" \
             app/build/outputs/apk/release/app-release-unsigned.apk
-          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-v4.4.1.apk
+          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-v4.5.0.apk
         fi
 
-    - name: Create Release V4.4.1
+    - name: Create Release V4.5.0
       uses: ncipollo/release-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        artifacts: "app/build/outputs/apk/release/mushaf-qiyam-v4.4.1.apk"
-        tag: "v4.4.1"
-        name: "مصحف القيام — V4.4.1"
+        artifacts: "app/build/outputs/apk/release/mushaf-qiyam-v4.5.0.apk"
+        tag: "v4.5.0"
+        name: "مصحف القيام — V4.5.0"
         body: |
           ### مصحف القيام (V4.4.0)
           نسخة رسمية جديدة تتضمن المربع النصي التفاعلي والمحرك العربي.

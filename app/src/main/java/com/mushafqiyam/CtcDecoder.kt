@@ -2,40 +2,40 @@ package com.mushafqiyam
 
 import android.content.Context
 import android.util.Log
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
-import java.nio.FloatBuffer
 
 /**
- * CtcDecoder: Performs CTC Greedy Decoding on ONNX model output logits.
- * Converts ONNX ASR output tensors into Arabic text strings.
+ * CtcDecoder: Performs CTC Greedy Decoding for Tilawa ONNX FastConformer model.
+ * Loads vocab.json (1025 tokens) with blank_id = 1024 and SentencePiece BPE decoding.
  */
-class CtcDecoder(context: Context, tokensAssetPath: String) {
+class CtcDecoder(context: Context, vocabAssetPath: String) {
 
     companion object {
         private const val TAG = "CtcDecoder"
-        private const val BLANK_INDEX = 0
+        private const val BLANK_INDEX = 1024 // Exact blank_id from export_metadata.json
     }
 
-    private val tokensMap = mutableMapOf<Int, String>()
+    private val vocabMap = mutableMapOf<Int, String>()
 
     init {
         try {
-            context.assets.open(tokensAssetPath).use { input ->
-                BufferedReader(InputStreamReader(input)).useLines { lines ->
-                    lines.forEachIndexed { index, line ->
-                        val parts = line.split(" ")
-                        val token = if (parts.size >= 1) parts[0] else line
-                        tokensMap[index] = token
-                    }
+            val jsonString = context.assets.open(vocabAssetPath).use { input ->
+                BufferedReader(InputStreamReader(input)).readText()
+            }
+            val jsonObj = JSONObject(jsonString)
+            val keys = jsonObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val id = key.toIntOrNull()
+                if (id != null) {
+                    vocabMap[id] = jsonObj.getString(key)
                 }
             }
-            Log.i(TAG, "Loaded ${tokensMap.size} tokens from $tokensAssetPath")
+            Log.i(TAG, "Loaded ${vocabMap.size} tokens from $vocabAssetPath (Blank ID: $BLANK_INDEX)")
         } catch (t: Throwable) {
-            Log.w(TAG, "Failed to load tokens from $tokensAssetPath", t)
+            Log.e(TAG, "Failed to load vocab from $vocabAssetPath", t)
         }
     }
 
@@ -49,7 +49,6 @@ class CtcDecoder(context: Context, tokensAssetPath: String) {
         var lastToken = -1
 
         for (frame in logits) {
-            // Find argmax for current frame
             var maxIdx = 0
             var maxVal = Float.NEGATIVE_INFINITY
             for (i in frame.indices) {
@@ -59,22 +58,28 @@ class CtcDecoder(context: Context, tokensAssetPath: String) {
                 }
             }
 
-            // CTC collapse rule: Ignore blank and consecutive duplicates
+            // CTC collapse rule: Ignore blank (1024) and consecutive repeated tokens
             if (maxIdx != BLANK_INDEX && maxIdx != lastToken) {
                 tokenIndices.add(maxIdx)
             }
             lastToken = maxIdx
         }
 
-        // Map token indices to Arabic characters / words
+        if (tokenIndices.isEmpty()) return ""
+
+        // SentencePiece BPE reconstruction
         val builder = StringBuilder()
         for (idx in tokenIndices) {
-            val token = tokensMap[idx] ?: continue
-            // Replace word boundary symbols if present
-            val cleanToken = token.replace(" ", " ").replace("<unk>", "")
-            builder.append(cleanToken)
+            val token = vocabMap[idx] ?: continue
+            if (token == "<unk>" || token == "<s>" || token == "</s>" || token == "<blank>") continue
+            builder.append(token)
         }
 
-        return builder.toString().trim()
+        // Replace SentencePiece lower block / underscore symbol with space
+        return builder.toString()
+            .replace(" ", " ")
+            .replace("_", " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 }

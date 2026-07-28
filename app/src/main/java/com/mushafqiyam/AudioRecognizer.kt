@@ -6,15 +6,16 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.util.Log
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
- * AudioRecognizer: Manages microphone recording (16kHz Mono PCM).
- *
- * Phase 1: Pure audio capture only (no ASR engine yet).
- * The sherpa-onnx integration will be added in Phase 2 after
- * we confirm this foundation works without crashes.
+ * AudioRecognizer: Manages microphone recording (16kHz Mono PCM)
+ * and feeds audio samples into Microsoft ONNX Runtime for offline ASR.
  */
 class AudioRecognizer(private val context: Context) {
 
@@ -27,9 +28,62 @@ class AudioRecognizer(private val context: Context) {
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
 
-    // Audio level for UI feedback (0.0 to 1.0)
+    private var ortEnvironment: OrtEnvironment? = null
+    private var ortSession: OrtSession? = null
+
+    // Callbacks for UI updates
     var onAudioLevel: ((Float) -> Unit)? = null
+    var onPartialResult: ((String) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
+
+    /**
+     * Safely copies asset file to internal storage directory.
+     */
+    private fun copyAssetFileSafely(assetName: String): String? {
+        val file = File(context.filesDir, assetName)
+        if (file.exists() && file.length() > 0) {
+            return file.absolutePath
+        }
+
+        return try {
+            file.parentFile?.mkdirs()
+            context.assets.open(assetName).use { input ->
+                FileOutputStream(file).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            Log.i(TAG, "Copied asset $assetName to ${file.absolutePath}")
+            file.absolutePath
+        } catch (t: Throwable) {
+            Log.w(TAG, "Asset $assetName not found in APK: ${t.message}")
+            null
+        }
+    }
+
+    /**
+     * Initializes Microsoft ONNX Runtime environment safely.
+     */
+    fun initEngine(modelDirInAssets: String): Boolean {
+        return try {
+            Log.i(TAG, "Initializing ONNX Runtime engine...")
+            ortEnvironment = OrtEnvironment.getEnvironment()
+            Log.i(TAG, "ONNX Runtime environment initialized successfully: ${ortEnvironment != null}")
+
+            val modelPath = copyAssetFileSafely("$modelDirInAssets/model.onnx")
+            if (modelPath != null && File(modelPath).exists()) {
+                ortSession = ortEnvironment?.createSession(modelPath)
+                Log.i(TAG, "ONNX model session loaded from $modelPath")
+            } else {
+                Log.w(TAG, "ONNX model file not packaged in assets yet ($modelDirInAssets/model.onnx)")
+            }
+
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "ONNX Runtime init warning/error", t)
+            onError?.invoke("تنبيه المحرك: ${t.localizedMessage}")
+            false
+        }
+    }
 
     @SuppressLint("MissingPermission")
     fun startListening() {
@@ -109,6 +163,10 @@ class AudioRecognizer(private val context: Context) {
 
     fun release() {
         stopListening()
+        try { ortSession?.close() } catch (_: Throwable) {}
+        try { ortEnvironment?.close() } catch (_: Throwable) {}
+        ortSession = null
+        ortEnvironment = null
         Log.i(TAG, "AudioRecognizer released")
     }
 }

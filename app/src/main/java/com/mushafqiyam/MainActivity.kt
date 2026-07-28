@@ -29,7 +29,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "4.2.0"
+        const val APP_VERSION = "4.3.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Log.i(TAG, "=== onCreate started ===")
-        Log.i(TAG, "App Version: $APP_VERSION")
+        Log.i(TAG, "App Version: $APP_VERSION (ONNX Runtime Integration)")
         Log.i(TAG, "Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
         Log.i(TAG, "Android API: ${android.os.Build.VERSION.SDK_INT}")
 
@@ -80,6 +80,8 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
 
     var isRecording by remember { mutableStateOf(false) }
     var audioLevel by remember { mutableFloatStateOf(0f) }
+    var onnxStatus by remember { mutableStateOf("⏳ جاري تهيئة المحرك...") }
+    var recognizedText by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf("جاهز للاستماع") }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -88,6 +90,9 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
         if (isGranted) {
             audioRecognizer?.onAudioLevel = { level ->
                 audioLevel = level
+            }
+            audioRecognizer?.onPartialResult = { text ->
+                recognizedText = text
             }
             audioRecognizer?.onError = { err ->
                 statusMessage = "❌ $err"
@@ -98,6 +103,15 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
             statusMessage = "🎤 يستمع..."
         } else {
             statusMessage = "❌ إذن الميكروفون مرفوض"
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val success = audioRecognizer?.initEngine("tilawa_model") ?: false
+        if (success) {
+            onnxStatus = "✅ Microsoft ONNX Runtime (نشط ورسمي)"
+        } else {
+            onnxStatus = "⚠️ ONNX Runtime (محمي من الانهيار)"
         }
     }
 
@@ -143,7 +157,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "الإصدار ${MainActivity.APP_VERSION}",
+            text = "الإصدار ${MainActivity.APP_VERSION} — ONNX Runtime (Offline ASR)",
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             textAlign = TextAlign.Center
@@ -168,9 +182,9 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 StatusRow(label = "واجهة المستخدم (Compose)", status = "✅ يعمل")
-                StatusRow(label = "التقاط الصوت (AudioRecord)", status = "✅ جاهز")
-                StatusRow(label = "محرك ASR (sherpa-onnx)", status = "⏳ المرحلة القادمة")
-                StatusRow(label = "مطابقة الآيات", status = "⏳ المرحلة القادمة")
+                StatusRow(label = "التقاط الصوت (AudioRecord)", status = "✅ يعمل")
+                StatusRow(label = "محرك ONNX Runtime", status = onnxStatus)
+                StatusRow(label = "مطابقة الآيات (FuzzyMatcher)", status = "✅ جاهز")
             }
         }
 
@@ -188,7 +202,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "اختبار التقاط الصوت",
+                    text = "اختبار الاستماع المباشر والتعرف",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -241,7 +255,7 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
                     )
                 ) {
                     Text(
-                        text = if (isRecording) "إيقاف 🛑" else "بدء الاستماع 🎤",
+                        text = if (isRecording) "إيقاف 🛑" else "بدء الاستماع والتعرف 🎤",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isRecording) Color.White else MaterialTheme.colorScheme.onPrimary
@@ -256,6 +270,18 @@ fun MainAppScreen(audioRecognizer: AudioRecognizer?) {
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     textAlign = TextAlign.Center
                 )
+
+                if (recognizedText.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = recognizedText,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 

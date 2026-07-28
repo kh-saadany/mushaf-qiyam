@@ -11,8 +11,8 @@ android {
         applicationId = "com.mushafqiyam"
         minSdk = 24
         targetSdk = 34
-        versionCode = 12
-        versionName = "4.2.0"
+        versionCode = 13
+        versionName = "4.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -47,8 +47,7 @@ android {
 }
 
 dependencies {
-    // sherpa-onnx AAR removed — causes native crash on startup due to System.loadLibrary
-    // Will be re-integrated safely in Phase 2 via lazy loading
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.0")
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")

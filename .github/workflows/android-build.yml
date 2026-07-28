@@ -32,7 +32,8 @@ jobs:
           echo "Downloading 88MB ONNX model for FULL build..."
           curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
         else
-          echo "Skipping 88MB model download for LITE build..."
+          echo "Lite build: Creating placeholder for AAPT asset packaging..."
+          touch app/src/main/assets/tilawa_model/model.placeholder
         fi
 
     - name: Decode Keystore
@@ -46,7 +47,7 @@ jobs:
     - name: Build Android APK
       run: |
         chmod +x gradlew
-        ./gradlew assembleRelease
+        ./gradlew assembleRelease --stacktrace
 
     - name: Sign APK & Package Single File
       env:

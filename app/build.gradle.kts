@@ -11,8 +11,8 @@ android {
         applicationId = "com.mushafqiyam"
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "3.0.0"
+        versionCode = 9
+        versionName = "4.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -47,6 +47,7 @@ android {
 }
 
 dependencies {
+    implementation(files("libs/sherpa-onnx-1.12.40.aar"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")

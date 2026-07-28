@@ -31,6 +31,15 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    - name: Download Sherpa-ONNX AAR & Tilawa Model Assets
+      run: |
+        mkdir -p app/libs app/src/main/assets/tilawa_model
+        curl -L -o app/libs/sherpa-onnx-1.12.40.aar https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.40/sherpa-onnx-1.12.40.aar
+        curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx
+        curl -L -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json
+        curl -L -o app/src/main/assets/tilawa_model/quran.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/quran.json
+        curl -L -o app/src/main/assets/tilawa_model/export_metadata.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/export_metadata.json
+
     - name: Decode Keystore
       env:
         KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -64,8 +73,8 @@ jobs:
         tag: "latest-native-android"
         name: "مصحف القيام — Native Android"
         body: |
-          ### مصحف القيام (V3.0.0)
-          النسخة الأصلية المحلية بالكامل — Kotlin + Jetpack Compose.
+          ### مصحف القيام (V4.0.0 - sherpa-onnx)
+          النسخة المحلية بالكامل — Kotlin + Jetpack Compose + sherpa-onnx (Offline ASR).
         allowUpdates: true
         makeLatest: true
         allowMissingFiles: true

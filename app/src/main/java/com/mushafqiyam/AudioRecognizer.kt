@@ -145,7 +145,7 @@ class AudioRecognizer(private val context: Context) {
 
                             // Energy-based Voice Activity Detection (VAD)
                             // Skip silent / low-energy background noise chunks to avoid ASR hallucinations
-                            val isSpeechPresent = level > 0.08f
+                            val isSpeechPresent = level > 0.12f
 
                             // Process 1.5s audio chunk for live CTC inference ONLY if speech is present
                             if (audioWindow.size >= SAMPLE_RATE * 3 / 2) {

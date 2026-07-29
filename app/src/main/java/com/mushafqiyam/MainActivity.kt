@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "4.8.0"
+        const val APP_VERSION = "4.9.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -128,8 +128,8 @@ fun MainAppScreen(
         if (text.isNotBlank()) {
             recognizedText = if (recognizedText.isEmpty()) text else "$recognizedText $text"
             
-            // Perform live fuzzy matching against Quran verses
-            val match = FuzzyMatcher.matchVerse(text, sampleVerses)
+            // Perform live fuzzy matching against Quran verses constrained by current active verse
+            val match = FuzzyMatcher.matchVerse(text, sampleVerses, currentIndex = activeVerseIndex)
             if (match != null) {
                 activeVerseIndex = match.verseIndex
                 matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (نسبة التشابه: ${(match.similarity * 100).toInt()}%)"

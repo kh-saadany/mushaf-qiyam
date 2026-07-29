@@ -38,12 +38,13 @@ object FuzzyMatcher {
 
     /**
      * Compares recognized streaming text against candidate verses
-     * using normalized Levenshtein similarity and token substring matching.
+     * constrained by current active verse index for forward sequential Quran tracking.
      */
     fun matchVerse(
         recognizedText: String,
         candidateVerses: List<String>,
-        threshold: Double = 0.55
+        currentIndex: Int = -1,
+        threshold: Double = 0.50
     ): MatchResult? {
         val cleanRec = normalizeArabic(recognizedText)
         // Ignore single/two letter noise outputs like "ش", "ت", "ص"
@@ -52,7 +53,13 @@ object FuzzyMatcher {
         var bestMatch: MatchResult? = null
         var maxSim = 0.0
 
-        candidateVerses.forEachIndexed { index, verse ->
+        // Determine search range: If we have an active verse, look at current + next 3 verses.
+        // Otherwise (start of recitation), look across the first 4 verses.
+        val startIndex = if (currentIndex >= 0) maxOf(0, currentIndex) else 0
+        val endIndex = if (currentIndex >= 0) minOf(candidateVerses.size - 1, currentIndex + 3) else minOf(candidateVerses.size - 1, 3)
+
+        for (index in startIndex..endIndex) {
+            val verse = candidateVerses[index]
             val cleanVerse = normalizeArabic(verse)
             if (cleanVerse.isNotBlank()) {
                 val sim = calculateSimilarity(cleanRec, cleanVerse)

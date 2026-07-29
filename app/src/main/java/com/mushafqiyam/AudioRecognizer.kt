@@ -77,7 +77,7 @@ class AudioRecognizer(private val context: Context) {
                     ),
                     decodingMethod = "greedy_search"
                 )
-                recognizer = OfflineRecognizer(context.assets, config)
+                recognizer = OfflineRecognizer(config)
                 AppLogger.i(TAG, "Sherpa-ONNX engine initialized successfully")
                 true
             } else {

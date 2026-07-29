@@ -60,7 +60,13 @@ jobs:
       run: |
         mkdir -p app/src/main/assets/tilawa_model
         curl -L --retry 5 -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json
-        curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx
+        COMMIT_MSG=$(git log -1 --pretty=%B)
+        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
+          echo "Downloading 88MB ONNX model for Full build..."
+          curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx
+        else
+          echo "Lite build: Skipping ONNX model download for clean, compact APK build."
+        fi
 
     - name: Decode Keystore
       env:
@@ -79,14 +85,12 @@ jobs:
         KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       run: |
-        sudo apt-get update && sudo apt-get install -y zip
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Full build: Retaining embedded 88MB ONNX model..."
+          echo "Packaging Full Release APK..."
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk
         else
-          echo "Lite build: Stripping 88MB ONNX model from APK zip..."
-          zip -d app/build/outputs/apk/release/app-release-unsigned.apk assets/tilawa_model/model.onnx || true
+          echo "Packaging Lite Release APK..."
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-lite.apk
         fi
 

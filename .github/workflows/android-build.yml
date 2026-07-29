@@ -31,6 +31,11 @@ jobs:
         gradle wrapper --gradle-version 8.6
         chmod +x gradlew
 
+    - name: Download Sherpa AAR Binary
+      run: |
+        mkdir -p app/libs
+        curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
+
     - name: Run Kotlin Compilation Verification
       run: ./gradlew compileReleaseKotlin
 
@@ -58,6 +63,9 @@ jobs:
 
     - name: Download Model Assets for Offline ASR
       run: |
+        mkdir -p app/libs
+        echo "Downloading Sherpa-ONNX 1.13.4 AAR binary..."
+        curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
         mkdir -p app/src/main/assets/tilawa_model
         curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt https://github.com/kh-saadany/mushaf-qiyam/releases/download/sherpa-model-v1.0/tokens.txt
         COMMIT_MSG=$(git log -1 --pretty=%B)

@@ -30,7 +30,7 @@ object SherpaAcceptanceTester {
             
             val config = OfflineRecognizerConfig(
                 modelConfig = OfflineModelConfig(
-                    nemoCtc = OfflineNemoEncDecCtcModelConfig(model = modelPath),
+                    nemo = OfflineNemoEncDecCtcModelConfig(model = modelPath),
                     tokens = tokensPath,
                     debug = false
                 ),

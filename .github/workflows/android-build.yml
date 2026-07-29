@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
 
 jobs:
   build:
@@ -72,10 +70,11 @@ jobs:
 
     - name: Create Single Release Asset
       uses: ncipollo/release-action@v1
-      if: startsWith(github.ref, 'refs/tags/')
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
+        tag: "v4.5.0"
+        name: "مصحف القيام — V4.5.0 Lite"
         allowUpdates: true
         recreate: true
         body: |

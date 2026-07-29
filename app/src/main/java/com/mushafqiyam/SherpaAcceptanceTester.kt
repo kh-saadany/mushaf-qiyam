@@ -2,9 +2,10 @@ package com.mushafqiyam
 
 import android.content.Context
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
-import com.k2fsa.sherpa.onnx.OfflineNeMoCtcModelConfig
+import com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import java.io.File
 
 /**
  * SherpaAcceptanceTester:
@@ -29,7 +30,7 @@ object SherpaAcceptanceTester {
             
             val config = OfflineRecognizerConfig(
                 modelConfig = OfflineModelConfig(
-                    nemoCtc = OfflineNeMoCtcModelConfig(model = modelPath),
+                    nemoCtc = OfflineNemoEncDecCtcModelConfig(model = modelPath),
                     tokens = tokensPath,
                     debug = false
                 ),

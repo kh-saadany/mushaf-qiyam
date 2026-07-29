@@ -1,0 +1,60 @@
+name: Export & Package Sherpa-ONNX Model
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  export_model:
+    name: Export & Quantize NeMo FastConformer for Sherpa-ONNX
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install Pinned PyTorch & NeMo Export Tooling
+      run: |
+        python -m pip install --upgrade pip
+        pip install "torch==2.8.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+        pip install "nemo_toolkit[asr]" onnx onnxruntime sherpa-onnx soundfile
+
+    - name: Clone sherpa-onnx Official Export Scripts
+      run: |
+        git clone https://github.com/k2-fsa/sherpa-onnx.git
+        cd sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc
+
+    - name: Export NeMo Model to CTC ONNX
+      run: |
+        cd sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc
+        python export-onnx.py \
+          --model-name "nvidia/stt_ar_fastconformer_hybrid_large_pcd_v1.0" \
+          --output-dir ./export_output \
+          --decoder-type ctc
+
+    - name: Quantize Model to INT8 with Official Sherpa Quantizer
+      run: |
+        cd sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc/export_output
+        python -m sherpa_onnx.offline_ctc.onnx_quantizer \
+          --input-model model.onnx \
+          --output-model model.int8.onnx
+        ls -lh model.int8.onnx tokens.txt
+
+    - name: Create Release for Sherpa Model Assets
+      uses: ncipollo/release-action@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        artifacts: "sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc/export_output/model.int8.onnx,sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc/export_output/tokens.txt"
+        tag: "sherpa-model-v1.0"
+        name: "Sherpa-ONNX FastConformer Arabic Quantized Model (v1.0)"
+        allowUpdates: true
+        recreate: true
+        body: |
+          ### Sherpa-ONNX FastConformer Arabic CTC Model (INT8)
+          Clean, officially exported and quantized INT8 FastConformer model for sherpa-onnx Android ASR engine.

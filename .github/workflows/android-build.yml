@@ -70,7 +70,7 @@ jobs:
 
     - name: Decode Keystore
       env:
-        ENCODED_STRING: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        ENCODED_STRING: ${{ secrets.KEYSTORE_BASE64 }}
       run: |
         if [ -n "$ENCODED_STRING" ]; then
           echo $ENCODED_STRING | base64 -d > app/keystore.jks
@@ -81,9 +81,9 @@ jobs:
 
     - name: Sign APK & Package Single File
       env:
-        KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-        KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-        KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: |
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then

@@ -4,32 +4,99 @@ import kotlin.math.max
 
 object FuzzyMatcher {
 
-    data class MatchResult(val verse: String, val similarity: Double)
+    data class MatchResult(
+        val verseIndex: Int,
+        val verseText: String,
+        val similarity: Double,
+        val matchedSegment: String
+    )
 
     /**
-     * Compares recognized text with a list of verses and returns the best match above a threshold.
+     * Comprehensive Arabic normalization:
+     * Removes Tashkeel, normalizes Alef forms, Taa Marbouta, Yaa/Maqsoora, and punctuation.
      */
-    fun matchVerse(recognizedText: String, currentPageVerses: List<String>, threshold: Double = 0.6): MatchResult? {
-        val cleanRecognized = removeDiacritics(recognizedText)
-        if (cleanRecognized.isBlank()) return null
+    fun normalizeArabic(text: String): String {
+        if (text.isBlank()) return ""
+        
+        var normalized = text
+            // Remove Tashkeel / Diacritics
+            .replace(Regex("[\\u0617-\\u061A\\u064B-\\u0652]"), "")
+            // Normalize Alef forms
+            .replace(Regex("[إأآٱ]"), "ا")
+            // Normalize Taa Marbouta to Haa
+            .replace("ة", "ه")
+            // Normalize Alef Maqsoora to Yaa
+            .replace("ى", "ي")
+            // Remove non-Arabic punctuation / symbols
+            .replace(Regex("[^\\u0600-\\u06FF\\s]"), "")
+            // Normalize multiple whitespaces
+            .replace(Regex("\\s+"), " ")
+            .trim()
 
-        return currentPageVerses
-            .map { verse ->
-                MatchResult(
-                    verse = verse,
-                    similarity = normalizedLevenshtein(cleanRecognized, removeDiacritics(verse))
-                )
-            }
-            .filter { it.similarity >= threshold }
-            .maxByOrNull { it.similarity }
+        return normalized
     }
 
     /**
-     * Removes Arabic diacritics (Tashkeel) for clean matching.
+     * Compares recognized streaming text against candidate verses
+     * using normalized Levenshtein similarity and token substring matching.
      */
-    private fun removeDiacritics(text: String): String {
-        val regex = Regex("[\\u0617-\\u061A\\u064B-\\u0652]")
-        return regex.replace(text, "")
+    fun matchVerse(
+        recognizedText: String,
+        candidateVerses: List<String>,
+        threshold: Double = 0.45
+    ): MatchResult? {
+        val cleanRec = normalizeArabic(recognizedText)
+        if (cleanRec.isBlank()) return null
+
+        var bestMatch: MatchResult? = null
+        var maxSim = 0.0
+
+        candidateVerses.forEachIndexed { index, verse ->
+            val cleanVerse = normalizeArabic(verse)
+            if (cleanVerse.isNotBlank()) {
+                val sim = calculateSimilarity(cleanRec, cleanVerse)
+                if (sim > maxSim && sim >= threshold) {
+                    maxSim = sim
+                    bestMatch = MatchResult(
+                        verseIndex = index,
+                        verseText = verse,
+                        similarity = sim,
+                        matchedSegment = cleanRec
+                    )
+                }
+            }
+        }
+
+        return bestMatch
+    }
+
+    /**
+     * Calculates normalized similarity with both full Levenshtein and sliding token window match.
+     */
+    private fun calculateSimilarity(recognized: String, verse: String): Double {
+        // Direct Levenshtein similarity
+        val fullSim = normalizedLevenshtein(recognized, verse)
+        
+        // Sliding window token similarity for partial streaming inputs
+        val recTokens = recognized.split(" ")
+        val verseTokens = verse.split(" ")
+
+        if (recTokens.size <= verseTokens.size && recTokens.isNotEmpty()) {
+            val windowSize = recTokens.size
+            var maxWindowSim = 0.0
+
+            for (i in 0..(verseTokens.size - windowSize)) {
+                val subVerse = verseTokens.subList(i, i + windowSize).joinToString(" ")
+                val windowSim = normalizedLevenshtein(recognized, subVerse)
+                if (windowSim > maxWindowSim) {
+                    maxWindowSim = windowSim
+                }
+            }
+
+            return maxOf(fullSim, maxWindowSim)
+        }
+
+        return fullSim
     }
 
     /**
@@ -66,3 +133,4 @@ object FuzzyMatcher {
         return cost[len0 - 1]
     }
 }
+

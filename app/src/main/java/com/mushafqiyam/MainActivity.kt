@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "4.6.2"
+        const val APP_VERSION = "4.6.3"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -107,10 +107,12 @@ fun MainAppScreen(
     }
 
     LaunchedEffect(Unit) {
-        AppLogger.i("UI", "Initializing ASR engine...")
-        val success = audioRecognizer?.initEngine("tilawa_model") ?: false
+        engineStatus = "⏳ جاري تهيئة محرك الذكاء الاصطناعي..."
+        val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            audioRecognizer?.initEngine("tilawa_model") ?: false
+        }
         if (success) {
-            engineStatus = "✅ محرك ONNX Runtime وتطابق مفردات القوآن جاهز"
+            engineStatus = "✅ محرك Sherpa-ONNX ونموذج FastConformer جاهز"
         } else {
             engineStatus = "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
         }

@@ -82,9 +82,13 @@ class AudioRecognizer(private val context: Context) {
                 true
             } else {
                 AppLogger.w(TAG, "Sherpa-ONNX model or tokens missing. modelPath=$modelPath, tokensPath=$tokensPath")
-                onError?.invoke("نموذج التلاوة الخفيف غير موجود بالذاكرة")
+                onError?.invoke("نموذج التلاوة الكامل غير متوفر بالذاكرة المحلية")
                 false
             }
+        } catch (e: UnsatisfiedLinkError) {
+            AppLogger.e(TAG, "Native JNI Library link error", e)
+            onError?.invoke("تنبيه المحرك: تعذر ربط مكتبة JNI الثنائية (${e.localizedMessage})")
+            false
         } catch (t: Throwable) {
             AppLogger.e(TAG, "Sherpa-ONNX init error", t)
             onError?.invoke("تنبيه المحرك: ${t.localizedMessage}")

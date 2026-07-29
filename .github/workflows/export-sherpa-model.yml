@@ -22,7 +22,7 @@ jobs:
     - name: Install Pinned PyTorch & NeMo Export Tooling
       run: |
         python -m pip install --upgrade pip
-        pip install "torch==2.8.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+        pip install "torch==2.4.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         pip install "nemo_toolkit[asr]" onnx onnxruntime sherpa-onnx soundfile
 
     - name: Clone sherpa-onnx Official Export Scripts
@@ -37,12 +37,10 @@ jobs:
           --model-name "nvidia/stt_ar_fastconformer_hybrid_large_pcd_v1.0" \
           --output-dir ./export_output
 
-    - name: Quantize Model to INT8 with Official Sherpa Quantizer
+    - name: Quantize Model to INT8
       run: |
         cd sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc/export_output
-        python -m sherpa_onnx.offline_ctc.onnx_quantizer \
-          --input-model model.onnx \
-          --output-model model.int8.onnx
+        python -c "from onnxruntime.quantization import quantize_dynamic, QuantType; quantize_dynamic('model.onnx', 'model.int8.onnx', weight_type=QuantType.QInt8)"
         ls -lh model.int8.onnx tokens.txt
 
     - name: Create Release for Sherpa Model Assets

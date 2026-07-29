@@ -116,11 +116,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v4.6.4"
-        name: "مصحف القيام — V4.6.4"
+        tag: "v4.6.5"
+        name: "مصحف القيام — V4.6.5"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V4.6.4 (إصلاح مُنشئ محرك التعرف)
-          إصلاح الانهيار الفوري بتصحيح استدعاء OfflineRecognizer لاستخدام المسارات المطلقة.
+          ### مصحف القيام — V4.6.5 (إصلاح مسار المحرك الثنائي)
+          إصلاح استدعاء OfflineRecognizer(null, config) لضمان القراءة المباشرة من مسار ذاكرة النظام دون الانهيار.
 

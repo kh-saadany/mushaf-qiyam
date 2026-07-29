@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build & Release Android APK
 
 on:
   push:
@@ -10,9 +10,34 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  validate:
+    name: Fast Verification & Code Check
     runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Setup Gradle Wrapper
+      run: |
+        gradle wrapper --gradle-version 8.6
+        chmod +x gradlew
+
+    - name: Run Kotlin Compilation Verification
+      run: ./gradlew compileReleaseKotlin
+
+  build:
+    name: Build, Package & Publish Release
+    needs: validate
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4

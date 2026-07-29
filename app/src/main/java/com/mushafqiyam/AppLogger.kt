@@ -25,12 +25,16 @@ object AppLogger {
     private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
     val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
 
-    private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+    private val dateFormat = object : ThreadLocal<SimpleDateFormat>() {
+        override fun initialValue(): SimpleDateFormat {
+            return SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+        }
+    }
 
     private fun addEntry(level: String, tag: String, message: String, throwable: Throwable? = null) {
+        val timestamp = dateFormat.get()?.format(Date()) ?: ""
+        val entry = LogEntry(timestamp, level, tag, message, throwable)
         synchronized(this) {
-            val timestamp = dateFormat.format(Date())
-            val entry = LogEntry(timestamp, level, tag, message, throwable)
             val currentList = _logs.value.toMutableList()
             if (currentList.size >= 100) {
                 currentList.removeAt(0)

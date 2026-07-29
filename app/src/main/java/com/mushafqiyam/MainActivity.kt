@@ -36,7 +36,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.mushafqiyam.ui.theme.MushafQiyamTheme
 import kotlinx.coroutines.flow.asStateFlow
 
 class MainActivity : ComponentActivity() {
@@ -55,7 +54,7 @@ class MainActivity : ComponentActivity() {
         audioRecognizer = AudioRecognizer(this)
 
         setContent {
-            MushafQiyamTheme {
+            MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -251,7 +250,7 @@ fun MainAppScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.surface),
-                    contentAlignment = Alignment.TopRight
+                    contentAlignment = Alignment.TopEnd
                 ) {
                     Text(
                         text = if (recognizedText.isEmpty()) "في انتظار التلاوة الصوتية..." else recognizedText,

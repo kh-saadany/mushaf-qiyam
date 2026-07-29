@@ -32,13 +32,15 @@ jobs:
 
     - name: Export NeMo Model to CTC ONNX
       run: |
+        mkdir -p export_output
         cd sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc
         python export-onnx-ctc-non-streaming.py \
           --model "nvidia/stt_ar_fastconformer_hybrid_large_pcd_v1.0"
+        mv model.onnx tokens.txt ../../../../export_output/ || true
 
     - name: Quantize Model to INT8
       run: |
-        cd sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc/export_output
+        cd export_output
         python -c "from onnxruntime.quantization import quantize_dynamic, QuantType; quantize_dynamic('model.onnx', 'model.int8.onnx', weight_type=QuantType.QInt8)"
         ls -lh model.int8.onnx tokens.txt
 
@@ -46,7 +48,7 @@ jobs:
       uses: ncipollo/release-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        artifacts: "sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc/export_output/model.int8.onnx,sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc/export_output/tokens.txt"
+        artifacts: "export_output/model.int8.onnx,export_output/tokens.txt"
         tag: "sherpa-model-v1.0"
         name: "Sherpa-ONNX FastConformer Arabic Quantized Model (v1.0)"
         allowUpdates: true

@@ -51,7 +51,7 @@ jobs:
         KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       run: |
         sudo apt-get update && sudo apt-get install -y zip
-        COMMIT_MSG=$(git log -1 --pretty=%B)
+        COMMIT_MSG=$(git log -1 origin/main --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           echo "Full build: Retaining embedded 88MB ONNX model..."
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk

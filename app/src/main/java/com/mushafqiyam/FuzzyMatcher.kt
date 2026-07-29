@@ -43,10 +43,11 @@ object FuzzyMatcher {
     fun matchVerse(
         recognizedText: String,
         candidateVerses: List<String>,
-        threshold: Double = 0.45
+        threshold: Double = 0.55
     ): MatchResult? {
         val cleanRec = normalizeArabic(recognizedText)
-        if (cleanRec.isBlank()) return null
+        // Ignore single/two letter noise outputs like "ش", "ت", "ص"
+        if (cleanRec.length < 3) return null
 
         var bestMatch: MatchResult? = null
         var maxSim = 0.0

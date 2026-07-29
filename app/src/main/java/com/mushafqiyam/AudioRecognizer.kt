@@ -143,10 +143,20 @@ class AudioRecognizer(private val context: Context) {
                             val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
                             onAudioLevel?.invoke(level)
 
-                            // Process 1.5s audio chunk for live CTC inference
+                            // Energy-based Voice Activity Detection (VAD)
+                            // Skip silent / low-energy background noise chunks to avoid ASR hallucinations
+                            val isSpeechPresent = level > 0.08f
+
+                            // Process 1.5s audio chunk for live CTC inference ONLY if speech is present
                             if (audioWindow.size >= SAMPLE_RATE * 3 / 2) {
-                                runInference(audioWindow.toFloatArray())
+                                val chunk = audioWindow.toFloatArray()
                                 audioWindow.clear()
+
+                                if (isSpeechPresent) {
+                                    runInference(chunk)
+                                } else {
+                                    AppLogger.i(TAG, "VAD: Silence / Low Energy detected (level: ${String.format("%.3f", level)}), skipping inference.")
+                                }
                             }
                         }
                     } catch (t: Throwable) {

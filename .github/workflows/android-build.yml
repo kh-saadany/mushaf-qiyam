@@ -117,10 +117,10 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
         tag: "v4.6.2"
-        name: "مصحف القيام — V4.6.2 Lite"
+        name: "مصحف القيام — V4.6.2"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V4.6.2 Lite (دمج محرك Sherpa-ONNX الرسمي)
-          الانتقال الكامل محرك Sherpa-ONNX ونموذج FastConformer INT8 المكمّم رسمياً.
+          ### مصحف القيام — V4.6.2 (دمج محرك Sherpa-ONNX الرسمي)
+          الانتقال الكامل لمحرك Sherpa-ONNX ونموذج FastConformer INT8 المكمّم رسمياً.
 

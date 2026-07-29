@@ -28,14 +28,8 @@ jobs:
     - name: Download Model Assets for Offline ASR
       run: |
         mkdir -p app/src/main/assets/tilawa_model
-        curl -L -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json || true
-        COMMIT_MSG=$(git log -1 --pretty=%B)
-        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Downloading 88MB ONNX model for FULL build..."
-          curl -L -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx || true
-        else
-          echo "Lite build: Skipping 88MB model download..."
-        fi
+        curl -L --retry 5 -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json
+        curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx
 
     - name: Decode Keystore
       env:
@@ -45,11 +39,10 @@ jobs:
           echo $ENCODED_STRING | base64 -d > app/keystore.jks
         fi
 
-    - name: Generate Wrapper & Build Android APK
+    - name: Build Android APK
       run: |
-        gradle wrapper
-        chmod +x gradlew
-        ./gradlew assembleRelease --no-daemon
+        chmod +x gradlew 2>/dev/null || gradle wrapper
+        ./gradlew assembleRelease
 
     - name: Sign APK & Package Single File
       env:
@@ -57,10 +50,14 @@ jobs:
         KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       run: |
+        sudo apt-get update && sudo apt-get install -y zip
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
+          echo "Full build: Retaining embedded 88MB ONNX model..."
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk
         else
+          echo "Lite build: Stripping 88MB ONNX model from APK zip..."
+          zip -d app/build/outputs/apk/release/app-release-unsigned.apk assets/tilawa_model/model.onnx || true
           mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-lite.apk
         fi
 

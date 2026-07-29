@@ -4,10 +4,15 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -19,9 +24,12 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
+        cache: gradle
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+    - name: Setup Gradle Wrapper
+      run: |
+        gradle wrapper --gradle-version 8.6
+        chmod +x gradlew
 
     - name: Download Model Assets for Offline ASR
       run: |
@@ -38,9 +46,7 @@ jobs:
         fi
 
     - name: Build Android APK
-      run: |
-        chmod +x gradlew 2>/dev/null || gradle wrapper
-        ./gradlew assembleRelease
+      run: ./gradlew assembleRelease
 
     - name: Sign APK & Package Single File
       env:

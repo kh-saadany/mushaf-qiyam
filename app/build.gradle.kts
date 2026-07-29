@@ -20,9 +20,6 @@ android {
         }
     }
 
-    androidResources {
-        noCompress += "onnx"
-    }
 
     buildTypes {
         release {

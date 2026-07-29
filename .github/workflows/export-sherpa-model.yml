@@ -34,8 +34,7 @@ jobs:
       run: |
         cd sherpa-onnx/scripts/nemo/fast-conformer-hybrid-transducer-ctc
         python export-onnx-ctc-non-streaming.py \
-          --model-name "nvidia/stt_ar_fastconformer_hybrid_large_pcd_v1.0" \
-          --output-dir ./export_output
+          --model "nvidia/stt_ar_fastconformer_hybrid_large_pcd_v1.0"
 
     - name: Quantize Model to INT8
       run: |

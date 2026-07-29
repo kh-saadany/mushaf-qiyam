@@ -5,18 +5,18 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtSession
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineNeMoCtcModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.FloatBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
  * AudioRecognizer: Manages microphone recording (16kHz Mono PCM)
- * and streams audio into ONNX Runtime + CtcDecoder for live Quran ASR.
+ * and streams audio into sherpa-onnx OfflineRecognizer for live Quran ASR.
  */
 class AudioRecognizer(private val context: Context) {
 
@@ -29,92 +29,64 @@ class AudioRecognizer(private val context: Context) {
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
 
-    private var ortEnv: OrtEnvironment? = null
-    private var ortSession: OrtSession? = null
-    private var ctcDecoder: CtcDecoder? = null
+    private var recognizer: OfflineRecognizer? = null
 
     // Callbacks for UI updates
     var onAudioLevel: ((Float) -> Unit)? = null
     var onPartialResult: ((String) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
 
-    /**
-     * Resolves model path: checks filesDir first, then asset directory.
-     */
-    private fun resolveModelPath(modelDirInAssets: String): String? {
-        // 1. Check internal storage (filesDir/tilawa_model/model.onnx)
-        val internalFile = File(context.filesDir, "$modelDirInAssets/model.onnx")
-        if (internalFile.exists() && internalFile.length() > 1000000) {
-            AppLogger.i(TAG, "Found existing model in internal storage: ${internalFile.absolutePath} (${internalFile.length() / 1024 / 1024}MB)")
+    private fun resolveFilePath(modelDirInAssets: String, fileName: String): String? {
+        val internalFile = File(context.filesDir, "$modelDirInAssets/$fileName")
+        if (internalFile.exists() && internalFile.length() > 0) {
+            AppLogger.i(TAG, "Found existing $fileName in storage: ${internalFile.absolutePath}")
             return internalFile.absolutePath
         }
 
-        // 2. Try copying from assets if packaged in Full APK
         return try {
             internalFile.parentFile?.mkdirs()
-            context.assets.open("$modelDirInAssets/model.onnx").use { input ->
+            context.assets.open("$modelDirInAssets/$fileName").use { input ->
                 FileOutputStream(internalFile).use { output ->
                     input.copyTo(output)
                 }
             }
-            AppLogger.i(TAG, "Copied model from APK assets to ${internalFile.absolutePath}")
+            AppLogger.i(TAG, "Copied $fileName from APK assets to ${internalFile.absolutePath}")
             internalFile.absolutePath
         } catch (t: Throwable) {
-            AppLogger.w(TAG, "Model not in APK assets: ${t.message}")
+            AppLogger.w(TAG, "Could not resolve asset $fileName: ${t.localizedMessage}")
             null
         }
     }
 
     /**
-     * Resolves vocab path: checks filesDir first, then assets.
-     */
-    private fun resolveVocabPath(modelDirInAssets: String): String {
-        val internalFile = File(context.filesDir, "$modelDirInAssets/vocab.json")
-        if (internalFile.exists() && internalFile.length() > 0) {
-            return internalFile.absolutePath
-        }
-
-        // Try copying asset
-        try {
-            internalFile.parentFile?.mkdirs()
-            context.assets.open("$modelDirInAssets/vocab.json").use { input ->
-                FileOutputStream(internalFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
-            return internalFile.absolutePath
-        } catch (_: Throwable) {}
-
-        return "$modelDirInAssets/vocab.json"
-    }
-
-    /**
-     * Initializes ONNX Runtime engine and CtcDecoder safely.
+     * Initializes sherpa-onnx OfflineRecognizer engine safely.
      */
     fun initEngine(modelDirInAssets: String): Boolean {
         return try {
-            AppLogger.i(TAG, "Starting ONNX Runtime init (Dir: $modelDirInAssets)...")
-            ortEnv = OrtEnvironment.getEnvironment()
-            AppLogger.i(TAG, "OrtEnvironment initialized successfully")
+            AppLogger.i(TAG, "Starting sherpa-onnx engine init (Dir: $modelDirInAssets)...")
 
-            val vocabPath = resolveVocabPath(modelDirInAssets)
-            ctcDecoder = CtcDecoder(context, vocabPath)
+            val modelPath = resolveFilePath(modelDirInAssets, "model.int8.onnx")
+            val tokensPath = resolveFilePath(modelDirInAssets, "tokens.txt")
 
-            val modelPath = resolveModelPath(modelDirInAssets)
-            if (modelPath != null && File(modelPath).exists()) {
-                val opts = OrtSession.SessionOptions()
-                opts.setInterOpNumThreads(2)
-                opts.setIntraOpNumThreads(2)
-                ortSession = ortEnv?.createSession(modelPath, opts)
-                AppLogger.i(TAG, "ONNX model session loaded successfully from $modelPath")
+            if (modelPath != null && File(modelPath).exists() && tokensPath != null && File(tokensPath).exists()) {
+                val config = OfflineRecognizerConfig(
+                    modelConfig = OfflineModelConfig(
+                        nemoCtc = OfflineNeMoCtcModelConfig(model = modelPath),
+                        tokens = tokensPath,
+                        debug = false
+                    ),
+                    decodingMethod = "greedy_search"
+                )
+                recognizer = OfflineRecognizer(context.assets, config)
+                AppLogger.i(TAG, "Sherpa-ONNX engine initialized successfully")
                 true
             } else {
-                AppLogger.w(TAG, "Model file not found at $modelPath")
-                onError?.invoke("نموذج التلاوة غير موجود برقم الذاكرة المحلية")
+                AppLogger.w(TAG, "Sherpa-ONNX model or tokens missing. modelPath=$modelPath, tokensPath=$tokensPath")
+                onError?.invoke("نموذج التلاوة الخفيف غير موجود بالذاكرة")
                 false
             }
         } catch (t: Throwable) {
-            AppLogger.e(TAG, "ONNX Runtime init error", t)
+            AppLogger.e(TAG, "Sherpa-ONNX init error", t)
             onError?.invoke("تنبيه المحرك: ${t.localizedMessage}")
             false
         }
@@ -146,7 +118,7 @@ class AudioRecognizer(private val context: Context) {
 
             audioRecord?.startRecording()
             isRecording.set(true)
-            AppLogger.i(TAG, "AudioRecord recording started (16kHz Mono)")
+            AppLogger.i(TAG, "Audio recording started successfully")
 
             recordingThread = thread(start = true, name = "AudioRecognizerThread") {
                 val buffer = ShortArray(bufferSize / 2)
@@ -187,31 +159,22 @@ class AudioRecognizer(private val context: Context) {
     }
 
     private fun runInference(audioSamples: FloatArray) {
-        val env = ortEnv ?: return
-        val session = ortSession ?: return
-        val decoder = ctcDecoder ?: return
+        val rec = recognizer ?: return
 
         try {
-            val shape = longArrayOf(1, audioSamples.size.toLong())
-            val tensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(audioSamples), shape)
+            val stream = rec.createStream()
+            stream.acceptWaveform(audioSamples, SAMPLE_RATE)
+            rec.decode(stream)
 
-            val inputName = session.inputNames.iterator().next()
-            val result = session.run(mapOf(inputName to tensor))
-
-            val outputValue = result.get(0).value
-            if (outputValue is Array<*>) {
-                @Suppress("UNCHECKED_CAST")
-                val logits2D = (outputValue as Array<Array<FloatArray>>)[0]
-                val text = decoder.decode(logits2D)
-                if (text.isNotBlank()) {
-                    AppLogger.i(TAG, "Recognized text: $text")
-                    onPartialResult?.invoke(text)
-                }
+            val result = rec.getResult(stream)
+            val text = result.text.trim()
+            if (text.isNotBlank()) {
+                AppLogger.i(TAG, "Recognized text (Sherpa): $text")
+                onPartialResult?.invoke(text)
             }
-            tensor.close()
-            result.close()
+            stream.release()
         } catch (t: Throwable) {
-            AppLogger.e(TAG, "Error during ONNX inference", t)
+            AppLogger.e(TAG, "Error during Sherpa inference", t)
         }
     }
 
@@ -235,11 +198,8 @@ class AudioRecognizer(private val context: Context) {
 
     fun release() {
         stopListening()
-        try { ortSession?.close() } catch (_: Throwable) {}
-        try { ortEnv?.close() } catch (_: Throwable) {}
-        ortSession = null
-        ortEnv = null
-        ctcDecoder = null
+        try { recognizer?.release() } catch (_: Throwable) {}
+        recognizer = null
         AppLogger.i(TAG, "AudioRecognizer released")
     }
 }

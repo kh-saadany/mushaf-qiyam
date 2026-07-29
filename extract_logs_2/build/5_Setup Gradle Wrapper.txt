@@ -1,0 +1,31 @@
+﻿2026-06-30T08:44:28.2960150Z ##[group]Run gradle wrapper --gradle-version 8.6
+2026-06-30T08:44:28.2960567Z [36;1mgradle wrapper --gradle-version 8.6[0m
+2026-06-30T08:44:28.2993315Z shell: /usr/bin/bash -e {0}
+2026-06-30T08:44:28.2993571Z env:
+2026-06-30T08:44:28.2993887Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.19-10/x64
+2026-06-30T08:44:28.2994419Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.19-10/x64
+2026-06-30T08:44:28.2994805Z ##[endgroup]
+2026-06-30T08:44:31.0545303Z 
+2026-06-30T08:44:31.0547640Z Welcome to Gradle 9.6.0!
+2026-06-30T08:44:31.0547998Z 
+2026-06-30T08:44:31.0550484Z Here are the highlights of this release:
+2026-06-30T08:44:31.0555785Z  - Improved Configuration Cache hit rates
+2026-06-30T08:44:31.0557382Z  - Additional CLI rendering options
+2026-06-30T08:44:31.0558662Z  - Important project hierarchy lookup deprecations
+2026-06-30T08:44:31.0559093Z 
+2026-06-30T08:44:31.0561479Z For more details see https://docs.gradle.org/9.6.0/release-notes.html
+2026-06-30T08:44:31.0562352Z 
+2026-06-30T08:44:31.4537242Z Starting a Gradle Daemon (subsequent builds will be faster)
+2026-06-30T08:45:41.0558659Z > Task :wrapper
+2026-06-30T08:45:41.1167362Z 
+2026-06-30T08:45:41.1171223Z [Incubating] Problems report is available at: file:///home/runner/work/mushaf-qiyam/mushaf-qiyam/build/reports/problems/problems-report.html
+2026-06-30T08:45:41.1172262Z 
+2026-06-30T08:45:41.1218759Z Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+2026-06-30T08:45:41.1219310Z 
+2026-06-30T08:45:41.1221608Z You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+2026-06-30T08:45:41.1222657Z 
+2026-06-30T08:45:41.1223189Z For more on this, please refer to https://docs.gradle.org/9.6.0/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+2026-06-30T08:45:41.1223762Z 
+2026-06-30T08:45:41.1223883Z BUILD SUCCESSFUL in 1m 12s
+2026-06-30T08:45:41.1224148Z 1 actionable task: 1 executed
+2026-06-30T08:45:41.1224783Z Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.6.0/userguide/configuration_cache_enabling.html

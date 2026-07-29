@@ -59,13 +59,13 @@ jobs:
     - name: Download Model Assets for Offline ASR
       run: |
         mkdir -p app/src/main/assets/tilawa_model
-        curl -L --retry 5 -o app/src/main/assets/tilawa_model/vocab.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json
+        curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt https://github.com/kh-saadany/mushaf-qiyam/releases/download/sherpa-model-v1.0/tokens.txt
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Downloading 88MB ONNX model for Full build..."
-          curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.onnx https://github.com/yazinsai/tilawa/releases/download/v0.2.0/fastconformer_full_mixed.onnx
+          echo "Downloading 125MB INT8 FastConformer Sherpa model for Full build..."
+          curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.int8.onnx https://github.com/kh-saadany/mushaf-qiyam/releases/download/sherpa-model-v1.0/model.int8.onnx
         else
-          echo "Lite build: Skipping ONNX model download for clean, compact APK build."
+          echo "Lite build: Skipping model.int8.onnx download for clean, compact APK build."
         fi
 
     - name: Decode Keystore
@@ -108,11 +108,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v4.6.1"
-        name: "مصحف القيام — V4.6.1 Lite"
+        tag: "v4.6.2"
+        name: "مصحف القيام — V4.6.2 Lite"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V4.6.1 Lite (ترقية محرك ONNX Runtime إلى 1.20.0)
-          ترقية خفيفة للمحرك الصوتي لمعالجة عقد ConvInteger وتحديث واجهة وسجل التشخيص.
+          ### مصحف القيام — V4.6.2 Lite (دمج محرك Sherpa-ONNX الرسمي)
+          الانتقال الكامل محرك Sherpa-ONNX ونموذج FastConformer INT8 المكمّم رسمياً.
 

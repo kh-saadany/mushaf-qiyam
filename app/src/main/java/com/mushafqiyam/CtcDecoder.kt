@@ -11,6 +11,11 @@ import java.io.InputStreamReader
  * CtcDecoder: Performs CTC Greedy Decoding for Tilawa ONNX FastConformer model.
  * Loads vocab.json (1025 tokens) with blank_id = 1024 and SentencePiece BPE decoding.
  */
+/**
+ * CtcDecoder: FROZEN LEGACY DECODER
+ * Pending final removal after Sherpa-ONNX acceptance verification test passes.
+ */
+@Deprecated("Use Sherpa-ONNX OfflineRecognizer native decoder instead.")
 class CtcDecoder(context: Context, vocabFileOrAssetPath: String) {
 
     companion object {

@@ -1,0 +1,32 @@
+﻿2026-06-30T08:44:06.2351339Z Current runner version: '2.335.1'
+2026-06-30T08:44:06.2384849Z ##[group]Runner Image Provisioner
+2026-06-30T08:44:06.2386216Z Hosted Compute Agent
+2026-06-30T08:44:06.2387338Z Version: 20260611.554
+2026-06-30T08:44:06.2388840Z Commit: 5e0782fdc9014723d3be820dd114dd31555c2bd1
+2026-06-30T08:44:06.2390085Z Build Date: 2026-06-11T21:40:46Z
+2026-06-30T08:44:06.2391429Z Worker ID: {ab4d9bb8-45d9-499e-8783-280d2a560c2b}
+2026-06-30T08:44:06.2392661Z Azure Region: eastus
+2026-06-30T08:44:06.2393709Z ##[endgroup]
+2026-06-30T08:44:06.2396043Z ##[group]Operating System
+2026-06-30T08:44:06.2397226Z Ubuntu
+2026-06-30T08:44:06.2398443Z 24.04.4
+2026-06-30T08:44:06.2399314Z LTS
+2026-06-30T08:44:06.2400359Z ##[endgroup]
+2026-06-30T08:44:06.2401343Z ##[group]Runner Image
+2026-06-30T08:44:06.2402414Z Image: ubuntu-24.04
+2026-06-30T08:44:06.2403444Z Version: 20260622.220.1
+2026-06-30T08:44:06.2405350Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260622.220/images/ubuntu/Ubuntu2404-Readme.md
+2026-06-30T08:44:06.2408618Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260622.220
+2026-06-30T08:44:06.2410476Z ##[endgroup]
+2026-06-30T08:44:06.2412315Z ##[group]GITHUB_TOKEN Permissions
+2026-06-30T08:44:06.2415164Z Contents: write
+2026-06-30T08:44:06.2416146Z Metadata: read
+2026-06-30T08:44:06.2417241Z ##[endgroup]
+2026-06-30T08:44:06.2420374Z Secret source: Actions
+2026-06-30T08:44:06.2421717Z Prepare workflow directory
+2026-06-30T08:44:06.2884037Z Prepare all required actions
+2026-06-30T08:44:06.2938653Z Getting action download info
+2026-06-30T08:44:06.4637255Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+2026-06-30T08:44:06.5424535Z Download action repository 'actions/setup-java@v4' (SHA:c1e323688fd81a25caa38c78aa6df2d33d3e20d9)
+2026-06-30T08:44:06.7752002Z Download action repository 'ncipollo/release-action@v1' (SHA:339a81892b84b4eeb0f6e744e4574d79d0d9b8dd)
+2026-06-30T08:44:07.0425603Z Complete job name: build

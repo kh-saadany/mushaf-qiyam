@@ -1,0 +1,73 @@
+﻿2026-06-30T08:44:07.1171369Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-06-30T08:44:07.1180183Z ##[group]Run actions/checkout@v4
+2026-06-30T08:44:07.1180937Z with:
+2026-06-30T08:44:07.1181398Z   repository: kh-saadany/mushaf-qiyam
+2026-06-30T08:44:07.1185567Z   token: ***
+2026-06-30T08:44:07.1186004Z   ssh-strict: true
+2026-06-30T08:44:07.1186693Z   ssh-user: git
+2026-06-30T08:44:07.1187255Z   persist-credentials: true
+2026-06-30T08:44:07.1188395Z   clean: true
+2026-06-30T08:44:07.1189028Z   sparse-checkout-cone-mode: true
+2026-06-30T08:44:07.1189667Z   fetch-depth: 1
+2026-06-30T08:44:07.1190293Z   fetch-tags: false
+2026-06-30T08:44:07.1190852Z   show-progress: true
+2026-06-30T08:44:07.1191435Z   lfs: false
+2026-06-30T08:44:07.1191999Z   submodules: false
+2026-06-30T08:44:07.1192737Z   set-safe-directory: true
+2026-06-30T08:44:07.1193680Z ##[endgroup]
+2026-06-30T08:44:07.2225376Z Syncing repository: kh-saadany/mushaf-qiyam
+2026-06-30T08:44:07.2228801Z ##[group]Getting Git version info
+2026-06-30T08:44:07.2230508Z Working directory is '/home/runner/work/mushaf-qiyam/mushaf-qiyam'
+2026-06-30T08:44:07.2232792Z [command]/usr/bin/git version
+2026-06-30T08:44:07.2283096Z git version 2.54.0
+2026-06-30T08:44:07.2307031Z ##[endgroup]
+2026-06-30T08:44:07.2319582Z Temporarily overriding HOME='/home/runner/work/_temp/7992e8fe-e7a0-4ab6-9acc-2c061096dd53' before making global git config changes
+2026-06-30T08:44:07.2322873Z Adding repository directory to the temporary git global config as a safe directory
+2026-06-30T08:44:07.2325836Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/mushaf-qiyam/mushaf-qiyam
+2026-06-30T08:44:07.2378465Z Deleting the contents of '/home/runner/work/mushaf-qiyam/mushaf-qiyam'
+2026-06-30T08:44:07.2382369Z ##[group]Initializing the repository
+2026-06-30T08:44:07.2388963Z [command]/usr/bin/git init /home/runner/work/mushaf-qiyam/mushaf-qiyam
+2026-06-30T08:44:07.2500141Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-06-30T08:44:07.2501557Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-06-30T08:44:07.2502839Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-06-30T08:44:07.2503777Z hint: call:
+2026-06-30T08:44:07.2504485Z hint:
+2026-06-30T08:44:07.2505259Z hint: 	git config --global init.defaultBranch <name>
+2026-06-30T08:44:07.2506051Z hint:
+2026-06-30T08:44:07.2506951Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-06-30T08:44:07.2508739Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-06-30T08:44:07.2509848Z hint:
+2026-06-30T08:44:07.2510463Z hint: 	git branch -m <name>
+2026-06-30T08:44:07.2511099Z hint:
+2026-06-30T08:44:07.2511845Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-06-30T08:44:07.2519714Z Initialized empty Git repository in /home/runner/work/mushaf-qiyam/mushaf-qiyam/.git/
+2026-06-30T08:44:07.2529216Z [command]/usr/bin/git remote add origin https://github.com/kh-saadany/mushaf-qiyam
+2026-06-30T08:44:07.2580644Z ##[endgroup]
+2026-06-30T08:44:07.2582952Z ##[group]Disabling automatic garbage collection
+2026-06-30T08:44:07.2584960Z [command]/usr/bin/git config --local gc.auto 0
+2026-06-30T08:44:07.2614405Z ##[endgroup]
+2026-06-30T08:44:07.2616497Z ##[group]Setting up auth
+2026-06-30T08:44:07.2622157Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-06-30T08:44:07.2659557Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-06-30T08:44:07.3038150Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-06-30T08:44:07.3068169Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-06-30T08:44:07.3278909Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-06-30T08:44:07.3309983Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-06-30T08:44:07.3537038Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-06-30T08:44:07.3570260Z ##[endgroup]
+2026-06-30T08:44:07.3578336Z ##[group]Fetching the repository
+2026-06-30T08:44:07.3579899Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +e2c15a6c3a72ae9f794bb2316e5e08d3907efb79:refs/remotes/origin/main
+2026-06-30T08:44:08.9863580Z From https://github.com/kh-saadany/mushaf-qiyam
+2026-06-30T08:44:08.9865259Z  * [new ref]         e2c15a6c3a72ae9f794bb2316e5e08d3907efb79 -> origin/main
+2026-06-30T08:44:08.9898742Z ##[endgroup]
+2026-06-30T08:44:08.9968967Z ##[group]Determining the checkout info
+2026-06-30T08:44:08.9970865Z ##[endgroup]
+2026-06-30T08:44:08.9971755Z [command]/usr/bin/git sparse-checkout disable
+2026-06-30T08:44:08.9973337Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-06-30T08:44:08.9980747Z ##[group]Checking out the ref
+2026-06-30T08:44:08.9983774Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-06-30T08:44:09.4245371Z Switched to a new branch 'main'
+2026-06-30T08:44:09.4247187Z branch 'main' set up to track 'origin/main'.
+2026-06-30T08:44:09.4284623Z ##[endgroup]
+2026-06-30T08:44:09.4336783Z [command]/usr/bin/git log -1 --format=%H
+2026-06-30T08:44:09.4361483Z e2c15a6c3a72ae9f794bb2316e5e08d3907efb79

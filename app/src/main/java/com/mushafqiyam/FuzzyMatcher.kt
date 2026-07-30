@@ -38,32 +38,46 @@ object FuzzyMatcher {
 
     /**
      * Compares recognized streaming text against candidate verses
-     * constrained by current active verse index for forward sequential Quran tracking.
+     * in range [-1 to +3] relative to currentIndex using adaptive threshold rules:
+     * - Current verse (0) and Next verse (+1): threshold = 0.45 (45%)
+     * - Second next verse (+2): threshold = 0.55 (55%)
+     * - Third next verse (+3): threshold = 0.60 (60%)
+     * - Previous verse (-1): threshold = 0.60 (60%)
      */
     fun matchVerse(
         recognizedText: String,
         candidateVerses: List<String>,
-        currentIndex: Int = -1,
-        threshold: Double = 0.50
+        currentIndex: Int = -1
     ): MatchResult? {
         val cleanRec = normalizeArabic(recognizedText)
-        // Ignore single/two letter noise outputs like "ش", "ت", "ص"
         if (cleanRec.length < 3) return null
 
         var bestMatch: MatchResult? = null
         var maxSim = 0.0
 
-        // Determine search range: If we have an active verse, look at current + next 3 verses.
-        // Otherwise (start of recitation), look across the first 4 verses.
-        val startIndex = if (currentIndex >= 0) maxOf(0, currentIndex) else 0
+        // Search range: [-1, +3] relative to currentIndex
+        val startIndex = if (currentIndex >= 0) maxOf(0, currentIndex - 1) else 0
         val endIndex = if (currentIndex >= 0) minOf(candidateVerses.size - 1, currentIndex + 3) else minOf(candidateVerses.size - 1, 3)
+
+        val baseIndex = if (currentIndex >= 0) currentIndex else 0
 
         for (index in startIndex..endIndex) {
             val verse = candidateVerses[index]
             val cleanVerse = normalizeArabic(verse)
             if (cleanVerse.isNotBlank()) {
                 val sim = calculateSimilarity(cleanRec, cleanVerse)
-                if (sim > maxSim && sim >= threshold) {
+                
+                // Adaptive threshold determination based on distance relative to baseIndex
+                val requiredThreshold = when (index - baseIndex) {
+                    -1 -> 0.60   // Previous verse: 60%
+                    0 -> 0.45    // Current verse: 45%
+                    1 -> 0.45    // Next verse: 45%
+                    2 -> 0.55    // Second next verse: 55%
+                    3 -> 0.60    // Third next verse: 60%
+                    else -> 0.60
+                }
+
+                if (sim > maxSim && sim >= requiredThreshold) {
                     maxSim = sim
                     bestMatch = MatchResult(
                         verseIndex = index,

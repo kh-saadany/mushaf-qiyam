@@ -147,10 +147,18 @@ class AudioRecognizer(private val context: Context) {
                             // Skip silent / low-energy background noise chunks to avoid ASR hallucinations
                             val isSpeechPresent = level > 0.12f
 
-                            // Process 1.5s audio chunk for live CTC inference ONLY if speech is present
-                            if (audioWindow.size >= SAMPLE_RATE * 3 / 2) {
+                            // Sliding Audio Window (1.8s window with 0.5s overlap)
+                            // Retains tail context so long Quranic recitation words and extended vowels (Madd) are never truncated.
+                            val targetWindowSize = SAMPLE_RATE * 9 / 5 // 1.8 seconds
+                            val overlapSize = SAMPLE_RATE / 2          // 0.5 seconds overlap
+
+                            if (audioWindow.size >= targetWindowSize) {
                                 val chunk = audioWindow.toFloatArray()
+                                
+                                // Retain overlap tail for continuous word context
+                                val tail = audioWindow.takeLast(overlapSize)
                                 audioWindow.clear()
+                                audioWindow.addAll(tail)
 
                                 if (isSpeechPresent) {
                                     runInference(chunk)

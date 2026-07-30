@@ -86,26 +86,33 @@ class AudioRecognizer(private val context: Context) {
 
                 // Initialize official Silero VAD
                 val vadModelPath = resolveFilePath(modelDirInAssets, "silero_vad.onnx")
+                AppLogger.i(TAG, "Resolving Silero VAD at path: $vadModelPath")
                 if (vadModelPath != null && File(vadModelPath).exists()) {
-                    val sileroConfig = SileroVadModelConfig(
-                        model = vadModelPath,
-                        threshold = 0.5f,
-                        minSilenceDuration = 0.5f,
-                        minSpeechDuration = 0.25f,
-                        windowSize = 512,
-                        maxSpeechDuration = 10.0f
-                    )
-                    val vadConfig = VadModelConfig(
-                        sileroVadModelConfig = sileroConfig,
-                        sampleRate = SAMPLE_RATE,
-                        numThreads = 1,
-                        provider = "cpu",
-                        debug = false
-                    )
-                    vad = Vad(null, vadConfig)
-                    AppLogger.i(TAG, "Official Silero VAD initialized successfully")
+                    try {
+                        val sileroConfig = SileroVadModelConfig(
+                            model = vadModelPath,
+                            threshold = 0.5f,
+                            minSilenceDuration = 0.5f,
+                            minSpeechDuration = 0.25f,
+                            windowSize = 512,
+                            maxSpeechDuration = 10.0f
+                        )
+                        val vadConfig = VadModelConfig(
+                            sileroVadModelConfig = sileroConfig,
+                            sampleRate = SAMPLE_RATE,
+                            numThreads = 1,
+                            provider = "cpu",
+                            debug = false
+                        )
+                        vad = Vad(null, vadConfig)
+                        AppLogger.i(TAG, "Official Silero VAD initialized successfully from $vadModelPath")
+                    } catch (t: Throwable) {
+                        AppLogger.e(TAG, "Silero VAD initialization error", t)
+                        vad = null
+                    }
                 } else {
-                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved")
+                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved in assets")
+                    vad = null
                 }
                 true
             } else {
@@ -171,7 +178,7 @@ class AudioRecognizer(private val context: Context) {
                             val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
                             onAudioLevel?.invoke(level)
 
-                            // Feed audio directly into Silero VAD
+                            // Feed audio into Silero VAD if available, or fall back to Energy VAD
                             val v = vad
                             if (v != null) {
                                 v.acceptWaveform(floatSamples)
@@ -185,7 +192,10 @@ class AudioRecognizer(private val context: Context) {
                                     }
                                 }
                             } else {
-                                AppLogger.w(TAG, "VAD instance null, falling back")
+                                // Fallback Energy VAD when Silero VAD is initializing
+                                if (level > 0.12f) {
+                                    runInference(floatSamples)
+                                }
                             }
                         }
                     } catch (t: Throwable) {

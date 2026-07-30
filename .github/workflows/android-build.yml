@@ -119,11 +119,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.1.0"
-        name: "مصحف القيام — V5.1.0"
+        tag: "v5.1.1"
+        name: "مصحف القيام — V5.1.1"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.1.0 (Silero VAD المدمج والتصويت الزمني Hysteresis)
-          استبدال كشف الصمت RMS بـ Silero VAD الرسمي المدمج، إضافة شرط الكلمتين المشتركتين والتأكيد المتتالي لنقطتين لمنع الهلوسات والتراجع الخاطئ.
+          ### مصحف القيام — V5.1.1 (إصلاح تهيئة Silero VAD التلقائي)
+          إصلاح نقل ملف silero_vad.onnx إلى ذاكرة الهاتف المحلية وتفعيل كشف الصوت اللحظي التلقائي.
 

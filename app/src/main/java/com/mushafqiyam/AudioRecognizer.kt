@@ -207,7 +207,7 @@ class AudioRecognizer(private val context: Context) {
                             val v = vad
                             if (v != null) {
                                 v.acceptWaveform(floatSamples)
-                                while (v.isSpeechDetected()) {
+                                while (!v.empty()) {
                                     val segment = v.front()
                                     v.pop()
                                     val speechSamples = segment.samples

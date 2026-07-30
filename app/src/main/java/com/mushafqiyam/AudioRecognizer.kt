@@ -107,7 +107,8 @@ class AudioRecognizer(private val context: Context) {
                 AppLogger.i(TAG, "Sherpa-ONNX engine initialized successfully")
 
                 // Initialize official Silero VAD from res/raw resource directly
-                val vadModelPath = resolveRawResource(R.raw.silero_vad, "silero_vad.onnx")
+                val rawResId = context.resources.getIdentifier("silero_vad", "raw", context.packageName)
+                val vadModelPath = if (rawResId != 0) resolveRawResource(rawResId, "silero_vad.onnx") else null
                     ?: resolveFilePath(modelDirInAssets, "silero_vad.onnx")
 
                 AppLogger.i(TAG, "Resolving Silero VAD at path: $vadModelPath")

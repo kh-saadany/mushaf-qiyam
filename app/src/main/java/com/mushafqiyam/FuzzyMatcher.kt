@@ -12,28 +12,47 @@ object FuzzyMatcher {
     )
 
     /**
-     * Comprehensive Arabic normalization:
-     * Removes Tashkeel, normalizes Alef forms, Taa Marbouta, Yaa/Maqsoora, and punctuation.
+     * Expands Quranic disjointed letters (الحروف المقطعة) into their spoken phonetic word forms.
+     * e.g., "الم" -> "الف لام ميم", "الر" -> "الف لام را", "حم" -> "حا ميم"
+     */
+    fun expandMuqattaat(text: String): String {
+        if (text.isBlank()) return text
+        var result = text
+        result = result.replace(Regex("(?U)\\bالم\\b"), "الف لام ميم")
+        result = result.replace(Regex("(?U)\\bالمص\\b"), "الف لام ميم صاد")
+        result = result.replace(Regex("(?U)\\bالر\\b"), "الف لام را")
+        result = result.replace(Regex("(?U)\\bالمر\\b"), "الف لام ميم را")
+        result = result.replace(Regex("(?U)\\bكهيعص\\b"), "كاف ها يا عين صاد")
+        result = result.replace(Regex("(?U)\\bطه\\b"), "طا ها")
+        result = result.replace(Regex("(?U)\\bطسم\\b"), "طا سين ميم")
+        result = result.replace(Regex("(?U)\\bطس\\b"), "طا سين")
+        result = result.replace(Regex("(?U)\\bيس\\b"), "يا سين")
+        result = result.replace(Regex("(?U)\\bص\\b"), "صاد")
+        result = result.replace(Regex("(?U)\\bحم\\b"), "حا ميم")
+        result = result.replace(Regex("(?U)\\bعسق\\b"), "عين سين قاف")
+        result = result.replace(Regex("(?U)\\bق\\b"), "قاف")
+        result = result.replace(Regex("(?U)\\bن\\b"), "نون")
+        return result
+    }
+
+    /**
+     * Normalizes Arabic text for flexible matching:
+     * - Removes Tashkeel (diacritics)
+     * - Expands Quranic disjointed letters (الم -> الف لام ميم)
+     * - Normalizes Alef forms (أ, إ, آ -> ا)
+     * - Normalizes Taa Marbouta (ة -> ه) and Alef Maqsura (ى -> ي)
      */
     fun normalizeArabic(text: String): String {
         if (text.isBlank()) return ""
-        
-        var normalized = text
-            // Remove Tashkeel / Diacritics
-            .replace(Regex("[\\u0617-\\u061A\\u064B-\\u0652]"), "")
-            // Normalize Alef forms
+        val withoutDiacritics = text.replace(Regex("[\\u0617-\\u061A\\u064B-\\u0652]"), "")
+        val expanded = expandMuqattaat(withoutDiacritics)
+        return expanded
             .replace(Regex("[إأآٱ]"), "ا")
-            // Normalize Taa Marbouta to Haa
-            .replace("ة", "ه")
-            // Normalize Alef Maqsoora to Yaa
-            .replace("ى", "ي")
-            // Remove non-Arabic punctuation / symbols
+            .replace('ة', 'ه')
+            .replace('ى', 'ي')
             .replace(Regex("[^\\u0600-\\u06FF\\s]"), "")
-            // Normalize multiple whitespaces
             .replace(Regex("\\s+"), " ")
             .trim()
-
-        return normalized
     }
 
     /**

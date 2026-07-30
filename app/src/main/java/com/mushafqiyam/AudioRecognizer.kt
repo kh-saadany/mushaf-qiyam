@@ -234,24 +234,22 @@ class AudioRecognizer(private val context: Context) {
 
                             if (isSpeech) {
                                 speechDurationFrames++
-                                // 3. Min Speech Duration Gate (400ms = 12 frames of 32ms) to filter out short breaths/clicks
-                                if (speechDurationFrames >= 12) {
-                                    for (s in floatSamples) {
-                                        if (bufferWritePos < maxBufferSamples) {
-                                            slidingBuffer[bufferWritePos++] = s
-                                        } else {
-                                            System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
-                                            slidingBuffer[maxBufferSamples - 1] = s
-                                        }
+                                // Always accumulate floatSamples into slidingBuffer starting from frame 1 (Zero Truncation!)
+                                for (s in floatSamples) {
+                                    if (bufferWritePos < maxBufferSamples) {
+                                        slidingBuffer[bufferWritePos++] = s
+                                    } else {
+                                        System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
+                                        slidingBuffer[maxBufferSamples - 1] = s
                                     }
-                                    samplesSinceInference += readSamples
+                                }
+                                samplesSinceInference += readSamples
 
-                                    // Trigger ASR inference every 0.5s hop once minimum context is available
-                                    if (samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
-                                        samplesSinceInference = 0
-                                        val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
-                                        runInference(windowToRecognize)
-                                    }
+                                // Trigger ASR inference once speech duration reaches at least ~320ms (10 frames) and hop size is met
+                                if (speechDurationFrames >= 10 && samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
+                                    samplesSinceInference = 0
+                                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
+                                    runInference(windowToRecognize)
                                 }
                             } else {
                                 // Silence / breath ended: reset speech duration and sliding buffer

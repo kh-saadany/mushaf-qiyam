@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.1.7"
+        const val APP_VERSION = "5.1.8"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -149,7 +149,15 @@ fun MainAppScreen(
                         pendingCandidateIndex = -1
                         confirmCount = 0
                         matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
+                    } else if (match.verseIndex == activeVerseIndex + 1) {
+                        // Single-Shot immediate confirmation for natural next verse
+                        activeVerseIndex = match.verseIndex
+                        pendingCandidateIndex = -1
+                        confirmCount = 0
+                        matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (فورية - نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
+                        AppLogger.i("VerseMatch", "Confirmed next verse [${match.verseIndex + 1}]: ${match.verseText}")
                     } else if (match.verseIndex == pendingCandidateIndex) {
+                        // Forward skips (+2 or +3) or backward jumps require 2 consecutive matches
                         confirmCount++
                         if (confirmCount >= 2 || match.similarity >= 0.85) {
                             activeVerseIndex = match.verseIndex

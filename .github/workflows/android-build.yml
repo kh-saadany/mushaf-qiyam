@@ -119,11 +119,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.1.1"
-        name: "مصحف القيام — V5.1.1"
+        tag: "v5.1.2"
+        name: "مصحف القيام — V5.1.2"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.1.1 (إصلاح تهيئة Silero VAD التلقائي)
-          إصلاح نقل ملف silero_vad.onnx إلى ذاكرة الهاتف المحلية وتفعيل كشف الصوت اللحظي التلقائي.
+          ### مصحف القيام — V5.1.2 (دمج Silero VAD في الموارد الثنائية res/raw)
+          تدمج ملف silero_vad.onnx في الموارد الثنائية الصريحة للـ APK لمنع تجنب النسخ وتفعيل Silero VAD تلقائياً 100%.
 

@@ -62,6 +62,28 @@ class AudioRecognizer(private val context: Context) {
         }
     }
 
+    private fun resolveRawResource(rawResId: Int, fileName: String): String? {
+        val internalFile = File(context.filesDir, "tilawa_model/$fileName")
+        if (internalFile.exists() && internalFile.length() > 0) {
+            AppLogger.i(TAG, "Found existing $fileName in storage: ${internalFile.absolutePath}")
+            return internalFile.absolutePath
+        }
+
+        return try {
+            internalFile.parentFile?.mkdirs()
+            context.resources.openRawResource(rawResId).use { input ->
+                FileOutputStream(internalFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            AppLogger.i(TAG, "Copied $fileName from res/raw to ${internalFile.absolutePath}")
+            internalFile.absolutePath
+        } catch (t: Throwable) {
+            AppLogger.w(TAG, "Could not resolve raw resource $fileName: ${t.localizedMessage}")
+            null
+        }
+    }
+
     /**
      * Initializes sherpa-onnx OfflineRecognizer engine safely.
      */
@@ -84,8 +106,10 @@ class AudioRecognizer(private val context: Context) {
                 recognizer = OfflineRecognizer(null, config)
                 AppLogger.i(TAG, "Sherpa-ONNX engine initialized successfully")
 
-                // Initialize official Silero VAD
-                val vadModelPath = resolveFilePath(modelDirInAssets, "silero_vad.onnx")
+                // Initialize official Silero VAD from res/raw resource directly
+                val vadModelPath = resolveRawResource(R.raw.silero_vad, "silero_vad.onnx")
+                    ?: resolveFilePath(modelDirInAssets, "silero_vad.onnx")
+
                 AppLogger.i(TAG, "Resolving Silero VAD at path: $vadModelPath")
                 if (vadModelPath != null && File(vadModelPath).exists()) {
                     try {
@@ -111,7 +135,7 @@ class AudioRecognizer(private val context: Context) {
                         vad = null
                     }
                 } else {
-                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved in assets")
+                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved in raw resources")
                     vad = null
                 }
                 true

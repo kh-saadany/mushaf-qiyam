@@ -119,11 +119,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.1.2"
-        name: "مصحف القيام — V5.1.2"
+        tag: "v5.1.3"
+        name: "مصحف القيام — V5.1.3"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.1.2 (دمج Silero VAD في الموارد الثنائية res/raw)
-          تدمج ملف silero_vad.onnx في الموارد الثنائية الصريحة للـ APK لمنع تجنب النسخ وتفعيل Silero VAD تلقائياً 100%.
+          ### مصحف القيام — V5.1.3 (تضمين Silero VAD فعلياً في الحزمة)
+          تحديث يُصلح مشكلة التجاهل في Git (`.gitignore`) والتي أدت لعدم تضمين ملف `silero_vad.onnx` في حزم Lite السابقة بالرغم من تعديل الكود. الآن تم دمج الملف فعلياً ليعمل كاشف الصوت اللحظي بنسبة 100%.
 

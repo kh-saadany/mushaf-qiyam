@@ -32,3 +32,5 @@ assets/*.onnx
 scratch/node_modules/
 scratch/package-lock.json
 node_modules/
+!app/src/main/res/raw/silero_vad.onnx  
+ 

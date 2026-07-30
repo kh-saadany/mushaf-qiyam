@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.1.6"
+        const val APP_VERSION = "5.1.7"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -124,36 +124,65 @@ fun MainAppScreen(
     var matchSimilarityText by remember { mutableStateOf("") }
 
     var pendingCandidateIndex by remember { mutableIntStateOf(-1) }
-    var pendingGraceCount by remember { mutableIntStateOf(0) }
+    var confirmCount by remember { mutableIntStateOf(0) }
+    var graceEmptyFrames by remember { mutableIntStateOf(0) }
+    var graceMismatchFrames by remember { mutableIntStateOf(0) }
 
     audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
-    audioRecognizer?.onPartialResult = { text ->
-        if (text.isNotBlank()) {
-            recognizedText = if (recognizedText.isEmpty()) text else "$recognizedText $text"
-            
-            // Perform live fuzzy matching against Quran verses constrained by current active verse
-            val match = FuzzyMatcher.matchVerse(text, sampleVerses, currentIndex = activeVerseIndex)
-            if (match != null) {
-                if (match.verseIndex == activeVerseIndex) {
-                    pendingCandidateIndex = -1
-                    pendingGraceCount = 0
-                    matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
-                } else if (match.verseIndex == pendingCandidateIndex) {
-                    activeVerseIndex = match.verseIndex
-                    pendingCandidateIndex = -1
-                    pendingGraceCount = 0
-                    matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (مؤكدة - نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
-                    AppLogger.i("VerseMatch", "Confirmed matched verse [${match.verseIndex + 1}]: ${match.verseText}")
+    audioRecognizer?.onPartialResult = { rawText ->
+        if (rawText.isNotBlank()) {
+            // Build dynamic Quran vocabulary filter for current search window [activeVerseIndex - 1, activeVerseIndex + 3]
+            val allowedWords = QuranVocabularyFilter.buildAllowedWordsSet(sampleVerses, activeVerseIndex)
+            val filteredText = QuranVocabularyFilter.filterText(rawText, allowedWords)
+
+            if (filteredText.isNotBlank()) {
+                recognizedText = if (recognizedText.isEmpty()) filteredText else "$recognizedText $filteredText"
+                AppLogger.i("ASRFilter", "Filtered Quranic text: $filteredText (Raw was: $rawText)")
+
+                // Perform live fuzzy matching against candidate verses
+                val match = FuzzyMatcher.matchVerse(filteredText, sampleVerses, currentIndex = activeVerseIndex)
+                if (match != null) {
+                    graceEmptyFrames = 0
+                    graceMismatchFrames = 0
+
+                    if (match.verseIndex == activeVerseIndex) {
+                        pendingCandidateIndex = -1
+                        confirmCount = 0
+                        matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
+                    } else if (match.verseIndex == pendingCandidateIndex) {
+                        confirmCount++
+                        if (confirmCount >= 2 || match.similarity >= 0.85) {
+                            activeVerseIndex = match.verseIndex
+                            pendingCandidateIndex = -1
+                            confirmCount = 0
+                            matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (مؤكدة - نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
+                            AppLogger.i("VerseMatch", "Confirmed matched verse [${match.verseIndex + 1}]: ${match.verseText}")
+                        } else {
+                            matchSimilarityText = "⏳ مرشح الآية ${(match.verseIndex + 1)} (في انتظار تأكيد ثاني)"
+                        }
+                    } else {
+                        pendingCandidateIndex = match.verseIndex
+                        confirmCount = 1
+                        AppLogger.i("VerseMatch", "Pending candidate verse [${match.verseIndex + 1}] awaiting 2nd match confirmation.")
+                    }
                 } else {
-                    pendingCandidateIndex = match.verseIndex
-                    pendingGraceCount = 3
-                    AppLogger.i("VerseMatch", "Pending candidate verse [${match.verseIndex + 1}] awaiting 2nd match confirmation.")
+                    // Frame had Quran words but didn't match target candidates
+                    graceMismatchFrames++
+                    if (graceMismatchFrames >= 3) {
+                        pendingCandidateIndex = -1
+                        confirmCount = 0
+                        graceMismatchFrames = 0
+                    }
                 }
             } else {
-                if (pendingGraceCount > 0) {
-                    pendingGraceCount--
-                } else {
+                // Immunized Hysteresis: Non-Quranic noise / breath filtered out.
+                // Do NOT wipe candidate immediately! Allow up to 7 empty frames (~3.5s) of grace period.
+                graceEmptyFrames++
+                if (graceEmptyFrames >= 7) {
                     pendingCandidateIndex = -1
+                    confirmCount = 0
+                    graceEmptyFrames = 0
+                    AppLogger.i("VerseMatch", "Pending candidate expired after 7 empty frames")
                 }
             }
         }

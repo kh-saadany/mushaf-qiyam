@@ -192,7 +192,9 @@ class AudioRecognizer(private val context: Context) {
                 var bufferWritePos = 0
                 var samplesSinceInference = 0
 
-                AppLogger.i(TAG, "Audio capture thread running with Silero VAD + Sliding Window (1.8s)")
+                var speechDurationFrames = 0
+
+                AppLogger.i(TAG, "Audio capture thread running with RMS Gate + Silero VAD (400ms Min Speech) + Sliding Window (1.8s)")
 
                 while (isRecording.get()) {
                     try {
@@ -205,11 +207,19 @@ class AudioRecognizer(private val context: Context) {
                                 floatSamples[i] = floatSample
                                 sum += (buffer[i].toDouble() * buffer[i].toDouble())
                             }
-                            val rms = Math.sqrt(sum / readSamples) / 32768.0
+                            val rms = Math.sqrt(sum / readSamples).toFloat()
                             val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
                             onAudioLevel?.invoke(level)
 
-                            // Silero VAD neural Gatekeeper check
+                            // 1. RMS Energy Gate: Ignore silent / background mic noise frames completely
+                            if (rms < 0.015f) {
+                                speechDurationFrames = 0
+                                bufferWritePos = 0
+                                samplesSinceInference = 0
+                                continue
+                            }
+
+                            // 2. Silero VAD neural Gatekeeper check
                             val v = vad
                             val isSpeech = if (v != null) {
                                 v.acceptWaveform(floatSamples)
@@ -223,24 +233,29 @@ class AudioRecognizer(private val context: Context) {
                             }
 
                             if (isSpeech) {
-                                for (s in floatSamples) {
-                                    if (bufferWritePos < maxBufferSamples) {
-                                        slidingBuffer[bufferWritePos++] = s
-                                    } else {
-                                        System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
-                                        slidingBuffer[maxBufferSamples - 1] = s
+                                speechDurationFrames++
+                                // 3. Min Speech Duration Gate (400ms = 12 frames of 32ms) to filter out short breaths/clicks
+                                if (speechDurationFrames >= 12) {
+                                    for (s in floatSamples) {
+                                        if (bufferWritePos < maxBufferSamples) {
+                                            slidingBuffer[bufferWritePos++] = s
+                                        } else {
+                                            System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
+                                            slidingBuffer[maxBufferSamples - 1] = s
+                                        }
+                                    }
+                                    samplesSinceInference += readSamples
+
+                                    // Trigger ASR inference every 0.5s hop once minimum context is available
+                                    if (samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
+                                        samplesSinceInference = 0
+                                        val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
+                                        runInference(windowToRecognize)
                                     }
                                 }
-                                samplesSinceInference += readSamples
-
-                                // Trigger ASR inference every 0.5s hop once minimum context is available
-                                if (samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
-                                    samplesSinceInference = 0
-                                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
-                                    runInference(windowToRecognize)
-                                }
                             } else {
-                                // Silence detected: clear sliding buffer to avoid stale audio processing
+                                // Silence / breath ended: reset speech duration and sliding buffer
+                                speechDurationFrames = 0
                                 bufferWritePos = 0
                                 samplesSinceInference = 0
                             }

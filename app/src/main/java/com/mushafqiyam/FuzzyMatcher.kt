@@ -139,10 +139,12 @@ object FuzzyMatcher {
         return fullSim
     }
 
+    fun wordSimilarity(s1: String, s2: String): Double = normalizedLevenshtein(s1, s2)
+
     /**
      * Calculates Levenshtein distance and normalizes it to a 0.0-1.0 similarity score.
      */
-    private fun normalizedLevenshtein(s1: String, s2: String): Double {
+    fun normalizedLevenshtein(s1: String, s2: String): Double {
         val maxLen = max(s1.length, s2.length)
         if (maxLen == 0) return 1.0
         val dist = levenshteinDistance(s1, s2)

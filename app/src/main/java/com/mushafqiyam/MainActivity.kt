@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.1.5"
+        const val APP_VERSION = "5.1.6"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -124,6 +124,7 @@ fun MainAppScreen(
     var matchSimilarityText by remember { mutableStateOf("") }
 
     var pendingCandidateIndex by remember { mutableIntStateOf(-1) }
+    var pendingGraceCount by remember { mutableIntStateOf(0) }
 
     audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
     audioRecognizer?.onPartialResult = { text ->
@@ -133,21 +134,27 @@ fun MainAppScreen(
             // Perform live fuzzy matching against Quran verses constrained by current active verse
             val match = FuzzyMatcher.matchVerse(text, sampleVerses, currentIndex = activeVerseIndex)
             if (match != null) {
-                // Hysteresis Voting: Requires 2 consecutive matching recognitions on the same verse candidate
                 if (match.verseIndex == activeVerseIndex) {
                     pendingCandidateIndex = -1
+                    pendingGraceCount = 0
                     matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
                 } else if (match.verseIndex == pendingCandidateIndex) {
                     activeVerseIndex = match.verseIndex
                     pendingCandidateIndex = -1
+                    pendingGraceCount = 0
                     matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (مؤكدة - نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
                     AppLogger.i("VerseMatch", "Confirmed matched verse [${match.verseIndex + 1}]: ${match.verseText}")
                 } else {
                     pendingCandidateIndex = match.verseIndex
-                    AppLogger.i("VerseMatch", "Pending candidate verse [${match.verseIndex + 1}] awaiting 2nd consecutive match confirmation.")
+                    pendingGraceCount = 3
+                    AppLogger.i("VerseMatch", "Pending candidate verse [${match.verseIndex + 1}] awaiting 2nd match confirmation.")
                 }
             } else {
-                pendingCandidateIndex = -1
+                if (pendingGraceCount > 0) {
+                    pendingGraceCount--
+                } else {
+                    pendingCandidateIndex = -1
+                }
             }
         }
     }

@@ -68,17 +68,22 @@ object FuzzyMatcher {
                 val recWords = cleanRec.split(" ").filter { it.isNotBlank() }
                 val verseWords = cleanVerse.split(" ").filter { it.isNotBlank() }
 
-                // Check shared words count (Minimum 2 shared normalized words required, or 1 if verse has only 1 word)
-                val sharedWordsCount = recWords.count { verseWords.contains(it) }
+                // Check shared words count with Levenshtein fuzzy word matching (e.g. ملك vs مالك)
+                val sharedWordsCount = recWords.count { rw ->
+                    verseWords.any { vw -> rw == vw || normalizedLevenshtein(rw, vw) >= 0.70 }
+                }
                 val isWordCountValid = if (verseWords.size <= 1) {
                     sharedWordsCount >= 1
                 } else {
-                    sharedWordsCount >= 2
+                    sharedWordsCount >= 2 || (recWords.size >= 2 && sharedWordsCount >= 1)
                 }
 
                 if (isWordCountValid) {
-                    val sim = calculateSimilarity(cleanRec, cleanVerse)
+                    val baseSim = calculateSimilarity(cleanRec, cleanVerse)
                     
+                    // Apply Forward-Bias Bonus (+0.12) to favor forward progression over backward jumps
+                    val effectiveSim = if (index > baseIndex) baseSim + 0.12 else baseSim
+
                     // Adaptive threshold determination based on distance relative to baseIndex
                     val requiredThreshold = when (index - baseIndex) {
                         -1 -> 0.60   // Previous verse: 60%
@@ -89,12 +94,12 @@ object FuzzyMatcher {
                         else -> 0.60
                     }
 
-                    if (sim > maxSim && sim >= requiredThreshold) {
-                        maxSim = sim
+                    if (effectiveSim > maxSim && baseSim >= (requiredThreshold - 0.05)) {
+                        maxSim = effectiveSim
                         bestMatch = MatchResult(
                             verseIndex = index,
                             verseText = verse,
-                            similarity = sim,
+                            similarity = baseSim,
                             matchedSegment = cleanRec
                         )
                     }

@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.0.0"
+        const val APP_VERSION = "5.0.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null

@@ -1,0 +1,27 @@
+﻿2026-07-30T09:12:41.7253151Z ##[group]Run COMMIT_MSG=$(git log -1 --pretty=%B)
+2026-07-30T09:12:41.7253583Z [36;1mCOMMIT_MSG=$(git log -1 --pretty=%B)[0m
+2026-07-30T09:12:41.7253917Z [36;1mif [[ "$COMMIT_MSG" == *"[full]"* ]]; then[0m
+2026-07-30T09:12:41.7254249Z [36;1m  echo "Packaging Full Release APK..."[0m
+2026-07-30T09:12:41.7254848Z [36;1m  mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk[0m
+2026-07-30T09:12:41.7255413Z [36;1melse[0m
+2026-07-30T09:12:41.7255655Z [36;1m  echo "Packaging Lite Release APK..."[0m
+2026-07-30T09:12:41.7256514Z [36;1m  mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-lite.apk[0m
+2026-07-30T09:12:41.7257119Z [36;1mfi[0m
+2026-07-30T09:12:41.7257314Z [36;1m[0m
+2026-07-30T09:12:41.7257613Z [36;1mTARGET_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)[0m
+2026-07-30T09:12:41.7258017Z [36;1mif [ -f "app/keystore.jks" ]; then[0m
+2026-07-30T09:12:41.7258432Z [36;1m  $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks app/keystore.jks \[0m
+2026-07-30T09:12:41.7258898Z [36;1m    --ks-key-alias "$KEY_ALIAS" \[0m
+2026-07-30T09:12:41.7259222Z [36;1m    --ks-pass pass:"$KEYSTORE_PASSWORD" \[0m
+2026-07-30T09:12:41.7259556Z [36;1m    --key-pass pass:"$KEY_PASSWORD" \[0m
+2026-07-30T09:12:41.7259846Z [36;1m    "$TARGET_APK"[0m
+2026-07-30T09:12:41.7260077Z [36;1mfi[0m
+2026-07-30T09:12:41.7304184Z shell: /usr/bin/bash -e {0}
+2026-07-30T09:12:41.7304449Z env:
+2026-07-30T09:12:41.7304773Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.19-10/x64
+2026-07-30T09:12:41.7305283Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.19-10/x64
+2026-07-30T09:12:41.7305969Z   KEYSTORE_PASSWORD: ***
+2026-07-30T09:12:41.7306983Z   KEY_ALIAS: ***
+2026-07-30T09:12:41.7307267Z   KEY_PASSWORD: ***
+2026-07-30T09:12:41.7307489Z ##[endgroup]
+2026-07-30T09:12:41.7393370Z Packaging Lite Release APK...

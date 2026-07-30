@@ -1,0 +1,29 @@
+﻿2026-07-30T09:12:43.0071795Z ##[warning]Unexpected input(s) 'recreate', valid inputs are ['allowUpdates', 'artifactErrorsFailBuild', 'artifact', 'artifacts', 'artifactContentType', 'body', 'bodyFile', 'commit', 'discussionCategory', 'draft', 'generateReleaseNotes', 'generateReleaseNotesPreviousTag', 'immutableCreate', 'makeLatest', 'name', 'omitBody', 'omitBodyDuringUpdate', 'omitDraftDuringUpdate', 'omitName', 'omitNameDuringUpdate', 'omitPrereleaseDuringUpdate', 'owner', 'prerelease', 'removeArtifacts', 'replacesArtifacts', 'repo', 'skipIfReleaseExists', 'tag', 'token', 'updateOnlyUnreleased']
+2026-07-30T09:12:43.0086648Z ##[group]Run ncipollo/release-action@v1
+2026-07-30T09:12:43.0086971Z with:
+2026-07-30T09:12:43.0089424Z   token: ***
+2026-07-30T09:12:43.0089699Z   artifacts: app/build/outputs/apk/release/*.apk
+2026-07-30T09:12:43.0090015Z   tag: v5.0.0
+2026-07-30T09:12:43.0090226Z   name: مصحف القيام — V5.0.0
+2026-07-30T09:12:43.0090476Z   allowUpdates: true
+2026-07-30T09:12:43.0090690Z   recreate: true
+2026-07-30T09:12:43.0091217Z   body: ### مصحف القيام — V5.0.0 (المطابقة التكيفية والتجميع الصوتي المنزلق)
+تطبيق نطاق [-1 إلى +3] بنسب تشابه تكيفية (45%, 55%, 60%) وبث صوتي منزلق 1.8 ثانية مع تداخل 0.5 ثانية.
+
+2026-07-30T09:12:43.0091869Z   generateReleaseNotes: false
+2026-07-30T09:12:43.0092138Z   immutableCreate: false
+2026-07-30T09:12:43.0092374Z   makeLatest: legacy
+2026-07-30T09:12:43.0092595Z   omitBody: false
+2026-07-30T09:12:43.0092825Z   omitBodyDuringUpdate: false
+2026-07-30T09:12:43.0093085Z   omitDraftDuringUpdate: false
+2026-07-30T09:12:43.0093331Z   omitName: false
+2026-07-30T09:12:43.0093549Z   omitNameDuringUpdate: false
+2026-07-30T09:12:43.0093816Z   omitPrereleaseDuringUpdate: false
+2026-07-30T09:12:43.0094314Z   removeArtifacts: false
+2026-07-30T09:12:43.0094557Z   replacesArtifacts: true
+2026-07-30T09:12:43.0094798Z   skipIfReleaseExists: false
+2026-07-30T09:12:43.0095046Z   updateOnlyUnreleased: false
+2026-07-30T09:12:43.0095284Z env:
+2026-07-30T09:12:43.0095584Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.19-10/x64
+2026-07-30T09:12:43.0096100Z   JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.19-10/x64
+2026-07-30T09:12:43.0096757Z ##[endgroup]

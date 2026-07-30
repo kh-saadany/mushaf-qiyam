@@ -80,9 +80,7 @@ jobs:
       env:
         ENCODED_STRING: ${{ secrets.KEYSTORE_BASE64 }}
       run: |
-        if [ -n "$ENCODED_STRING" ]; then
-          echo $ENCODED_STRING | base64 -d > app/keystore.jks
-        fi
+        echo "$ENCODED_STRING" | base64 -d > keystore.jks
 
     - name: Build Android APK
       run: ./gradlew assembleRelease
@@ -94,21 +92,26 @@ jobs:
         KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: |
         COMMIT_MSG=$(git log -1 --pretty=%B)
-        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Packaging Full Release APK..."
-          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-full.apk
-        else
-          echo "Packaging Lite Release APK..."
-          mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/mushaf-qiyam-lite.apk
-        fi
+        RAW_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
 
-        TARGET_APK=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
-        if [ -f "app/keystore.jks" ]; then
-          $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks app/keystore.jks \
+        if [ -f "keystore.jks" ]; then
+          echo "Signing APK with production release keystore..."
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks keystore.jks \
             --ks-key-alias "$KEY_ALIAS" \
             --ks-pass pass:"$KEYSTORE_PASSWORD" \
             --key-pass pass:"$KEY_PASSWORD" \
-            "$TARGET_APK"
+            "$RAW_APK"
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs "$RAW_APK"
+        else
+          echo "WARNING: Keystore not found! APK may remain signed with debug cert."
+        fi
+
+        if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
+          echo "Packaging Full Release APK..."
+          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-full.apk
+        else
+          echo "Packaging Lite Release APK..."
+          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-lite.apk
         fi
 
     - name: Create Single Release Asset
@@ -116,11 +119,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.0.0"
-        name: "مصحف القيام — V5.0.0"
+        tag: "v5.0.1"
+        name: "مصحف القيام — V5.0.1"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.0.0 (المطابقة التكيفية والتجميع الصوتي المنزلق)
-          تطبيق نطاق [-1 إلى +3] بنسب تشابه تكيفية (45%, 55%, 60%) وبث صوتي منزلق 1.8 ثانية مع تداخل 0.5 ثانية.
+          ### مصحف القيام — V5.0.1 (توحيد التوقيع الرقمي والتحديث المباشر)
+          إصلاح مسار مفتاح التوقيع keystore.jks لضمان التثبيت المباشر بنقرة واحدة فوق جميع النسخ السابقة.
 

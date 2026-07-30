@@ -117,10 +117,10 @@ class AudioRecognizer(private val context: Context) {
                         val sileroConfig = SileroVadModelConfig(
                             model = vadModelPath,
                             threshold = 0.5f,
-                            minSilenceDuration = 0.5f,
+                            minSilenceDuration = 0.35f,
                             minSpeechDuration = 0.25f,
                             windowSize = 512,
-                            maxSpeechDuration = 10.0f
+                            maxSpeechDuration = 30.0f
                         )
                         val vadConfig = VadModelConfig(
                             sileroVadModelConfig = sileroConfig,
@@ -186,7 +186,13 @@ class AudioRecognizer(private val context: Context) {
 
             recordingThread = thread(start = true, name = "AudioRecognizerThread") {
                 val buffer = ShortArray(512)
-                AppLogger.i(TAG, "Audio capture thread running with Silero VAD")
+                val maxBufferSamples = (SAMPLE_RATE * 1.8).toInt() // 28,800 samples (1.8s)
+                val hopSamples = (SAMPLE_RATE * 0.5).toInt()       // 8,000 samples (0.5s step)
+                val slidingBuffer = FloatArray(maxBufferSamples)
+                var bufferWritePos = 0
+                var samplesSinceInference = 0
+
+                AppLogger.i(TAG, "Audio capture thread running with Silero VAD + Sliding Window (1.8s)")
 
                 while (isRecording.get()) {
                     try {
@@ -203,24 +209,40 @@ class AudioRecognizer(private val context: Context) {
                             val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
                             onAudioLevel?.invoke(level)
 
-                            // Feed audio into Silero VAD if available, or fall back to Energy VAD
+                            // Silero VAD neural Gatekeeper check
                             val v = vad
-                            if (v != null) {
+                            val isSpeech = if (v != null) {
                                 v.acceptWaveform(floatSamples)
+                                // Silent drain to prevent JNI C++ memory accumulation
                                 while (!v.empty()) {
-                                    val segment = v.front()
                                     v.pop()
-                                    val speechSamples = segment.samples
-                                    if (speechSamples.isNotEmpty()) {
-                                        AppLogger.i(TAG, "Silero VAD detected speech segment (${speechSamples.size} samples), running ASR...")
-                                        runInference(speechSamples)
+                                }
+                                v.isSpeechDetected()
+                            } else {
+                                level > 0.12f
+                            }
+
+                            if (isSpeech) {
+                                for (s in floatSamples) {
+                                    if (bufferWritePos < maxBufferSamples) {
+                                        slidingBuffer[bufferWritePos++] = s
+                                    } else {
+                                        System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
+                                        slidingBuffer[maxBufferSamples - 1] = s
                                     }
                                 }
-                            } else {
-                                // Fallback Energy VAD when Silero VAD is initializing
-                                if (level > 0.12f) {
-                                    runInference(floatSamples)
+                                samplesSinceInference += readSamples
+
+                                // Trigger ASR inference every 0.5s hop once minimum context is available
+                                if (samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
+                                    samplesSinceInference = 0
+                                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
+                                    runInference(windowToRecognize)
                                 }
+                            } else {
+                                // Silence detected: clear sliding buffer to avoid stale audio processing
+                                bufferWritePos = 0
+                                samplesSinceInference = 0
                             }
                         }
                     } catch (t: Throwable) {

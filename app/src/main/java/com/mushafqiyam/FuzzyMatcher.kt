@@ -65,26 +65,39 @@ object FuzzyMatcher {
             val verse = candidateVerses[index]
             val cleanVerse = normalizeArabic(verse)
             if (cleanVerse.isNotBlank()) {
-                val sim = calculateSimilarity(cleanRec, cleanVerse)
-                
-                // Adaptive threshold determination based on distance relative to baseIndex
-                val requiredThreshold = when (index - baseIndex) {
-                    -1 -> 0.60   // Previous verse: 60%
-                    0 -> 0.45    // Current verse: 45%
-                    1 -> 0.45    // Next verse: 45%
-                    2 -> 0.55    // Second next verse: 55%
-                    3 -> 0.60    // Third next verse: 60%
-                    else -> 0.60
+                val recWords = cleanRec.split(" ").filter { it.isNotBlank() }
+                val verseWords = cleanVerse.split(" ").filter { it.isNotBlank() }
+
+                // Check shared words count (Minimum 2 shared normalized words required, or 1 if verse has only 1 word)
+                val sharedWordsCount = recWords.count { verseWords.contains(it) }
+                val isWordCountValid = if (verseWords.size <= 1) {
+                    sharedWordsCount >= 1
+                } else {
+                    sharedWordsCount >= 2
                 }
 
-                if (sim > maxSim && sim >= requiredThreshold) {
-                    maxSim = sim
-                    bestMatch = MatchResult(
-                        verseIndex = index,
-                        verseText = verse,
-                        similarity = sim,
-                        matchedSegment = cleanRec
-                    )
+                if (isWordCountValid) {
+                    val sim = calculateSimilarity(cleanRec, cleanVerse)
+                    
+                    // Adaptive threshold determination based on distance relative to baseIndex
+                    val requiredThreshold = when (index - baseIndex) {
+                        -1 -> 0.60   // Previous verse: 60%
+                        0 -> 0.45    // Current verse: 45%
+                        1 -> 0.45    // Next verse: 45%
+                        2 -> 0.55    // Second next verse: 55%
+                        3 -> 0.60    // Third next verse: 60%
+                        else -> 0.60
+                    }
+
+                    if (sim > maxSim && sim >= requiredThreshold) {
+                        maxSim = sim
+                        bestMatch = MatchResult(
+                            verseIndex = index,
+                            verseText = verse,
+                            similarity = sim,
+                            matchedSegment = cleanRec
+                        )
+                    }
                 }
             }
         }

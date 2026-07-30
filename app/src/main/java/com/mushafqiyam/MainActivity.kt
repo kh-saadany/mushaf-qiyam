@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.0.1"
+        const val APP_VERSION = "5.1.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -123,6 +123,8 @@ fun MainAppScreen(
     var activeVerseIndex by remember { mutableIntStateOf(-1) }
     var matchSimilarityText by remember { mutableStateOf("") }
 
+    var pendingCandidateIndex by remember { mutableIntStateOf(-1) }
+
     audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
     audioRecognizer?.onPartialResult = { text ->
         if (text.isNotBlank()) {
@@ -131,9 +133,21 @@ fun MainAppScreen(
             // Perform live fuzzy matching against Quran verses constrained by current active verse
             val match = FuzzyMatcher.matchVerse(text, sampleVerses, currentIndex = activeVerseIndex)
             if (match != null) {
-                activeVerseIndex = match.verseIndex
-                matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
-                AppLogger.i("VerseMatch", "Matched verse [${match.verseIndex + 1}]: ${match.verseText}")
+                // Hysteresis Voting: Requires 2 consecutive matching recognitions on the same verse candidate
+                if (match.verseIndex == activeVerseIndex) {
+                    pendingCandidateIndex = -1
+                    matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
+                } else if (match.verseIndex == pendingCandidateIndex) {
+                    activeVerseIndex = match.verseIndex
+                    pendingCandidateIndex = -1
+                    matchSimilarityText = "🎯 مطابقة الآية ${(match.verseIndex + 1)} (مؤكدة - نسبة التشابه: ${(match.similarity * 100).toInt()}%)"
+                    AppLogger.i("VerseMatch", "Confirmed matched verse [${match.verseIndex + 1}]: ${match.verseText}")
+                } else {
+                    pendingCandidateIndex = match.verseIndex
+                    AppLogger.i("VerseMatch", "Pending candidate verse [${match.verseIndex + 1}] awaiting 2nd consecutive match confirmation.")
+                }
+            } else {
+                pendingCandidateIndex = -1
             }
         }
     }

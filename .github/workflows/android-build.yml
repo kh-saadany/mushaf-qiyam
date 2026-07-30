@@ -119,11 +119,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.0.1"
-        name: "مصحف القيام — V5.0.1"
+        tag: "v5.1.0"
+        name: "مصحف القيام — V5.1.0"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.0.1 (توحيد التوقيع الرقمي والتحديث المباشر)
-          إصلاح مسار مفتاح التوقيع keystore.jks لضمان التثبيت المباشر بنقرة واحدة فوق جميع النسخ السابقة.
+          ### مصحف القيام — V5.1.0 (Silero VAD المدمج والتصويت الزمني Hysteresis)
+          استبدال كشف الصمت RMS بـ Silero VAD الرسمي المدمج، إضافة شرط الكلمتين المشتركتين والتأكيد المتتالي لنقطتين لمنع الهلوسات والتراجع الخاطئ.
 

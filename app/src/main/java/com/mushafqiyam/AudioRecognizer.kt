@@ -9,6 +9,9 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,6 +33,7 @@ class AudioRecognizer(private val context: Context) {
     private var recordingThread: Thread? = null
 
     private var recognizer: OfflineRecognizer? = null
+    private var vad: Vad? = null
 
     // Callbacks for UI updates
     var onAudioLevel: ((Float) -> Unit)? = null
@@ -79,6 +83,30 @@ class AudioRecognizer(private val context: Context) {
                 )
                 recognizer = OfflineRecognizer(null, config)
                 AppLogger.i(TAG, "Sherpa-ONNX engine initialized successfully")
+
+                // Initialize official Silero VAD
+                val vadModelPath = resolveFilePath(modelDirInAssets, "silero_vad.onnx")
+                if (vadModelPath != null && File(vadModelPath).exists()) {
+                    val sileroConfig = SileroVadModelConfig(
+                        model = vadModelPath,
+                        threshold = 0.5f,
+                        minSilenceDuration = 0.5f,
+                        minSpeechDuration = 0.25f,
+                        windowSize = 512,
+                        maxSpeechDuration = 10.0f
+                    )
+                    val vadConfig = VadModelConfig(
+                        sileroVadModelConfig = sileroConfig,
+                        sampleRate = SAMPLE_RATE,
+                        numThreads = 1,
+                        provider = "cpu",
+                        debug = false
+                    )
+                    vad = Vad(null, vadConfig)
+                    AppLogger.i(TAG, "Official Silero VAD initialized successfully")
+                } else {
+                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved")
+                }
                 true
             } else {
                 AppLogger.w(TAG, "Sherpa-ONNX model or tokens missing. modelPath=$modelPath, tokensPath=$tokensPath")
@@ -125,46 +153,39 @@ class AudioRecognizer(private val context: Context) {
             AppLogger.i(TAG, "Audio recording started successfully")
 
             recordingThread = thread(start = true, name = "AudioRecognizerThread") {
-                val buffer = ShortArray(bufferSize / 2)
-                val audioWindow = mutableListOf<Float>()
-                AppLogger.i(TAG, "Audio capture thread running")
+                val buffer = ShortArray(512)
+                AppLogger.i(TAG, "Audio capture thread running with Silero VAD")
 
                 while (isRecording.get()) {
                     try {
                         val readSamples = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                         if (readSamples > 0) {
                             var sum = 0.0
+                            val floatSamples = FloatArray(readSamples)
                             for (i in 0 until readSamples) {
                                 val floatSample = buffer[i] / 32768.0f
+                                floatSamples[i] = floatSample
                                 sum += (buffer[i].toDouble() * buffer[i].toDouble())
-                                audioWindow.add(floatSample)
                             }
                             val rms = Math.sqrt(sum / readSamples) / 32768.0
                             val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
                             onAudioLevel?.invoke(level)
 
-                            // Energy-based Voice Activity Detection (VAD)
-                            // Skip silent / low-energy background noise chunks to avoid ASR hallucinations
-                            val isSpeechPresent = level > 0.12f
-
-                            // Sliding Audio Window (1.8s window with 0.5s overlap)
-                            // Retains tail context so long Quranic recitation words and extended vowels (Madd) are never truncated.
-                            val targetWindowSize = SAMPLE_RATE * 9 / 5 // 1.8 seconds
-                            val overlapSize = SAMPLE_RATE / 2          // 0.5 seconds overlap
-
-                            if (audioWindow.size >= targetWindowSize) {
-                                val chunk = audioWindow.toFloatArray()
-                                
-                                // Retain overlap tail for continuous word context
-                                val tail = audioWindow.takeLast(overlapSize)
-                                audioWindow.clear()
-                                audioWindow.addAll(tail)
-
-                                if (isSpeechPresent) {
-                                    runInference(chunk)
-                                } else {
-                                    AppLogger.i(TAG, "VAD: Silence / Low Energy detected (level: ${String.format("%.3f", level)}), skipping inference.")
+                            // Feed audio directly into Silero VAD
+                            val v = vad
+                            if (v != null) {
+                                v.acceptWaveform(floatSamples)
+                                while (v.isSpeechDetected()) {
+                                    val segment = v.front()
+                                    v.pop()
+                                    val speechSamples = segment.samples
+                                    if (speechSamples.isNotEmpty()) {
+                                        AppLogger.i(TAG, "Silero VAD detected speech segment (${speechSamples.size} samples), running ASR...")
+                                        runInference(speechSamples)
+                                    }
                                 }
+                            } else {
+                                AppLogger.w(TAG, "VAD instance null, falling back")
                             }
                         }
                     } catch (t: Throwable) {

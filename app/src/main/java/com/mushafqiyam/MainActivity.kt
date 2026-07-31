@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.1.9"
+        const val APP_VERSION = "5.2.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -136,7 +136,9 @@ fun MainAppScreen(
             val filteredText = QuranVocabularyFilter.filterText(rawText, allowedWords)
 
             if (filteredText.isNotBlank()) {
-                recognizedText = if (recognizedText.isEmpty()) filteredText else "$recognizedText $filteredText"
+                val fullText = if (recognizedText.isEmpty()) filteredText else "$recognizedText $filteredText"
+                val textWords = fullText.split(" ")
+                recognizedText = if (textWords.size > 25) textWords.takeLast(25).joinToString(" ") else fullText
                 AppLogger.i("ASRFilter", "Filtered Quranic text: $filteredText (Raw was: $rawText)")
 
                 // Perform live fuzzy matching against candidate verses

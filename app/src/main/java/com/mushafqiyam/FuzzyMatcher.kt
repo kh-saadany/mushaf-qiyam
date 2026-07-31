@@ -14,25 +14,31 @@ object FuzzyMatcher {
     /**
      * Expands Quranic disjointed letters (الحروف المقطعة) into their spoken phonetic word forms.
      * e.g., "الم" -> "الف لام ميم", "الر" -> "الف لام را", "حم" -> "حا ميم"
+     * Uses regex-free string splitting for 100% compatibility with Android ICU engine.
      */
     fun expandMuqattaat(text: String): String {
         if (text.isBlank()) return text
-        var result = text
-        result = result.replace(Regex("(?U)\\bالم\\b"), "الف لام ميم")
-        result = result.replace(Regex("(?U)\\bالمص\\b"), "الف لام ميم صاد")
-        result = result.replace(Regex("(?U)\\bالر\\b"), "الف لام را")
-        result = result.replace(Regex("(?U)\\bالمر\\b"), "الف لام ميم را")
-        result = result.replace(Regex("(?U)\\bكهيعص\\b"), "كاف ها يا عين صاد")
-        result = result.replace(Regex("(?U)\\bطه\\b"), "طا ها")
-        result = result.replace(Regex("(?U)\\bطسم\\b"), "طا سين ميم")
-        result = result.replace(Regex("(?U)\\bطس\\b"), "طا سين")
-        result = result.replace(Regex("(?U)\\bيس\\b"), "يا سين")
-        result = result.replace(Regex("(?U)\\bص\\b"), "صاد")
-        result = result.replace(Regex("(?U)\\bحم\\b"), "حا ميم")
-        result = result.replace(Regex("(?U)\\bعسق\\b"), "عين سين قاف")
-        result = result.replace(Regex("(?U)\\bق\\b"), "قاف")
-        result = result.replace(Regex("(?U)\\bن\\b"), "نون")
-        return result
+        val words = text.split(" ")
+        val expandedWords = words.map { w ->
+            when (w.trim()) {
+                "الم" -> "الف لام ميم"
+                "المص" -> "الف لام ميم صاد"
+                "الر" -> "الف لام را"
+                "المر" -> "الف لام ميم را"
+                "كهيعص" -> "كاف ها يا عين صاد"
+                "طه" -> "طا ها"
+                "طسم" -> "طا سين ميم"
+                "طس" -> "طا سين"
+                "يس" -> "يا سين"
+                "ص" -> "صاد"
+                "حم" -> "حا ميم"
+                "عسق" -> "عين سين قاف"
+                "ق" -> "قاف"
+                "ن" -> "نون"
+                else -> w
+            }
+        }
+        return expandedWords.joinToString(" ")
     }
 
     /**

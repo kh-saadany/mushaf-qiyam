@@ -43,16 +43,18 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.2.1"
+        const val APP_VERSION = "5.3.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
+    private var whisperAudioRecognizer: WhisperAudioRecognizer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLogger.i(TAG, "Mushaf Qiyam App Started (Version: $APP_VERSION)")
 
         audioRecognizer = AudioRecognizer(this)
+        whisperAudioRecognizer = WhisperAudioRecognizer(this)
 
         setContent {
             MaterialTheme {
@@ -62,7 +64,8 @@ class MainActivity : ComponentActivity() {
                 ) {
                     MainAppScreen(
                         appVersion = APP_VERSION,
-                        audioRecognizer = audioRecognizer
+                        audioRecognizer = audioRecognizer,
+                        whisperAudioRecognizer = whisperAudioRecognizer
                     )
                 }
             }
@@ -72,6 +75,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         audioRecognizer?.release()
+        whisperAudioRecognizer?.release()
         AppLogger.i(TAG, "Mushaf Qiyam App Destroyed")
     }
 }
@@ -79,10 +83,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainAppScreen(
     appVersion: String,
-    audioRecognizer: AudioRecognizer?
+    audioRecognizer: AudioRecognizer?,
+    whisperAudioRecognizer: WhisperAudioRecognizer? = null
 ) {
     val context = LocalContext.current
     var isListening by remember { mutableStateOf(false) }
+    var useWhisperEngine by remember { mutableStateOf(false) }
     var engineStatus by remember { mutableStateOf("جاري تهيئة المحرك...") }
     var recognizedText by remember { mutableStateOf("") }
     var audioLevel by remember { mutableFloatStateOf(0f) }
@@ -107,15 +113,20 @@ fun MainAppScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(useWhisperEngine) {
         engineStatus = "⏳ جاري تهيئة محرك الذكاء الاصطناعي..."
         val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            audioRecognizer?.initEngine("tilawa_model") ?: false
+            if (useWhisperEngine) {
+                whisperAudioRecognizer?.initEngine("tilawa_whisper") ?: false
+            } else {
+                audioRecognizer?.initEngine("tilawa_model") ?: false
+            }
         }
         if (success) {
-            engineStatus = "✅ محرك Sherpa-ONNX ونموذج FastConformer جاهز"
+            engineStatus = if (useWhisperEngine) "✅ محرك Sherpa-Whisper Tiny Quran جاهز" else "✅ محرك Sherpa-ONNX FastConformer جاهز"
         } else {
-            engineStatus = "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
+            engineStatus = if (useWhisperEngine) "⚠️ Whisper غير متاح — التبديل التلقائي لـ FastConformer CTC" else "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
+            if (useWhisperEngine) useWhisperEngine = false
         }
     }
 
@@ -128,8 +139,7 @@ fun MainAppScreen(
     var graceEmptyFrames by remember { mutableIntStateOf(0) }
     var graceMismatchFrames by remember { mutableIntStateOf(0) }
 
-    audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
-    audioRecognizer?.onPartialResult = { rawText ->
+    val handlePartialResult: (String) -> Unit = { rawText ->
         if (rawText.isNotBlank()) {
             // Retrieve Zero-GC cached allowedWords set for current search window [activeVerseIndex - 1, activeVerseIndex + 3]
             val allowedWords = QuranVocabularyFilter.getOrBuildAllowedWords(sampleVerses, activeVerseIndex)
@@ -192,12 +202,18 @@ fun MainAppScreen(
                     pendingCandidateIndex = -1
                     confirmCount = 0
                     graceEmptyFrames = 0
-                    AppLogger.i("VerseMatch", "Pending candidate expired after 7 empty frames")
                 }
             }
         }
     }
-    audioRecognizer?.onError = { err -> engineStatus = err }
+
+    if (useWhisperEngine) {
+        whisperAudioRecognizer?.onAudioLevel = { level -> audioLevel = level }
+        whisperAudioRecognizer?.onPartialResult = handlePartialResult
+    } else {
+        audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
+        audioRecognizer?.onPartialResult = handlePartialResult
+    }
 
     Column(
         modifier = Modifier
@@ -219,6 +235,31 @@ fun MainAppScreen(
             color = Color.Gray,
             modifier = Modifier.padding(bottom = 8.dp)
         )
+
+        // Engine Selector Feature Flag Toggle
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = if (useWhisperEngine) "محرك الاستدلال: Whisper Tiny Quran" else "محرك الاستدلال: FastConformer CTC",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary
+            )
+            Switch(
+                checked = useWhisperEngine,
+                onCheckedChange = { checked ->
+                    if (!isListening) {
+                        useWhisperEngine = checked
+                    }
+                },
+                enabled = !isListening
+            )
+        }
 
         // Engine Status Card
         Card(
@@ -264,16 +305,22 @@ fun MainAppScreen(
             Button(
                 onClick = {
                     if (isListening) {
-                        audioRecognizer?.stopListening()
+                        if (useWhisperEngine) whisperAudioRecognizer?.stopListening() else audioRecognizer?.stopListening()
                         isListening = false
                         AppLogger.i("UI", "User clicked Stop Listening")
                     } else {
                         recognizedText = ""
-                        activeVerseIndex = -1
+                        activeVerseIndex = 0
                         matchSimilarityText = ""
-                        audioRecognizer?.startListening()
-                        isListening = true
-                        AppLogger.i("UI", "User clicked Start Listening")
+                        val started = if (useWhisperEngine) {
+                            whisperAudioRecognizer?.startListening() ?: false
+                        } else {
+                            audioRecognizer?.startListening() ?: false
+                        }
+                        if (started) {
+                            isListening = true
+                            AppLogger.i("UI", "User clicked Start Listening (${if (useWhisperEngine) "Whisper" else "CTC"})")
+                        }
                     }
                 },
                 colors = ButtonDefaults.buttonColors(

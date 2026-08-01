@@ -119,11 +119,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.2.1"
-        name: "مصحف القيام — V5.2.1"
+        tag: "v5.3.0"
+        name: "مصحف القيام — V5.3.0"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.2.1 (البداية التلقائية من الآية الأولى + معالجة الذاكرة Zero-GC)
-          تحديث حاسم يضبط البداية المباشرة من الآية 0 (وَالضُّحَىٰ)، ويخزن allowedWords كـ Cache لمنع إنشاء كائنات الذاكرة في كل إطار وإلغاء أي تباطؤ طوال الجلسة.
+          ### مصحف القيام — V5.3.0 (دمج محرك Whisper Tiny Quran + التبديل الحي عبر Feature Flag)
+          تحديث رئيسي يدمج محرك Whisper-tiny-ar-quran عبر OfflineWhisperModelConfig الخالي من الحالة (Stateless)، مع إضافة خيار التبديل التلقائي والحي بين FastConformer CTC و Whisper في الإعدادات للمقارنة الميدانية.
 

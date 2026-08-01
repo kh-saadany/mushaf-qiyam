@@ -157,10 +157,10 @@ class AudioRecognizer(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    fun startListening() {
-        if (isRecording.get()) return
+    fun startListening(): Boolean {
+        if (isRecording.get()) return true
 
-        try {
+        return try {
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
             val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, channelConfig, audioFormat)
@@ -177,7 +177,7 @@ class AudioRecognizer(private val context: Context) {
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 AppLogger.e(TAG, "AudioRecord failed to initialize")
                 onError?.invoke("فشل في تشغيل الميكروفون")
-                return
+                return false
             }
 
             audioRecord?.startRecording()
@@ -264,10 +264,12 @@ class AudioRecognizer(private val context: Context) {
                 }
                 AppLogger.i(TAG, "Audio capture thread stopped")
             }
+            return true
 
         } catch (t: Throwable) {
             AppLogger.e(TAG, "Error starting audio recording", t)
             onError?.invoke("خطأ: ${t.localizedMessage}")
+            false
         }
     }
 

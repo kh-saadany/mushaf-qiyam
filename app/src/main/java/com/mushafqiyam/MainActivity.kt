@@ -312,10 +312,10 @@ fun MainAppScreen(
                         recognizedText = ""
                         activeVerseIndex = 0
                         matchSimilarityText = ""
-                        val started = if (useWhisperEngine) {
-                            whisperAudioRecognizer?.startListening() ?: false
+                        val started: Boolean = if (useWhisperEngine) {
+                            whisperAudioRecognizer?.startListening() == true
                         } else {
-                            audioRecognizer?.startListening() ?: false
+                            audioRecognizer?.startListening() == true
                         }
                         if (started) {
                             isListening = true

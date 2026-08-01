@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.2.0"
+        const val APP_VERSION = "5.2.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -120,7 +120,7 @@ fun MainAppScreen(
     }
 
     val sampleVerses = remember { QuranData.getSampleVerses() }
-    var activeVerseIndex by remember { mutableIntStateOf(-1) }
+    var activeVerseIndex by remember { mutableIntStateOf(0) }
     var matchSimilarityText by remember { mutableStateOf("") }
 
     var pendingCandidateIndex by remember { mutableIntStateOf(-1) }
@@ -131,8 +131,8 @@ fun MainAppScreen(
     audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
     audioRecognizer?.onPartialResult = { rawText ->
         if (rawText.isNotBlank()) {
-            // Build dynamic Quran vocabulary filter for current search window [activeVerseIndex - 1, activeVerseIndex + 3]
-            val allowedWords = QuranVocabularyFilter.buildAllowedWordsSet(sampleVerses, activeVerseIndex)
+            // Retrieve Zero-GC cached allowedWords set for current search window [activeVerseIndex - 1, activeVerseIndex + 3]
+            val allowedWords = QuranVocabularyFilter.getOrBuildAllowedWords(sampleVerses, activeVerseIndex)
             val filteredText = QuranVocabularyFilter.filterText(rawText, allowedWords)
 
             if (filteredText.isNotBlank()) {

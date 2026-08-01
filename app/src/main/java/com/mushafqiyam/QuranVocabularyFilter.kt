@@ -3,30 +3,41 @@ package com.mushafqiyam
 /**
  * QuranVocabularyFilter: Dynamically filters raw ASR model output text
  * against the allowed vocabulary of verses in current search scope [currentIndex - 1, currentIndex + 3].
- * Removes any out-of-domain words (e.g. "درس", "استعد", "المصدر") in O(1) time.
+ * Features Zero-GC Caching: allowedWords HashSet is only built when currentIndex changes!
  */
 object QuranVocabularyFilter {
 
+    private var cachedCurrentIndex: Int = -999
+    private var cachedAllowedWords: HashSet<String> = HashSet()
+
     /**
-     * Builds a normalized HashSet of allowed words from candidate verses range [currentIndex - 1, currentIndex + 3].
+     * Retrieves cached allowedWords set, rebuilding only when currentIndex changes.
      */
-    fun buildAllowedWordsSet(verses: List<String>, currentIndex: Int): HashSet<String> {
-        val allowedWords = HashSet<String>()
-        if (verses.isEmpty()) return allowedWords
+    @Synchronized
+    fun getOrBuildAllowedWords(verses: List<String>, currentIndex: Int): Set<String> {
+        if (currentIndex == cachedCurrentIndex && cachedAllowedWords.isNotEmpty()) {
+            return cachedAllowedWords
+        }
 
-        val startIndex = if (currentIndex >= 0) maxOf(0, currentIndex - 1) else 0
-        val endIndex = if (currentIndex >= 0) minOf(verses.size - 1, currentIndex + 3) else minOf(verses.size - 1, 3)
+        val newSet = HashSet<String>()
+        if (verses.isNotEmpty()) {
+            val startIndex = maxOf(0, currentIndex - 1)
+            val endIndex = minOf(verses.size - 1, currentIndex + 3)
 
-        for (i in startIndex..endIndex) {
-            val cleanVerse = FuzzyMatcher.normalizeArabic(verses[i])
-            cleanVerse.split(" ").forEach { word ->
-                val cleanWord = word.trim()
-                if (cleanWord.isNotBlank()) {
-                    allowedWords.add(cleanWord)
+            for (i in startIndex..endIndex) {
+                val cleanVerse = FuzzyMatcher.normalizeArabic(verses[i])
+                cleanVerse.split(" ").forEach { word ->
+                    val cleanWord = word.trim()
+                    if (cleanWord.isNotBlank()) {
+                        newSet.add(cleanWord)
+                    }
                 }
             }
         }
-        return allowedWords
+
+        cachedCurrentIndex = currentIndex
+        cachedAllowedWords = newSet
+        return cachedAllowedWords
     }
 
     /**

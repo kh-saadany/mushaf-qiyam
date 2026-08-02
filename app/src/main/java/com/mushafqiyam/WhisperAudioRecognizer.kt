@@ -210,19 +210,16 @@ class WhisperAudioRecognizer(private val context: Context) {
     }
 
     private fun processAudioLoop() {
-        val maxBufferSamples = (SAMPLE_RATE * 2.5).toInt() // 2.5s (40,000 samples)
-        val hopSamples = (SAMPLE_RATE * 0.5).toInt()       // 0.5s (8,000 samples)
-        val minSpeechSamples = (SAMPLE_RATE * 0.35).toInt() // 350ms (5,600 samples)
+        val minUtteranceSamples = (SAMPLE_RATE * 0.4).toInt()  // 400ms minimum utterance
+        val maxUtteranceSamples = (SAMPLE_RATE * 15.0).toInt() // 15s safety cap
 
-        val slidingBuffer = FloatArray(maxBufferSamples)
-        var bufferWritePos = 0
-        var samplesSinceInference = 0
-        var speechDurationSamples = 0
+        val pcmAccumulator = ArrayList<Float>(SAMPLE_RATE * 5)
+        var isSpeechActive = false
 
         val shortBuffer = ShortArray(512)
         vad?.reset()
 
-        AppLogger.i(TAG, "Whisper Audio capture loop started with Silero VAD & 2.5s sliding window")
+        AppLogger.i(TAG, "Whisper Audio capture loop started (Segment-Based Utterance Mode)")
 
         while (isRecording && !Thread.currentThread().isInterrupted) {
             val readCount = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: 0
@@ -253,30 +250,28 @@ class WhisperAudioRecognizer(private val context: Context) {
             }
 
             if (isSpeech) {
-                speechDurationSamples += readCount
+                isSpeechActive = true
                 for (s in floatFrame) {
-                    if (bufferWritePos < maxBufferSamples) {
-                        slidingBuffer[bufferWritePos++] = s
-                    } else {
-                        System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
-                        slidingBuffer[maxBufferSamples - 1] = s
-                    }
+                    pcmAccumulator.add(s)
                 }
-                samplesSinceInference += readCount
 
-                if (speechDurationSamples >= minSpeechSamples && samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
-                    samplesSinceInference = 0
-                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
-                    runInference(windowToRecognize)
+                // Safety cap: Trigger inference if single utterance exceeds 15 seconds
+                if (pcmAccumulator.size >= maxUtteranceSamples) {
+                    val completeUtterance = pcmAccumulator.toFloatArray()
+                    AppLogger.i(TAG, "Safety cap reached: Triggering Whisper inference on ${completeUtterance.size} samples (${completeUtterance.size * 1000 / SAMPLE_RATE}ms)...")
+                    runInference(completeUtterance)
+                    pcmAccumulator.clear()
+                    isSpeechActive = false
                 }
             } else {
-                if (speechDurationSamples >= minSpeechSamples && bufferWritePos >= minSpeechSamples) {
-                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
-                    runInference(windowToRecognize)
+                // Speech -> Silence transition: Trigger Whisper ONCE on complete utterance!
+                if (isSpeechActive && pcmAccumulator.size >= minUtteranceSamples) {
+                    val completeUtterance = pcmAccumulator.toFloatArray()
+                    AppLogger.i(TAG, "Utterance completed (Speech -> Silence transition): Triggering Whisper inference on ${completeUtterance.size} samples (${completeUtterance.size * 1000 / SAMPLE_RATE}ms)...")
+                    runInference(completeUtterance)
                 }
-                speechDurationSamples = 0
-                bufferWritePos = 0
-                samplesSinceInference = 0
+                pcmAccumulator.clear()
+                isSpeechActive = false
             }
         }
         AppLogger.i(TAG, "Whisper Audio capture thread stopped")

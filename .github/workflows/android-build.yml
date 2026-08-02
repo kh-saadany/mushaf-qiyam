@@ -123,11 +123,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.4.2"
-        name: "مصحف القيام — V5.4.2 (Lite Patch Release)"
+        tag: "v5.4.3"
+        name: "مصحف القيام — V5.4.3 (Segment-Based Utterance Mode)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.4.2 (نسخة ترقيع خفيفة جداً ~15MB)
-          تعديل حاسم لقواعد البناء الآلي لاستبعاد تنزيل ملفات النماذج الكبيرة من حزمة الـ Lite، والاعتماد التام على النماذج المثبتة محلياً على الجهاز.
+          ### مصحف القيام — V5.4.3 (نمط الاستدلال القطعي المستند إلى السكتات لـ Whisper)
+          تحديث بنيوي يحول نمط استدلال Whisper لتجميع العينات أثناء الكلام صامتاً، وإطلاق الاستدلال مرة واحدة فقط عند نهاية النطق والانتقال للصمت (Speech -> Silence transition).
 

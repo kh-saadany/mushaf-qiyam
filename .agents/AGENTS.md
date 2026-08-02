@@ -7,8 +7,9 @@
   1. **Code Accuracy & Syntax Review**: Verifying Kotlin syntax, Compose imports, dependencies, and thread-safety in modified files.
   2. **Cross-System Consistency Audit**: Auditing and verifying 100% exact alignment across `versionCode`, `versionName` (`app/build.gradle.kts`), `APP_VERSION` (`MainActivity.kt`), GitHub secrets names (`KEYSTORE_BASE64`, etc.), `abiFilters`, and release tags (`.github/workflows/android-build.yml`).
   3. You MUST NOT commit or push until BOTH subagents issue explicit `PASS` reports.
+- **CRITICAL MODEL BUNDLING RULE**: NEVER download or bundle heavy AI model files (such as FastConformer `model.int8.onnx` or Whisper `encoder.int8.onnx` / `decoder.int8.onnx`) into the APK build unless the user explicitly requests a `[full]` build. All patch/lite builds MUST remain ultra-compact (~15MB) and rely strictly on models already installed locally on the user's device.
 
--   W h e n   p r o p o s i n g   t h e   u s e   o f   a   t h i r d - p a r t y   l i b r a r y   o r   a n   u n d o c u m e n t e d   A P I   p r o p e r t y ,   y o u   M U S T   v e r i f y   i t s   e x i s t e n c e   a n d   e x a c t   u s a g e   b y   s e a r c h i n g   t h e   w e b   o r   r e a d i n g   i t s   s o u r c e   c o d e / d o c u m e n t a t i o n .   D o   N O T   r e l y   o n   a s s u m p t i o n s   o r   h a l l u c i n a t e   A P I   p r o p e r t i e s .  
+- When proposing the use of a third-party library or an undocumented API property, you MUST verify its existence and exact usage by searching the web or reading its source code/documentation. Do NOT rely on assumptions or hallucinate API properties.
  
 ## Rigorous Pre-Execution Review (مراجعة صارمة قبل التنفيذ)
 قبل البدء في التنفيذ الآلي لأي خطة أو حل برمجي مقترح، **يجب عليك أولاً:**

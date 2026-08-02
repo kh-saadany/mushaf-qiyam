@@ -125,11 +125,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.4.0"
-        name: "مصحف القيام — V5.4.0 (Whisper Quran Engine Ready)"
+        tag: "v5.4.1"
+        name: "مصحف القيام — V5.4.1 (Whisper Quran Engine Diagnostics Ready)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.4.0 (تأمين ملفات Whisper INT8 ONNX وتشغيل المحرك)
-          إصدار رئيسي جديد يقوم بتنزيل وتضمين ملفات نموذج Whisper INT8 ONNX الثلاثة (encoder.int8.onnx, decoder.int8.onnx, tokens.txt) في حزمة التطبيق، مما يفعل محرك Whisper تلقائياً ومباشرة عند الضغط عليه.
+          ### مصحف القيام — V5.4.1 (إصلاح VAD وإعادة الاستجابة وتفعيل السجلات التشخيصية لـ Whisper)
+          إصدار جديد يزيل عقبة RMS المسقطة للعينات، ويفعل تفريغ طابور VAD فورياً، ويضيف سجلات تتبع تشخيصية تفصيلية لاستجابة محرك Whisper.
 

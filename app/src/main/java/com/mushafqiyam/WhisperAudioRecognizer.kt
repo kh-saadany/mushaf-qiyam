@@ -210,24 +210,22 @@ class WhisperAudioRecognizer(private val context: Context) {
     }
 
     private fun processAudioLoop() {
-        val windowSamples = (SAMPLE_RATE * SLIDING_WINDOW_MS) / 1000
-        val hopSamples = (SAMPLE_RATE * HOP_MS) / 1000
+        val maxBufferSamples = (SAMPLE_RATE * 2.5).toInt() // 2.5s (40,000 samples)
+        val hopSamples = (SAMPLE_RATE * 0.5).toInt()       // 0.5s (8,000 samples)
+        val minSpeechSamples = (SAMPLE_RATE * 0.35).toInt() // 350ms (5,600 samples)
 
-        val slidingBuffer = FloatArray(windowSamples)
+        val slidingBuffer = FloatArray(maxBufferSamples)
         var bufferWritePos = 0
         var samplesSinceInference = 0
+        var speechDurationSamples = 0
 
-        val minSpeechSamples = (SAMPLE_RATE * MIN_SPEECH_DURATION_MS) / 1000
-        var speechSamplesCounter = 0
-        var isSpeechSpeechStarted = false
-
-        val frameSize = 512
-        val shortBuffer = ShortArray(frameSize)
-
+        val shortBuffer = ShortArray(512)
         vad?.reset()
 
+        AppLogger.i(TAG, "Whisper Audio capture loop started with Silero VAD & 2.5s sliding window")
+
         while (isRecording && !Thread.currentThread().isInterrupted) {
-            val readCount = audioRecord?.read(shortBuffer, 0, frameSize) ?: 0
+            val readCount = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: 0
             if (readCount <= 0) continue
 
             var sumSquares = 0.0
@@ -239,67 +237,65 @@ class WhisperAudioRecognizer(private val context: Context) {
             }
 
             val rms = sqrt(sumSquares / readCount).toFloat()
-            onAudioLevel?.invoke(rms)
+            val level = (rms * 5.0f).coerceIn(0.0f, 1.0f)
+            onAudioLevel?.invoke(level)
 
-            if (rms < RMS_SILENCE_THRESHOLD) {
-                if (!isSpeechSpeechStarted) {
-                    bufferWritePos = 0
-                    samplesSinceInference = 0
-                    speechSamplesCounter = 0
+            // Silero VAD evaluation with mandatory C++ queue draining
+            val v = vad
+            val isSpeech = if (v != null) {
+                v.acceptWaveform(floatFrame)
+                while (!v.empty()) {
+                    v.pop()
                 }
-                continue
+                v.isSpeechDetected()
+            } else {
+                level > 0.08f
             }
-
-            vad?.acceptWaveform(floatFrame)
-            val isSpeech = vad?.isSpeechDetected() ?: true
 
             if (isSpeech) {
-                speechSamplesCounter += readCount
-                if (speechSamplesCounter >= minSpeechSamples) {
-                    isSpeechSpeechStarted = true
-                }
-
-                if (bufferWritePos + readCount <= windowSamples) {
-                    System.arraycopy(floatFrame, 0, slidingBuffer, bufferWritePos, readCount)
-                    bufferWritePos += readCount
-                } else {
-                    val overflow = (bufferWritePos + readCount) - windowSamples
-                    System.arraycopy(slidingBuffer, overflow, slidingBuffer, 0, windowSamples - overflow)
-                    System.arraycopy(floatFrame, 0, slidingBuffer, windowSamples - readCount, readCount)
-                    bufferWritePos = windowSamples
+                speechDurationSamples += readCount
+                for (s in floatFrame) {
+                    if (bufferWritePos < maxBufferSamples) {
+                        slidingBuffer[bufferWritePos++] = s
+                    } else {
+                        System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
+                        slidingBuffer[maxBufferSamples - 1] = s
+                    }
                 }
                 samplesSinceInference += readCount
-            } else {
-                if (isSpeechSpeechStarted && bufferWritePos >= minSpeechSamples) {
-                    runInference(slidingBuffer, bufferWritePos)
-                }
-                bufferWritePos = 0
-                samplesSinceInference = 0
-                speechSamplesCounter = 0
-                isSpeechSpeechStarted = false
-                vad?.reset()
-            }
 
-            if (isSpeechSpeechStarted && bufferWritePos >= windowSamples && samplesSinceInference >= hopSamples) {
-                runInference(slidingBuffer, bufferWritePos)
+                if (speechDurationSamples >= minSpeechSamples && samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
+                    samplesSinceInference = 0
+                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
+                    runInference(windowToRecognize)
+                }
+            } else {
+                if (speechDurationSamples >= minSpeechSamples && bufferWritePos >= minSpeechSamples) {
+                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
+                    runInference(windowToRecognize)
+                }
+                speechDurationSamples = 0
+                bufferWritePos = 0
                 samplesSinceInference = 0
             }
         }
         AppLogger.i(TAG, "Whisper Audio capture thread stopped")
     }
 
-    private fun runInference(samples: FloatArray, count: Int) {
+    private fun runInference(audioSamples: FloatArray) {
         val rec = recognizer ?: return
-        if (count <= 0) return
+        if (audioSamples.isEmpty()) return
 
         try {
-            val audioWindow = if (count == samples.size) samples else samples.copyOf(count)
+            AppLogger.i(TAG, "Triggering Whisper inference on ${audioSamples.size} audio samples (${audioSamples.size * 1000 / SAMPLE_RATE}ms)...")
             val stream = rec.createStream()
-            stream.acceptWaveform(audioWindow, SAMPLE_RATE)
+            stream.acceptWaveform(audioSamples, SAMPLE_RATE)
             rec.decode(stream)
 
             val rawResult = rec.getResult(stream).text.trim()
             stream.release()
+
+            AppLogger.i(TAG, "Raw Whisper ASR output: '$rawResult'")
 
             if (rawResult.isNotBlank()) {
                 val cleanedResult = truncateSingleChunkRepetition(rawResult)

@@ -68,18 +68,16 @@ jobs:
         curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
         mkdir -p app/src/main/assets/tilawa_model
         curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt https://github.com/kh-saadany/mushaf-qiyam/releases/download/sherpa-model-v1.0/tokens.txt
-        mkdir -p app/src/main/assets/tilawa_whisper
-        echo "Downloading Whisper INT8 ONNX model files for tilawa_whisper..."
-        curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/encoder.int8.onnx "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-encoder.int8.onnx?download=true"
-        curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/decoder.int8.onnx "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-decoder.int8.onnx?download=true"
-        curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/tokens.txt "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-tokens.txt?download=true"
-
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Downloading 125MB INT8 FastConformer Sherpa model for Full build..."
+          echo "Full build: Downloading 125MB FastConformer & 98MB Whisper ONNX models for self-contained Full APK..."
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.int8.onnx https://github.com/kh-saadany/mushaf-qiyam/releases/download/sherpa-model-v1.0/model.int8.onnx
+          mkdir -p app/src/main/assets/tilawa_whisper
+          curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/encoder.int8.onnx "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-encoder.int8.onnx?download=true"
+          curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/decoder.int8.onnx "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-decoder.int8.onnx?download=true"
+          curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/tokens.txt "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-tokens.txt?download=true"
         else
-          echo "Lite build: Skipping FastConformer model.int8.onnx download for clean, compact APK build."
+          echo "Lite build: Skipping all heavy ONNX model downloads for ultra-compact (~15MB) patch APK."
         fi
 
     - name: Decode Keystore
@@ -125,11 +123,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.4.1"
-        name: "مصحف القيام — V5.4.1 (Whisper Quran Engine Diagnostics Ready)"
+        tag: "v5.4.2"
+        name: "مصحف القيام — V5.4.2 (Lite Patch Release)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.4.1 (إصلاح VAD وإعادة الاستجابة وتفعيل السجلات التشخيصية لـ Whisper)
-          إصدار جديد يزيل عقبة RMS المسقطة للعينات، ويفعل تفريغ طابور VAD فورياً، ويضيف سجلات تتبع تشخيصية تفصيلية لاستجابة محرك Whisper.
+          ### مصحف القيام — V5.4.2 (نسخة ترقيع خفيفة جداً ~15MB)
+          تعديل حاسم لقواعد البناء الآلي لاستبعاد تنزيل ملفات النماذج الكبيرة من حزمة الـ Lite، والاعتماد التام على النماذج المثبتة محلياً على الجهاز.
 

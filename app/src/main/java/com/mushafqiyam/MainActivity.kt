@@ -43,7 +43,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.3.0"
+        const val APP_VERSION = "5.3.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -115,19 +115,26 @@ fun MainAppScreen(
 
     LaunchedEffect(useWhisperEngine) {
         engineStatus = "⏳ جاري تهيئة محرك الذكاء الاصطناعي..."
-        val success = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val statusMessage = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             if (useWhisperEngine) {
-                whisperAudioRecognizer?.initEngine("tilawa_whisper") ?: false
+                val whisperSuccess = whisperAudioRecognizer?.initEngine("tilawa_whisper") ?: false
+                if (whisperSuccess) {
+                    "✅ محرك Sherpa-Whisper Tiny Quran جاهز"
+                } else {
+                    AppLogger.w("UI", "Whisper model files missing in tilawa_whisper, falling back to CTC FastConformer")
+                    val ctcSuccess = audioRecognizer?.initEngine("tilawa_model") ?: false
+                    if (ctcSuccess) {
+                        "⚠️ Whisper غير متاح في tilawa_whisper — تم التبديل لـ FastConformer CTC"
+                    } else {
+                        "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
+                    }
+                }
             } else {
-                audioRecognizer?.initEngine("tilawa_model") ?: false
+                val ctcSuccess = audioRecognizer?.initEngine("tilawa_model") ?: false
+                if (ctcSuccess) "✅ محرك Sherpa-ONNX FastConformer جاهز" else "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
             }
         }
-        if (success) {
-            engineStatus = if (useWhisperEngine) "✅ محرك Sherpa-Whisper Tiny Quran جاهز" else "✅ محرك Sherpa-ONNX FastConformer جاهز"
-        } else {
-            engineStatus = if (useWhisperEngine) "⚠️ Whisper غير متاح — التبديل التلقائي لـ FastConformer CTC" else "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
-            if (useWhisperEngine) useWhisperEngine = false
-        }
+        engineStatus = statusMessage
     }
 
     val sampleVerses = remember { QuranData.getSampleVerses() }

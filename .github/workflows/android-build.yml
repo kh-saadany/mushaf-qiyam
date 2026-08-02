@@ -119,11 +119,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.3.0"
-        name: "مصحف القيام — V5.3.0"
+        tag: "v5.3.1"
+        name: "مصحف القيام — V5.3.1"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.3.0 (دمج محرك Whisper Tiny Quran + التبديل الحي عبر Feature Flag)
-          تحديث رئيسي يدمج محرك Whisper-tiny-ar-quran عبر OfflineWhisperModelConfig الخالي من الحالة (Stateless)، مع إضافة خيار التبديل التلقائي والحي بين FastConformer CTC و Whisper في الإعدادات للمقارنة الميدانية.
+          ### مصحف القيام — V5.3.1 (معالجة حلقة التراجع ومنع تكرار التهيئة)
+          تحديث ذكي يصلح حلقة التراجع لـ LaunchedEffect ويمنع تكرار تهيئة المحرك، مع تثبيت محرك Whisper وميزة التبديل الحي عبر Feature Flag.
 

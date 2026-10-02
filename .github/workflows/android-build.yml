@@ -123,11 +123,11 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.4.3"
-        name: "مصحف القيام — V5.4.3 (Segment-Based Utterance Mode)"
+        tag: "v5.4.4"
+        name: "مصحف القيام — V5.4.4 (Word-Level Context Window Filter)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.4.3 (نمط الاستدلال القطعي المستند إلى السكتات لـ Whisper)
-          تحديث بنيوي يحول نمط استدلال Whisper لتجميع العينات أثناء الكلام صامتاً، وإطلاق الاستدلال مرة واحدة فقط عند نهاية النطق والانتقال للصمت (Speech -> Silence transition).
+          ### مصحف القيام — V5.4.4 (النافذة السياقية المتسلسلة على مستوى الكلمات)
+          إصلاح سياقي جذري يحصر قاموس الاستماع في الكلمات الـ (6-8) المتوقعة تالياً، ويلغي الهلوسة والكلمات الشاردة نهائياً مع تتبع فوري لانتقال الآيات.
 

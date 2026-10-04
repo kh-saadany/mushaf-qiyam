@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.5.1"
+        const val APP_VERSION = "5.6.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -189,7 +189,7 @@ fun MainAppScreen(
         )
 
         Text(
-            text = "الإصدار $appVersion (Native ONNX Runtime FastConformer)",
+            text = "الإصدار $appVersion (FastConformer Quran Engine - Native ONNX)",
             fontSize = 12.sp,
             color = Color.Gray,
             modifier = Modifier.padding(bottom = 8.dp)

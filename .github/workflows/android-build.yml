@@ -66,6 +66,10 @@ jobs:
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/decoder.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/decoder.int8.onnx"
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/joiner.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/joiner.int8.onnx"
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/tokens.txt"
+          echo "Transforming encoder to remove ConvInteger for ARM64 Android compatibility..."
+          pip install onnx numpy
+          python scripts/fix_encoder_conv.py app/src/main/assets/tilawa_model/encoder.int8.onnx app/src/main/assets/tilawa_model/encoder.onnx
+          rm -f app/src/main/assets/tilawa_model/encoder.int8.onnx
         else
           echo "Lite build: Skipping heavy ONNX model downloads for ultra-compact patch APK."
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/tokens.txt"
@@ -114,12 +118,12 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.5.1"
-        name: "مصحف القيام — V5.5.1 (Native ONNX Runtime FastConformer)"
+        tag: "v5.6.0"
+        name: "مصحف القيام — V5.6.0 (Full - Native ONNX FastConformer Quran Engine)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.5.1 (محرك FastConformer عبر Native ONNX Runtime)
-          تحديث برمجي يحل مشكلة الانهيار (Crash) بالاعتماد على محرك Microsoft ONNX Runtime الرسمي المباشر بلغة Kotlin الصافية مع استخراج Mel Filterbank مخصص وحلقة استدلال سريعة للنموذج القرآني، والاستغناء التام عن أي مكتبات وسيطة.
+          ### مصحف القيام — V5.6.0 (النسخة الكاملة المدمجة — محرك FastConformer القرآني المتوافق مع ARM64)
+          إصدار رئيسي كامل يدمج نموذج FastConformer القرآني بعد معالجة وتطهير عقد الالتفاف (ConvInteger) وتحويلها إلى عقد قياسية متوافقة 100% مع كافة معالجات أندرويد وتابلتات ARM64 دون الحاجة للاتصال بالإنترنت.
 
 

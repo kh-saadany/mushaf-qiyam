@@ -65,6 +65,13 @@ class AudioRecognizer(private val context: Context) {
                 }
             }
             AppLogger.i(TAG, "Copied $fileName from APK assets to ${internalFile.absolutePath}")
+            if (fileName == "encoder.onnx") {
+                val oldEncoder = File(context.filesDir, "$modelDirInAssets/encoder.int8.onnx")
+                if (oldEncoder.exists()) {
+                    oldEncoder.delete()
+                    AppLogger.i(TAG, "Reclaimed space: removed obsolete encoder.int8.onnx")
+                }
+            }
             internalFile.absolutePath
         } catch (t: Throwable) {
             AppLogger.w(TAG, "Could not resolve asset $fileName: ${t.localizedMessage}")
@@ -105,7 +112,8 @@ class AudioRecognizer(private val context: Context) {
                 if (oldModel.exists()) oldModel.delete()
             } catch (_: Throwable) {}
 
-            val encoderPath = resolveFilePath(modelDirInAssets, "encoder.int8.onnx")
+            val encoderPath = resolveFilePath(modelDirInAssets, "encoder.onnx")
+                ?: resolveFilePath(modelDirInAssets, "encoder.int8.onnx")
             val jointPath = resolveFilePath(modelDirInAssets, "joiner.int8.onnx")
                 ?: resolveFilePath(modelDirInAssets, "decoder.int8.onnx")
             val tokensPath = resolveFilePath(modelDirInAssets, "tokens.txt")

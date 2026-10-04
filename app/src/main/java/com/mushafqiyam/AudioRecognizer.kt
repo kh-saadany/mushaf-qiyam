@@ -1,41 +1,49 @@
 package com.mushafqiyam
 
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtSession
 import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import com.k2fsa.sherpa.onnx.OnlineModelConfig
-import com.k2fsa.sherpa.onnx.OnlineRecognizer
-import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
-import com.k2fsa.sherpa.onnx.OnlineStream
-import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
-import com.k2fsa.sherpa.onnx.SileroVadModelConfig
-import com.k2fsa.sherpa.onnx.Vad
-import com.k2fsa.sherpa.onnx.VadModelConfig
+import android.os.Handler
+import android.os.Looper
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.FloatBuffer
+import java.nio.IntBuffer
+import java.nio.LongBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
+import kotlin.math.sqrt
 
 /**
  * AudioRecognizer: Real-time Streaming Automatic Speech Recognition for the Holy Quran.
- * Powered by FastConformer Quran Streaming Transducer via sherpa-onnx OnlineRecognizer.
+ * Powered by FastConformer Quran Streaming Transducer via Native ONNX Runtime.
  */
 class AudioRecognizer(private val context: Context) {
 
     companion object {
         private const val TAG = "AudioRecognizer"
         private const val SAMPLE_RATE = 16000
+        private const val WINDOW_SAMPLES = 28800 // 1.8 seconds sliding window
+        private const val HOP_SAMPLES = 9600     // 0.6 seconds step
     }
 
     private var audioRecord: AudioRecord? = null
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var recognizer: OnlineRecognizer? = null
-    private var stream: OnlineStream? = null
-    private var vad: Vad? = null
+    private var ortEnv: OrtEnvironment? = null
+    private var encoderSession: OrtSession? = null
+    private var jointSession: OrtSession? = null
+
+    private val idToToken = HashMap<Int, String>()
+    private var blankId = 1024
+    private val fbank = FastConformerFbank()
 
     // Callbacks for UI updates
     var onAudioLevel: ((Float) -> Unit)? = null
@@ -64,34 +72,30 @@ class AudioRecognizer(private val context: Context) {
         }
     }
 
-    private fun resolveRawResource(rawResId: Int, fileName: String): String? {
-        val internalFile = File(context.filesDir, "tilawa_model/$fileName")
-        if (internalFile.exists() && internalFile.length() > 0) {
-            AppLogger.i(TAG, "Found existing $fileName in storage: ${internalFile.absolutePath}")
-            return internalFile.absolutePath
-        }
-
-        return try {
-            internalFile.parentFile?.mkdirs()
-            context.resources.openRawResource(rawResId).use { input ->
-                FileOutputStream(internalFile).use { output ->
-                    input.copyTo(output)
+    private fun loadTokens(tokensPath: String) {
+        idToToken.clear()
+        File(tokensPath).forEachLine(Charsets.UTF_8) { line ->
+            val trimmed = line.trimEnd('\r', '\n')
+            val lastSpace = trimmed.lastIndexOf(' ')
+            if (lastSpace > 0) {
+                val token = trimmed.substring(0, lastSpace)
+                val idStr = trimmed.substring(lastSpace + 1)
+                val id = idStr.toIntOrNull()
+                if (id != null) {
+                    idToToken[id] = token
                 }
             }
-            AppLogger.i(TAG, "Copied $fileName from res/raw to ${internalFile.absolutePath}")
-            internalFile.absolutePath
-        } catch (t: Throwable) {
-            AppLogger.w(TAG, "Could not resolve raw resource $fileName: ${t.localizedMessage}")
-            null
         }
+        blankId = idToToken.keys.maxOrNull() ?: 1024
+        AppLogger.i(TAG, "Loaded ${idToToken.size} tokens from $tokensPath (Blank ID: $blankId)")
     }
 
     /**
-     * Initializes sherpa-onnx OnlineRecognizer engine with FastConformer Quran Streaming Transducer.
+     * Initializes native ONNX Runtime sessions for FastConformer Quran Streaming Transducer.
      */
     fun initEngine(modelDirInAssets: String = "tilawa_model"): Boolean {
         return try {
-            AppLogger.i(TAG, "Starting FastConformer Quran Streaming engine init (Dir: $modelDirInAssets)...")
+            AppLogger.i(TAG, "Starting Native ONNX Runtime FastConformer Quran engine init (Dir: $modelDirInAssets)...")
 
             // Clean legacy whisper or obsolete models from internal filesDir to free space
             try {
@@ -102,84 +106,42 @@ class AudioRecognizer(private val context: Context) {
             } catch (_: Throwable) {}
 
             val encoderPath = resolveFilePath(modelDirInAssets, "encoder.int8.onnx")
-            val decoderPath = resolveFilePath(modelDirInAssets, "decoder.int8.onnx")
-            val joinerPath = resolveFilePath(modelDirInAssets, "joiner.int8.onnx")
+            val jointPath = resolveFilePath(modelDirInAssets, "joiner.int8.onnx")
+                ?: resolveFilePath(modelDirInAssets, "decoder.int8.onnx")
             val tokensPath = resolveFilePath(modelDirInAssets, "tokens.txt")
 
             if (encoderPath != null && File(encoderPath).exists() &&
-                decoderPath != null && File(decoderPath).exists() &&
-                joinerPath != null && File(joinerPath).exists() &&
+                jointPath != null && File(jointPath).exists() &&
                 tokensPath != null && File(tokensPath).exists()) {
 
-                val transducerConfig = OnlineTransducerModelConfig(
-                    encoder = encoderPath,
-                    decoder = decoderPath,
-                    joiner = joinerPath
-                )
+                loadTokens(tokensPath)
 
-                val modelConfig = OnlineModelConfig(
-                    transducer = transducerConfig,
-                    tokens = tokensPath,
-                    numThreads = 2,
-                    debug = false,
-                    provider = "cpu",
-                    modelType = "transducer"
-                )
+                val env = OrtEnvironment.getEnvironment()
+                ortEnv = env
 
-                val config = OnlineRecognizerConfig(
-                    modelConfig = modelConfig,
-                    decodingMethod = "greedy_search",
-                    enableEndpoint = false
-                )
-
-                recognizer = OnlineRecognizer(null, config)
-                AppLogger.i(TAG, "FastConformer Quran Streaming Transducer engine initialized successfully")
-
-                // Initialize official Silero VAD from res/raw resource or assets
-                val rawResId = context.resources.getIdentifier("silero_vad", "raw", context.packageName)
-                val vadModelPath = if (rawResId != 0) resolveRawResource(rawResId, "silero_vad.onnx") else null
-                    ?: resolveFilePath(modelDirInAssets, "silero_vad.onnx")
-
-                if (vadModelPath != null && File(vadModelPath).exists()) {
-                    try {
-                        val sileroConfig = SileroVadModelConfig(
-                            model = vadModelPath,
-                            threshold = 0.5f,
-                            minSilenceDuration = 0.35f,
-                            minSpeechDuration = 0.25f,
-                            windowSize = 512,
-                            maxSpeechDuration = 30.0f
-                        )
-                        val vadConfig = VadModelConfig(
-                            sileroVadModelConfig = sileroConfig,
-                            sampleRate = SAMPLE_RATE,
-                            numThreads = 1,
-                            provider = "cpu",
-                            debug = false
-                        )
-                        vad = Vad(null, vadConfig)
-                        AppLogger.i(TAG, "Official Silero VAD initialized successfully")
-                    } catch (t: Throwable) {
-                        AppLogger.e(TAG, "Silero VAD initialization error", t)
-                        vad = null
-                    }
-                } else {
-                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved")
-                    vad = null
+                val sessionOptions = OrtSession.SessionOptions().apply {
+                    setIntraOpNumThreads(2)
+                    setInterOpNumThreads(1)
+                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
                 }
+
+                encoderSession = env.createSession(encoderPath, sessionOptions)
+                jointSession = env.createSession(jointPath, sessionOptions)
+
+                AppLogger.i(TAG, "Native ONNX Runtime FastConformer Quran engine initialized successfully")
                 true
             } else {
-                AppLogger.w(TAG, "FastConformer Quran model files missing: encoder=$encoderPath, decoder=$decoderPath, joiner=$joinerPath, tokens=$tokensPath")
-                onError?.invoke("ملفات نموذج التلاوة القرآني الجديد غير متوفرة")
+                AppLogger.w(TAG, "FastConformer Quran model files missing: encoder=$encoderPath, joint=$jointPath, tokens=$tokensPath")
+                mainHandler.post { onError?.invoke("ملفات نموذج التلاوة القرآني غير متوفرة") }
                 false
             }
         } catch (e: UnsatisfiedLinkError) {
-            AppLogger.e(TAG, "Native JNI Library link error", e)
-            onError?.invoke("تنبيه المحرك: تعذر ربط مكتبة JNI الثنائية (${e.localizedMessage})")
+            AppLogger.e(TAG, "Native ONNX Runtime Library link error", e)
+            mainHandler.post { onError?.invoke("تنبيه المحرك: تعذر ربط مكتبة ONNX Runtime (${e.localizedMessage})") }
             false
         } catch (t: Throwable) {
             AppLogger.e(TAG, "FastConformer Quran init error", t)
-            onError?.invoke("تنبيه المحرك: ${t.localizedMessage}")
+            mainHandler.post { onError?.invoke("تنبيه المحرك: ${t.localizedMessage}") }
             false
         }
     }
@@ -187,8 +149,8 @@ class AudioRecognizer(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun startListening(): Boolean {
         if (isRecording.get()) return true
-        val rec = recognizer ?: run {
-            AppLogger.w(TAG, "Recognizer not initialized")
+        if (encoderSession == null || jointSession == null || ortEnv == null) {
+            AppLogger.w(TAG, "ONNX sessions not initialized")
             onError?.invoke("المحرك غير مهيأ")
             return false
         }
@@ -217,64 +179,62 @@ class AudioRecognizer(private val context: Context) {
             isRecording.set(true)
             AppLogger.i(TAG, "Audio recording started successfully")
 
-            // Create streaming recognition session
-            stream = rec.createStream()
-
             recordingThread = thread(start = true, name = "FastConformerAudioThread") {
-                val buffer = ShortArray(512)
-                var lastEmittedText = ""
-                var silentFramesCount = 0
+                val readChunk = ShortArray(512)
+                val windowBuffer = FloatArray(WINDOW_SAMPLES)
+                var accumulatedSamples = 0
+                var samplesSinceLastInference = 0
 
-                AppLogger.i(TAG, "FastConformer Streaming Audio capture loop started (16kHz Mono)")
+                var lastEmittedText = ""
+                var consecutiveSilenceFrames = 0
+
+                AppLogger.i(TAG, "Native FastConformer Audio capture loop started (16kHz Mono, 1.8s sliding window)")
 
                 while (isRecording.get()) {
                     try {
-                        val readSamples = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                        val readSamples = audioRecord?.read(readChunk, 0, readChunk.size) ?: 0
                         if (readSamples > 0) {
                             var sum = 0.0
                             val floatSamples = FloatArray(readSamples)
                             for (i in 0 until readSamples) {
-                                val floatSample = buffer[i] / 32768.0f
-                                floatSamples[i] = floatSample
-                                sum += (buffer[i].toDouble() * buffer[i].toDouble())
+                                val s = readChunk[i] / 32768.0f
+                                floatSamples[i] = s
+                                sum += (s.toDouble() * s.toDouble())
                             }
-                            val rms = Math.sqrt(sum / readSamples).toFloat()
-                            val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
-                            onAudioLevel?.invoke(level)
+                            val rms = sqrt(sum / readSamples).toFloat()
+                            val level = (rms * 5.0f).coerceIn(0.0f, 1.0f)
+                            mainHandler.post { onAudioLevel?.invoke(level) }
 
-                            // RMS & VAD Gate: check for speech activity
-                            val v = vad
-                            val isSpeech = if (v != null) {
-                                v.acceptWaveform(floatSamples)
-                                while (!v.empty()) { v.pop() }
-                                v.isSpeechDetected()
+                            if (rms > 0.012f) {
+                                consecutiveSilenceFrames = 0
                             } else {
-                                rms > 0.015f
+                                consecutiveSilenceFrames++
                             }
 
-                            val currentStream = stream
-                            if (currentStream != null && rec != null) {
-                                if (isSpeech || rms > 0.012f) {
-                                    silentFramesCount = 0
-                                    currentStream.acceptWaveform(floatSamples, SAMPLE_RATE)
+                            // Slide buffer left and insert new audio samples at the end
+                            System.arraycopy(windowBuffer, readSamples, windowBuffer, 0, WINDOW_SAMPLES - readSamples)
+                            System.arraycopy(floatSamples, 0, windowBuffer, WINDOW_SAMPLES - readSamples, readSamples)
 
-                                    while (rec.isReady(currentStream)) {
-                                        rec.decode(currentStream)
-                                    }
+                            accumulatedSamples = minOf(WINDOW_SAMPLES, accumulatedSamples + readSamples)
+                            samplesSinceLastInference += readSamples
 
-                                    val currentText = rec.getResult(currentStream).text.trim()
-                                    if (currentText.isNotBlank() && currentText != lastEmittedText) {
-                                        lastEmittedText = currentText
-                                        AppLogger.i(TAG, "Recognized text (FastConformer Quran): $currentText")
-                                        onPartialResult?.invoke(currentText)
+                            // Trigger inference every HOP_SAMPLES (0.6s) if window is full
+                            if (accumulatedSamples >= WINDOW_SAMPLES && samplesSinceLastInference >= HOP_SAMPLES) {
+                                samplesSinceLastInference = 0
+
+                                // If speech was present recently (~within 1.4s)
+                                if (consecutiveSilenceFrames < 45) {
+                                    val feats = fbank.computeFeatures(windowBuffer)
+                                    val recognized = decodeWindow(feats)
+                                    if (recognized.isNotBlank() && recognized != lastEmittedText) {
+                                        lastEmittedText = recognized
+                                        AppLogger.i(TAG, "Recognized text (FastConformer Native ONNX): $recognized")
+                                        mainHandler.post { onPartialResult?.invoke(recognized) }
                                     }
                                 } else {
-                                    silentFramesCount++
-                                    // After ~1.2s of silence (38 frames of 512 samples @ 16kHz), reset stream for fresh verse
-                                    if (silentFramesCount >= 38 && lastEmittedText.isNotEmpty()) {
-                                        silentFramesCount = 0
+                                    // Reset deduplication state during silence
+                                    if (consecutiveSilenceFrames >= 38 && lastEmittedText.isNotEmpty()) {
                                         lastEmittedText = ""
-                                        rec.reset(currentStream)
                                     }
                                 }
                             }
@@ -288,9 +248,182 @@ class AudioRecognizer(private val context: Context) {
             true
         } catch (t: Throwable) {
             AppLogger.e(TAG, "Error starting audio recording", t)
-            onError?.invoke("خطأ: ${t.localizedMessage}")
+            mainHandler.post { onError?.invoke("خطأ: ${t.localizedMessage}") }
             false
         }
+    }
+
+    /**
+     * Decodes extracted Mel features using FastConformer Encoder and Joint Transducer.
+     */
+    private fun decodeWindow(features: Array<FloatArray>): String {
+        val env = ortEnv ?: return ""
+        val enc = encoderSession ?: return ""
+        val joint = jointSession ?: return ""
+
+        val numFrames = features[0].size
+        if (numFrames <= 0) return ""
+
+        // 1. Flatten features: [1, 80, numFrames] in row-major order
+        val flatFeatures = FloatArray(80 * numFrames)
+        var offset = 0
+        for (m in 0 until 80) {
+            System.arraycopy(features[m], 0, flatFeatures, offset, numFrames)
+            offset += numFrames
+        }
+
+        val audioTensor = OnnxTensor.createTensor(
+            env,
+            FloatBuffer.wrap(flatFeatures),
+            longArrayOf(1, 80, numFrames.toLong())
+        )
+        val lengthTensor = OnnxTensor.createTensor(
+            env,
+            LongBuffer.wrap(longArrayOf(numFrames.toLong())),
+            longArrayOf(1)
+        )
+
+        var eoFlat: FloatArray? = null
+        var encodedLength = 0
+
+        try {
+            val encInputs = mapOf(
+                "audio_signal" to audioTensor,
+                "length" to lengthTensor
+            )
+            enc.run(encInputs).use { encResult ->
+                for (entry in encResult) {
+                    if (entry.key == "encoded_lengths") {
+                        val elTensor = entry.value as OnnxTensor
+                        encodedLength = elTensor.longBuffer.get(0).toInt()
+                    }
+                }
+                for (entry in encResult) {
+                    if (entry.key == "outputs") {
+                        val outTensor = entry.value as OnnxTensor
+                        val totalFloats = 512 * encodedLength
+                        val buffer = FloatArray(totalFloats)
+                        outTensor.floatBuffer.get(buffer)
+                        eoFlat = buffer
+                    }
+                }
+            }
+        } finally {
+            audioTensor.close()
+            lengthTensor.close()
+        }
+
+        val encOutputs = eoFlat ?: return ""
+        if (encodedLength <= 0) return ""
+
+        // 2. Greedy search on Joint Network
+        val s1 = FloatArray(640)
+        val s2 = FloatArray(640)
+        var lastTarget = blankId
+        val outTokens = mutableListOf<Int>()
+
+        val frameEncOut = FloatArray(512)
+        val targetBuf = IntBuffer.allocate(1)
+        val targetLenBuf = IntBuffer.wrap(intArrayOf(1))
+        val s1Buf = FloatBuffer.allocate(640)
+        val s2Buf = FloatBuffer.allocate(640)
+
+        val encSliceShape = longArrayOf(1, 512, 1)
+        val targetShape = longArrayOf(1, 1)
+        val targetLenShape = longArrayOf(1)
+        val stateShape = longArrayOf(1, 1, 640)
+
+        for (t in 0 until encodedLength) {
+            // Extract channel slice eo[:, :, t:t+1]
+            for (c in 0 until 512) {
+                frameEncOut[c] = encOutputs[c * encodedLength + t]
+            }
+
+            for (u in 0 until 5) {
+                targetBuf.clear()
+                targetBuf.put(0, lastTarget)
+
+                s1Buf.clear()
+                s1Buf.put(s1)
+                s1Buf.flip()
+
+                s2Buf.clear()
+                s2Buf.put(s2)
+                s2Buf.flip()
+
+                val encSliceTensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(frameEncOut), encSliceShape)
+                val targetTensor = OnnxTensor.createTensor(env, targetBuf, targetShape)
+                val targetLenTensor = OnnxTensor.createTensor(env, targetLenBuf, targetLenShape)
+                val s1Tensor = OnnxTensor.createTensor(env, s1Buf, stateShape)
+                val s2Tensor = OnnxTensor.createTensor(env, s2Buf, stateShape)
+
+                var shouldBreak = false
+                try {
+                    val jointInputs = mapOf(
+                        "encoder_outputs" to encSliceTensor,
+                        "targets" to targetTensor,
+                        "target_length" to targetLenTensor,
+                        "input_states_1" to s1Tensor,
+                        "input_states_2" to s2Tensor
+                    )
+
+                    joint.run(jointInputs).use { jointResult ->
+                        var logitsTensor: OnnxTensor? = null
+                        var ns1Tensor: OnnxTensor? = null
+                        var ns2Tensor: OnnxTensor? = null
+
+                        for (entry in jointResult) {
+                            when (entry.key) {
+                                "outputs" -> logitsTensor = entry.value as OnnxTensor
+                                "output_states_1" -> ns1Tensor = entry.value as OnnxTensor
+                                "output_states_2" -> ns2Tensor = entry.value as OnnxTensor
+                            }
+                        }
+
+                        if (logitsTensor != null) {
+                            val fb = logitsTensor.floatBuffer
+                            var maxK = 0
+                            var maxVal = Float.NEGATIVE_INFINITY
+                            val count = fb.remaining()
+                            for (k in 0 until count) {
+                                val v = fb.get(k)
+                                if (v > maxVal) {
+                                    maxVal = v
+                                    maxK = k
+                                }
+                            }
+
+                            if (maxK == blankId) {
+                                shouldBreak = true
+                            } else {
+                                outTokens.add(maxK)
+                                lastTarget = maxK
+                                ns1Tensor?.floatBuffer?.get(s1)
+                                ns2Tensor?.floatBuffer?.get(s2)
+                            }
+                        }
+                    }
+                } finally {
+                    encSliceTensor.close()
+                    targetTensor.close()
+                    targetLenTensor.close()
+                    s1Tensor.close()
+                    s2Tensor.close()
+                }
+
+                if (shouldBreak) break
+            }
+        }
+
+        if (outTokens.isEmpty()) return ""
+
+        val sb = StringBuilder()
+        for (id in outTokens) {
+            val tok = idToToken[id] ?: continue
+            if (tok == "<blk>" || tok == "<unk>") continue
+            sb.append(tok)
+        }
+        return sb.toString().replace("\u2581", " ").trim()
     }
 
     fun stopListening() {
@@ -309,21 +442,21 @@ class AudioRecognizer(private val context: Context) {
         audioRecord = null
         recordingThread = null
 
-        val currentStream = stream
-        val rec = recognizer
-        if (currentStream != null && rec != null) {
-            try { rec.reset(currentStream) } catch (_: Throwable) {}
-        }
-        stream = null
-
         AppLogger.i(TAG, "Audio recording stopped")
     }
 
     fun release() {
         stopListening()
-        stream = null
-        try { recognizer?.release() } catch (_: Throwable) {}
-        recognizer = null
+        try {
+            encoderSession?.close()
+            jointSession?.close()
+            ortEnv?.close()
+        } catch (t: Throwable) {
+            AppLogger.w(TAG, "Error closing ORT sessions: ${t.localizedMessage}")
+        }
+        encoderSession = null
+        jointSession = null
+        ortEnv = null
         AppLogger.i(TAG, "AudioRecognizer released")
     }
 }

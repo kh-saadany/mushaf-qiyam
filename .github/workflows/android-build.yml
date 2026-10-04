@@ -31,11 +31,6 @@ jobs:
         gradle wrapper --gradle-version 8.6
         chmod +x gradlew
 
-    - name: Download Sherpa AAR Binary
-      run: |
-        mkdir -p app/libs
-        curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
-
     - name: Run Kotlin Compilation Verification
       run: ./gradlew compileReleaseKotlin
 
@@ -63,9 +58,6 @@ jobs:
 
     - name: Download Model Assets for Offline ASR
       run: |
-        mkdir -p app/libs
-        echo "Downloading Sherpa-ONNX 1.13.4 AAR binary..."
-        curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
         mkdir -p app/src/main/assets/tilawa_model
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
@@ -122,12 +114,12 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.5.0"
-        name: "مصحف القيام — V5.5.0 (FastConformer Quran Streaming Transducer)"
+        tag: "v5.5.1"
+        name: "مصحف القيام — V5.5.1 (Native ONNX Runtime FastConformer)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.5.0 (محرك FastConformer القرآني المتدفق)
-          تحديث معماري رئيسي ينتقل إلى نموذج FastConformer Streaming Transducer المدرّب على تلاوة القرآن الكريم (tarteel-ai/everyayah) مع انعدام التأخير الزمني (Zero Lookahead) وتطهير التطبيق من النماذج القديمة.
+          ### مصحف القيام — V5.5.1 (محرك FastConformer عبر Native ONNX Runtime)
+          تحديث برمجي يحل مشكلة الانهيار (Crash) بالاعتماد على محرك Microsoft ONNX Runtime الرسمي المباشر بلغة Kotlin الصافية مع استخراج Mel Filterbank مخصص وحلقة استدلال سريعة للنموذج القرآني، والاستغناء التام عن أي مكتبات وسيطة.
 
 

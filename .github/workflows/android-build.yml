@@ -67,17 +67,16 @@ jobs:
         echo "Downloading Sherpa-ONNX 1.13.4 AAR binary..."
         curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
         mkdir -p app/src/main/assets/tilawa_model
-        curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt https://github.com/kh-saadany/mushaf-qiyam/releases/download/sherpa-model-v1.0/tokens.txt
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Full build: Downloading 125MB FastConformer & 98MB Whisper ONNX models for self-contained Full APK..."
-          curl -L --retry 5 -o app/src/main/assets/tilawa_model/model.int8.onnx https://github.com/kh-saadany/mushaf-qiyam/releases/download/sherpa-model-v1.0/model.int8.onnx
-          mkdir -p app/src/main/assets/tilawa_whisper
-          curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/encoder.int8.onnx "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-encoder.int8.onnx?download=true"
-          curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/decoder.int8.onnx "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-decoder.int8.onnx?download=true"
-          curl -L --retry 5 -o app/src/main/assets/tilawa_whisper/tokens.txt "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny/resolve/main/tiny-tokens.txt?download=true"
+          echo "Full build: Downloading FastConformer Quran Streaming Transducer ONNX models (~129MB)..."
+          curl -L --retry 5 -o app/src/main/assets/tilawa_model/encoder.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/encoder.int8.onnx"
+          curl -L --retry 5 -o app/src/main/assets/tilawa_model/decoder.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/decoder.int8.onnx"
+          curl -L --retry 5 -o app/src/main/assets/tilawa_model/joiner.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/joiner.int8.onnx"
+          curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/tokens.txt"
         else
-          echo "Lite build: Skipping all heavy ONNX model downloads for ultra-compact (~15MB) patch APK."
+          echo "Lite build: Skipping heavy ONNX model downloads for ultra-compact patch APK."
+          curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/tokens.txt"
         fi
 
     - name: Decode Keystore
@@ -123,11 +122,12 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.4.4"
-        name: "مصحف القيام — V5.4.4 (Word-Level Context Window Filter)"
+        tag: "v5.5.0"
+        name: "مصحف القيام — V5.5.0 (FastConformer Quran Streaming Transducer)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.4.4 (النافذة السياقية المتسلسلة على مستوى الكلمات)
-          إصلاح سياقي جذري يحصر قاموس الاستماع في الكلمات الـ (6-8) المتوقعة تالياً، ويلغي الهلوسة والكلمات الشاردة نهائياً مع تتبع فوري لانتقال الآيات.
+          ### مصحف القيام — V5.5.0 (محرك FastConformer القرآني المتدفق)
+          تحديث معماري رئيسي ينتقل إلى نموذج FastConformer Streaming Transducer المدرّب على تلاوة القرآن الكريم (tarteel-ai/everyayah) مع انعدام التأخير الزمني (Zero Lookahead) وتطهير التطبيق من النماذج القديمة.
+
 

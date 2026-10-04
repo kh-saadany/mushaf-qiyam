@@ -37,24 +37,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.flow.asStateFlow
 
 class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.4.4"
+        const val APP_VERSION = "5.5.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
-    private var whisperAudioRecognizer: WhisperAudioRecognizer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppLogger.i(TAG, "Mushaf Qiyam App Started (Version: $APP_VERSION)")
 
         audioRecognizer = AudioRecognizer(this)
-        whisperAudioRecognizer = WhisperAudioRecognizer(this)
 
         setContent {
             MaterialTheme {
@@ -64,8 +61,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     MainAppScreen(
                         appVersion = APP_VERSION,
-                        audioRecognizer = audioRecognizer,
-                        whisperAudioRecognizer = whisperAudioRecognizer
+                        audioRecognizer = audioRecognizer
                     )
                 }
             }
@@ -75,7 +71,6 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         audioRecognizer?.release()
-        whisperAudioRecognizer?.release()
         AppLogger.i(TAG, "Mushaf Qiyam App Destroyed")
     }
 }
@@ -83,12 +78,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainAppScreen(
     appVersion: String,
-    audioRecognizer: AudioRecognizer?,
-    whisperAudioRecognizer: WhisperAudioRecognizer? = null
+    audioRecognizer: AudioRecognizer?
 ) {
     val context = LocalContext.current
     var isListening by remember { mutableStateOf(false) }
-    var useWhisperEngine by remember { mutableStateOf(false) }
     var engineStatus by remember { mutableStateOf("جاري تهيئة المحرك...") }
     var recognizedText by remember { mutableStateOf("") }
     var audioLevel by remember { mutableFloatStateOf(0f) }
@@ -113,25 +106,14 @@ fun MainAppScreen(
         }
     }
 
-    LaunchedEffect(useWhisperEngine) {
-        engineStatus = "⏳ جاري تهيئة محرك الذكاء الاصطناعي..."
+    LaunchedEffect(Unit) {
+        engineStatus = "⏳ جاري تهيئة محرك FastConformer القرآني..."
         val statusMessage = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            if (useWhisperEngine) {
-                val whisperSuccess = whisperAudioRecognizer?.initEngine("tilawa_whisper") ?: false
-                if (whisperSuccess) {
-                    "✅ محرك Sherpa-Whisper Tiny Quran جاهز"
-                } else {
-                    AppLogger.w("UI", "Whisper model files missing in tilawa_whisper, falling back to CTC FastConformer")
-                    val ctcSuccess = audioRecognizer?.initEngine("tilawa_model") ?: false
-                    if (ctcSuccess) {
-                        "⚠️ Whisper غير متاح في tilawa_whisper — تم التبديل لـ FastConformer CTC"
-                    } else {
-                        "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
-                    }
-                }
+            val success = audioRecognizer?.initEngine("tilawa_model") ?: false
+            if (success) {
+                "✅ محرك FastConformer Quran Streaming جاهز"
             } else {
-                val ctcSuccess = audioRecognizer?.initEngine("tilawa_model") ?: false
-                if (ctcSuccess) "✅ محرك Sherpa-ONNX FastConformer جاهز" else "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
+                "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
             }
         }
         engineStatus = statusMessage
@@ -141,10 +123,7 @@ fun MainAppScreen(
     var activeVerseIndex by remember { mutableIntStateOf(0) }
     var matchSimilarityText by remember { mutableStateOf("") }
 
-    var pendingCandidateIndex by remember { mutableIntStateOf(-1) }
-    var confirmCount by remember { mutableIntStateOf(0) }
     var graceEmptyFrames by remember { mutableIntStateOf(0) }
-    var graceMismatchFrames by remember { mutableIntStateOf(0) }
 
     val handlePartialResult: (String) -> Unit = { rawText ->
         if (rawText.isNotBlank()) {
@@ -160,7 +139,6 @@ fun MainAppScreen(
                 val targetVerse = trackingResult.matchedVerseIndex
                 if (targetVerse != null) {
                     graceEmptyFrames = 0
-                    graceMismatchFrames = 0
 
                     if (targetVerse == activeVerseIndex) {
                         matchSimilarityText = "🎯 مطابقة الآية ${(targetVerse + 1)} (نسبة التشابه: ${(trackingResult.highestSimilarity * 100).toInt()}%)"
@@ -179,7 +157,6 @@ fun MainAppScreen(
                     }
                 }
             } else {
-                // Immunized Hysteresis: Non-Quranic noise / breath filtered out.
                 graceEmptyFrames++
                 if (graceEmptyFrames >= 7) {
                     graceEmptyFrames = 0
@@ -188,59 +165,35 @@ fun MainAppScreen(
         }
     }
 
-    if (useWhisperEngine) {
-        whisperAudioRecognizer?.onAudioLevel = { level -> audioLevel = level }
-        whisperAudioRecognizer?.onPartialResult = handlePartialResult
-    } else {
-        audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
-        audioRecognizer?.onPartialResult = handlePartialResult
+    audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
+    audioRecognizer?.onPartialResult = handlePartialResult
+    audioRecognizer?.onError = { err ->
+        AppLogger.e("UI", "AudioRecognizer error: $err")
+        engineStatus = "⚠️ $err"
     }
+
+    var showLogs by remember { mutableStateOf(false) }
+    val logs by AppLogger.logs.collectAsState()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(12.dp)
     ) {
         // App Header
         Text(
             text = "مصحف القيام",
-            fontSize = 28.sp,
+            fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary
         )
 
         Text(
-            text = "الإصدار $appVersion (محرك تلاوة ONNX المباشر)",
+            text = "الإصدار $appVersion (FastConformer Quran Streaming Transducer)",
             fontSize = 12.sp,
             color = Color.Gray,
             modifier = Modifier.padding(bottom = 8.dp)
         )
-
-        // Engine Selector Feature Flag Toggle
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = if (useWhisperEngine) "محرك الاستدلال: Whisper Tiny Quran" else "محرك الاستدلال: FastConformer CTC",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.secondary
-            )
-            Switch(
-                checked = useWhisperEngine,
-                onCheckedChange = { checked ->
-                    if (!isListening) {
-                        useWhisperEngine = checked
-                    }
-                },
-                enabled = !isListening
-            )
-        }
 
         // Engine Status Card
         Card(
@@ -286,7 +239,7 @@ fun MainAppScreen(
             Button(
                 onClick = {
                     if (isListening) {
-                        if (useWhisperEngine) whisperAudioRecognizer?.stopListening() else audioRecognizer?.stopListening()
+                        audioRecognizer?.stopListening()
                         isListening = false
                         AppLogger.i("UI", "User clicked Stop Listening")
                     } else {
@@ -294,14 +247,10 @@ fun MainAppScreen(
                         activeVerseIndex = 0
                         matchSimilarityText = ""
                         QuranVocabularyFilter.resetPointerToVerse(0)
-                        val started: Boolean = if (useWhisperEngine) {
-                            whisperAudioRecognizer?.startListening() == true
-                        } else {
-                            audioRecognizer?.startListening() == true
-                        }
+                        val started: Boolean = audioRecognizer?.startListening() == true
                         if (started) {
                             isListening = true
-                            AppLogger.i("UI", "User clicked Start Listening (${if (useWhisperEngine) "Whisper" else "CTC"})")
+                            AppLogger.i("UI", "User clicked Start Listening (FastConformer Quran)")
                         }
                     }
                 },
@@ -432,23 +381,21 @@ fun MainAppScreen(
                     text = "النص الذي تم التعرف عليه من التلاوة المباشرة:",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.secondary,
                     textAlign = TextAlign.Right,
                     modifier = Modifier.fillMaxWidth()
                 )
-
                 Divider(modifier = Modifier.padding(vertical = 4.dp))
-
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surface),
-                    contentAlignment = Alignment.TopEnd
+                        .background(Color(0xFFF9F9F9), RoundedCornerShape(4.dp))
+                        .padding(6.dp)
                 ) {
                     Text(
-                        text = if (recognizedText.isEmpty()) "في انتظار التلاوة الصوتية..." else recognizedText,
-                        fontSize = 15.sp,
-                        color = if (recognizedText.isEmpty()) Color.Gray else MaterialTheme.colorScheme.onSurface,
+                        text = if (recognizedText.isEmpty()) "في انتظار بدء التلاوة..." else recognizedText,
+                        fontSize = 14.sp,
+                        color = if (recognizedText.isEmpty()) Color.LightGray else Color.Black,
                         textAlign = TextAlign.Right,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -458,81 +405,78 @@ fun MainAppScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Collapsible Diagnostic Logs Console Section
-        DiagnosticLogsConsole(context = context)
-    }
-}
-
-@Composable
-fun DiagnosticLogsConsole(context: Context) {
-    var isExpanded by remember { mutableStateOf(false) }
-    val logsList by AppLogger.logs.collectAsState()
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
-    ) {
-        Column(modifier = Modifier.padding(8.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { isExpanded = !isExpanded },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "📋 سجل التشخيص الفني (Diagnostic Console - ${logsList.size})",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-
-                Row {
-                    if (isExpanded) {
-                        TextButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = ClipData.newPlainText("Mushaf Qiyam Logs", AppLogger.getAllLogsText())
-                                clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "تم نسخ سجل التشخيص بنجاح", Toast.LENGTH_SHORT).show()
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Text("نسخ السجل", fontSize = 11.sp, color = Color.Green)
-                        }
-                        Spacer(modifier = Modifier.width(4.dp))
-                    }
-
-                    Icon(
-                        imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = "Toggle Logs",
-                        tint = Color.White
+        // Diagnostics / Debug Logs Collapsible Section
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(if (showLogs) Modifier.weight(1.0f) else Modifier),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(modifier = Modifier.padding(6.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showLogs = !showLogs },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🛠️ سجلات التشخيص المباشرة (${logs.size})",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
                     )
+                    IconButton(onClick = { showLogs = !showLogs }, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            imageVector = if (showLogs) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
                 }
-            }
 
-            AnimatedVisibility(visible = isExpanded) {
-                Column(modifier = Modifier.padding(top = 8.dp)) {
-                    Divider(color = Color.DarkGray)
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(140.dp)
-                            .padding(top = 4.dp)
-                    ) {
-                        items(logsList) { entry ->
-                            val color = when (entry.level) {
-                                "ERROR" -> Color(0xFFFF6B6B)
-                                "WARN" -> Color(0xFFFFD93D)
-                                else -> Color(0xFF6BCB77)
+                AnimatedVisibility(visible = showLogs) {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            Button(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val logText = AppLogger.getAllLogsText()
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("MushafQiyam Logs", logText))
+                                    Toast.makeText(context, "تم نسخ السجلات إلى الحافظة", Toast.LENGTH_SHORT).show()
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("نسخ السجل", fontSize = 10.sp)
                             }
-                            Text(
-                                text = "[${entry.timestamp}] [${entry.tag}] ${entry.message}",
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = color,
-                                modifier = Modifier.padding(vertical = 1.dp)
-                            )
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp)
+                                .background(Color.Black, RoundedCornerShape(4.dp))
+                                .padding(6.dp)
+                        ) {
+                            items(logs) { entry ->
+                                val color = when (entry.level) {
+                                    "ERROR" -> Color(0xFFFF5252)
+                                    "WARN" -> Color(0xFFFFD740)
+                                    else -> if (entry.message.contains("Confirmed") || entry.message.contains("🎯")) Color(0xFF69F0AE) else Color(0xFFE0E0E0)
+                                }
+                                val displayText = "[${entry.timestamp}] [${entry.level}] ${entry.tag}: ${entry.message}"
+                                Text(
+                                    text = displayText,
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = color,
+                                    modifier = Modifier.padding(vertical = 1.dp)
+                                )
+                            }
                         }
                     }
                 }

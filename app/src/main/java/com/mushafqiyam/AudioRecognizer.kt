@@ -5,10 +5,11 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import com.k2fsa.sherpa.onnx.OfflineModelConfig
-import com.k2fsa.sherpa.onnx.OfflineNemoEncDecCtcModelConfig
-import com.k2fsa.sherpa.onnx.OfflineRecognizer
-import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineStream
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
@@ -18,8 +19,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
- * AudioRecognizer: Manages microphone recording (16kHz Mono PCM)
- * and streams audio into sherpa-onnx OfflineRecognizer for live Quran ASR.
+ * AudioRecognizer: Real-time Streaming Automatic Speech Recognition for the Holy Quran.
+ * Powered by FastConformer Quran Streaming Transducer via sherpa-onnx OnlineRecognizer.
  */
 class AudioRecognizer(private val context: Context) {
 
@@ -32,7 +33,8 @@ class AudioRecognizer(private val context: Context) {
     private val isRecording = AtomicBoolean(false)
     private var recordingThread: Thread? = null
 
-    private var recognizer: OfflineRecognizer? = null
+    private var recognizer: OnlineRecognizer? = null
+    private var stream: OnlineStream? = null
     private var vad: Vad? = null
 
     // Callbacks for UI updates
@@ -85,33 +87,59 @@ class AudioRecognizer(private val context: Context) {
     }
 
     /**
-     * Initializes sherpa-onnx OfflineRecognizer engine safely.
+     * Initializes sherpa-onnx OnlineRecognizer engine with FastConformer Quran Streaming Transducer.
      */
-    fun initEngine(modelDirInAssets: String): Boolean {
+    fun initEngine(modelDirInAssets: String = "tilawa_model"): Boolean {
         return try {
-            AppLogger.i(TAG, "Starting sherpa-onnx engine init (Dir: $modelDirInAssets)...")
+            AppLogger.i(TAG, "Starting FastConformer Quran Streaming engine init (Dir: $modelDirInAssets)...")
 
-            val modelPath = resolveFilePath(modelDirInAssets, "model.int8.onnx")
+            // Clean legacy whisper or obsolete models from internal filesDir to free space
+            try {
+                val whisperDir = File(context.filesDir, "tilawa_whisper")
+                if (whisperDir.exists()) whisperDir.deleteRecursively()
+                val oldModel = File(context.filesDir, "$modelDirInAssets/model.int8.onnx")
+                if (oldModel.exists()) oldModel.delete()
+            } catch (_: Throwable) {}
+
+            val encoderPath = resolveFilePath(modelDirInAssets, "encoder.int8.onnx")
+            val decoderPath = resolveFilePath(modelDirInAssets, "decoder.int8.onnx")
+            val joinerPath = resolveFilePath(modelDirInAssets, "joiner.int8.onnx")
             val tokensPath = resolveFilePath(modelDirInAssets, "tokens.txt")
 
-            if (modelPath != null && File(modelPath).exists() && tokensPath != null && File(tokensPath).exists()) {
-                val config = OfflineRecognizerConfig(
-                    modelConfig = OfflineModelConfig(
-                        nemo = OfflineNemoEncDecCtcModelConfig(model = modelPath),
-                        tokens = tokensPath,
-                        debug = false
-                    ),
-                    decodingMethod = "greedy_search"
-                )
-                recognizer = OfflineRecognizer(null, config)
-                AppLogger.i(TAG, "Sherpa-ONNX engine initialized successfully")
+            if (encoderPath != null && File(encoderPath).exists() &&
+                decoderPath != null && File(decoderPath).exists() &&
+                joinerPath != null && File(joinerPath).exists() &&
+                tokensPath != null && File(tokensPath).exists()) {
 
-                // Initialize official Silero VAD from res/raw resource directly
+                val transducerConfig = OnlineTransducerModelConfig(
+                    encoder = encoderPath,
+                    decoder = decoderPath,
+                    joiner = joinerPath
+                )
+
+                val modelConfig = OnlineModelConfig(
+                    transducer = transducerConfig,
+                    tokens = tokensPath,
+                    numThreads = 2,
+                    debug = false,
+                    provider = "cpu",
+                    modelType = "transducer"
+                )
+
+                val config = OnlineRecognizerConfig(
+                    modelConfig = modelConfig,
+                    decodingMethod = "greedy_search",
+                    enableEndpoint = false
+                )
+
+                recognizer = OnlineRecognizer(null, config)
+                AppLogger.i(TAG, "FastConformer Quran Streaming Transducer engine initialized successfully")
+
+                // Initialize official Silero VAD from res/raw resource or assets
                 val rawResId = context.resources.getIdentifier("silero_vad", "raw", context.packageName)
                 val vadModelPath = if (rawResId != 0) resolveRawResource(rawResId, "silero_vad.onnx") else null
                     ?: resolveFilePath(modelDirInAssets, "silero_vad.onnx")
 
-                AppLogger.i(TAG, "Resolving Silero VAD at path: $vadModelPath")
                 if (vadModelPath != null && File(vadModelPath).exists()) {
                     try {
                         val sileroConfig = SileroVadModelConfig(
@@ -130,19 +158,19 @@ class AudioRecognizer(private val context: Context) {
                             debug = false
                         )
                         vad = Vad(null, vadConfig)
-                        AppLogger.i(TAG, "Official Silero VAD initialized successfully from $vadModelPath")
+                        AppLogger.i(TAG, "Official Silero VAD initialized successfully")
                     } catch (t: Throwable) {
                         AppLogger.e(TAG, "Silero VAD initialization error", t)
                         vad = null
                     }
                 } else {
-                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved in raw resources")
+                    AppLogger.w(TAG, "silero_vad.onnx missing or unresolved")
                     vad = null
                 }
                 true
             } else {
-                AppLogger.w(TAG, "Sherpa-ONNX model or tokens missing. modelPath=$modelPath, tokensPath=$tokensPath")
-                onError?.invoke("نموذج التلاوة الكامل غير متوفر بالذاكرة المحلية")
+                AppLogger.w(TAG, "FastConformer Quran model files missing: encoder=$encoderPath, decoder=$decoderPath, joiner=$joinerPath, tokens=$tokensPath")
+                onError?.invoke("ملفات نموذج التلاوة القرآني الجديد غير متوفرة")
                 false
             }
         } catch (e: UnsatisfiedLinkError) {
@@ -150,7 +178,7 @@ class AudioRecognizer(private val context: Context) {
             onError?.invoke("تنبيه المحرك: تعذر ربط مكتبة JNI الثنائية (${e.localizedMessage})")
             false
         } catch (t: Throwable) {
-            AppLogger.e(TAG, "Sherpa-ONNX init error", t)
+            AppLogger.e(TAG, "FastConformer Quran init error", t)
             onError?.invoke("تنبيه المحرك: ${t.localizedMessage}")
             false
         }
@@ -159,6 +187,11 @@ class AudioRecognizer(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun startListening(): Boolean {
         if (isRecording.get()) return true
+        val rec = recognizer ?: run {
+            AppLogger.w(TAG, "Recognizer not initialized")
+            onError?.invoke("المحرك غير مهيأ")
+            return false
+        }
 
         return try {
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
@@ -184,17 +217,15 @@ class AudioRecognizer(private val context: Context) {
             isRecording.set(true)
             AppLogger.i(TAG, "Audio recording started successfully")
 
-            recordingThread = thread(start = true, name = "AudioRecognizerThread") {
+            // Create streaming recognition session
+            stream = rec.createStream()
+
+            recordingThread = thread(start = true, name = "FastConformerAudioThread") {
                 val buffer = ShortArray(512)
-                val maxBufferSamples = (SAMPLE_RATE * 1.8).toInt() // 28,800 samples (1.8s)
-                val hopSamples = (SAMPLE_RATE * 0.5).toInt()       // 8,000 samples (0.5s step)
-                val slidingBuffer = FloatArray(maxBufferSamples)
-                var bufferWritePos = 0
-                var samplesSinceInference = 0
+                var lastEmittedText = ""
+                var silentFramesCount = 0
 
-                var speechDurationFrames = 0
-
-                AppLogger.i(TAG, "Audio capture thread running with RMS Gate + Silero VAD (400ms Min Speech) + Sliding Window (1.8s)")
+                AppLogger.i(TAG, "FastConformer Streaming Audio capture loop started (16kHz Mono)")
 
                 while (isRecording.get()) {
                     try {
@@ -211,51 +242,41 @@ class AudioRecognizer(private val context: Context) {
                             val level = (rms * 5.0).coerceIn(0.0, 1.0).toFloat()
                             onAudioLevel?.invoke(level)
 
-                            // 1. RMS Energy Gate: Ignore silent / background mic noise frames completely
-                            if (rms < 0.015f) {
-                                speechDurationFrames = 0
-                                bufferWritePos = 0
-                                samplesSinceInference = 0
-                                continue
-                            }
-
-                            // 2. Silero VAD neural Gatekeeper check
+                            // RMS & VAD Gate: check for speech activity
                             val v = vad
                             val isSpeech = if (v != null) {
                                 v.acceptWaveform(floatSamples)
-                                // Silent drain to prevent JNI C++ memory accumulation
-                                while (!v.empty()) {
-                                    v.pop()
-                                }
+                                while (!v.empty()) { v.pop() }
                                 v.isSpeechDetected()
                             } else {
-                                level > 0.12f
+                                rms > 0.015f
                             }
 
-                            if (isSpeech) {
-                                speechDurationFrames++
-                                // Always accumulate floatSamples into slidingBuffer starting from frame 1 (Zero Truncation!)
-                                for (s in floatSamples) {
-                                    if (bufferWritePos < maxBufferSamples) {
-                                        slidingBuffer[bufferWritePos++] = s
-                                    } else {
-                                        System.arraycopy(slidingBuffer, 1, slidingBuffer, 0, maxBufferSamples - 1)
-                                        slidingBuffer[maxBufferSamples - 1] = s
+                            val currentStream = stream
+                            if (currentStream != null && rec != null) {
+                                if (isSpeech || rms > 0.012f) {
+                                    silentFramesCount = 0
+                                    currentStream.acceptWaveform(floatSamples, SAMPLE_RATE)
+
+                                    while (rec.isReady(currentStream)) {
+                                        rec.decode(currentStream)
+                                    }
+
+                                    val currentText = rec.getResult(currentStream).text.trim()
+                                    if (currentText.isNotBlank() && currentText != lastEmittedText) {
+                                        lastEmittedText = currentText
+                                        AppLogger.i(TAG, "Recognized text (FastConformer Quran): $currentText")
+                                        onPartialResult?.invoke(currentText)
+                                    }
+                                } else {
+                                    silentFramesCount++
+                                    // After ~1.2s of silence (38 frames of 512 samples @ 16kHz), reset stream for fresh verse
+                                    if (silentFramesCount >= 38 && lastEmittedText.isNotEmpty()) {
+                                        silentFramesCount = 0
+                                        lastEmittedText = ""
+                                        rec.reset(currentStream)
                                     }
                                 }
-                                samplesSinceInference += readSamples
-
-                                // Trigger ASR inference once speech duration reaches at least ~320ms (10 frames) and hop size is met
-                                if (speechDurationFrames >= 10 && samplesSinceInference >= hopSamples && bufferWritePos >= (SAMPLE_RATE * 0.8).toInt()) {
-                                    samplesSinceInference = 0
-                                    val windowToRecognize = slidingBuffer.copyOfRange(0, bufferWritePos)
-                                    runInference(windowToRecognize)
-                                }
-                            } else {
-                                // Silence / breath ended: reset speech duration and sliding buffer
-                                speechDurationFrames = 0
-                                bufferWritePos = 0
-                                samplesSinceInference = 0
                             }
                         }
                     } catch (t: Throwable) {
@@ -264,32 +285,11 @@ class AudioRecognizer(private val context: Context) {
                 }
                 AppLogger.i(TAG, "Audio capture thread stopped")
             }
-            return true
-
+            true
         } catch (t: Throwable) {
             AppLogger.e(TAG, "Error starting audio recording", t)
             onError?.invoke("خطأ: ${t.localizedMessage}")
             false
-        }
-    }
-
-    private fun runInference(audioSamples: FloatArray) {
-        val rec = recognizer ?: return
-
-        try {
-            val stream = rec.createStream()
-            stream.acceptWaveform(audioSamples, SAMPLE_RATE)
-            rec.decode(stream)
-
-            val result = rec.getResult(stream)
-            val text = result.text.trim()
-            if (text.isNotBlank()) {
-                AppLogger.i(TAG, "Recognized text (Sherpa): $text")
-                onPartialResult?.invoke(text)
-            }
-            stream.release()
-        } catch (t: Throwable) {
-            AppLogger.e(TAG, "Error during Sherpa inference", t)
         }
     }
 
@@ -308,11 +308,20 @@ class AudioRecognizer(private val context: Context) {
 
         audioRecord = null
         recordingThread = null
+
+        val currentStream = stream
+        val rec = recognizer
+        if (currentStream != null && rec != null) {
+            try { rec.reset(currentStream) } catch (_: Throwable) {}
+        }
+        stream = null
+
         AppLogger.i(TAG, "Audio recording stopped")
     }
 
     fun release() {
         stopListening()
+        stream = null
         try { recognizer?.release() } catch (_: Throwable) {}
         recognizer = null
         AppLogger.i(TAG, "AudioRecognizer released")

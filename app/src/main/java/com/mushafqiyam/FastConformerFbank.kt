@@ -110,27 +110,35 @@ class FastConformerFbank {
         }
     }
 
+    // Preallocated buffers for zero-allocation streaming
+    private var pre = FloatArray(28800)
+    private var logmel = Array(N_MELS) { FloatArray(1 + 28800 / HOP_LENGTH) }
+    private val frameBuf = FloatArray(N_FFT)
+    private val re = FloatArray(N_FFT)
+    private val im = FloatArray(N_FFT)
+    private val power = FloatArray(NUM_FFT_BINS)
+
     /**
      * Extracts normalized log-mel spectrogram [80, numFrames] from raw audio.
+     * Uses preallocated buffers to achieve zero allocation per inference frame.
      */
     fun computeFeatures(audio: FloatArray): Array<FloatArray> {
         if (audio.isEmpty()) return Array(N_MELS) { FloatArray(0) }
 
-        // Preemphasis: y[t] - 0.97 * y[t-1]
-        val pre = FloatArray(audio.size)
-        pre[0] = audio[0]
-        for (i in 1 until audio.size) {
-            pre[i] = audio[i] - 0.97f * audio[i - 1]
+        val audioSize = audio.size
+        if (pre.size < audioSize) {
+            pre = FloatArray(audioSize)
+        }
+        val numFrames = 1 + audioSize / HOP_LENGTH
+        if (logmel[0].size < numFrames) {
+            logmel = Array(N_MELS) { FloatArray(numFrames) }
         }
 
-        val numFrames = 1 + audio.size / HOP_LENGTH
-        val logmel = Array(N_MELS) { FloatArray(numFrames) }
-
-        // Preallocated frame and FFT buffers (reused across time frames)
-        val frameBuf = FloatArray(N_FFT)
-        val re = FloatArray(N_FFT)
-        val im = FloatArray(N_FFT)
-        val power = FloatArray(NUM_FFT_BINS)
+        // Preemphasis: y[t] - 0.97 * y[t-1] (Zero allocation)
+        pre[0] = audio[0]
+        for (i in 1 until audioSize) {
+            pre[i] = audio[i] - 0.97f * audio[i - 1]
+        }
 
         for (t in 0 until numFrames) {
             frameBuf.fill(0f)
@@ -138,7 +146,7 @@ class FastConformerFbank {
             // win_length = 400 placed in 512 with left offset 56: (512 - 400) / 2 = 56
             for (n in 0 until WIN_LENGTH) {
                 val idx = t * HOP_LENGTH + n - 200
-                if (idx in pre.indices) {
+                if (idx in 0 until audioSize) {
                     frameBuf[56 + n] = pre[idx] * hannWindow[n]
                 }
             }

@@ -118,12 +118,12 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.6.0"
-        name: "مصحف القيام — V5.6.0 (Full - Native ONNX FastConformer Quran Engine)"
+        tag: "v5.6.1"
+        name: "مصحف القيام — V5.6.1 (Lite - Double-Buffering & Zero-Allocation FastConformer Engine)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.6.0 (النسخة الكاملة المدمجة — محرك FastConformer القرآني المتوافق مع ARM64)
-          إصدار رئيسي كامل يدمج نموذج FastConformer القرآني بعد معالجة وتطهير عقد الالتفاف (ConvInteger) وتحويلها إلى عقد قياسية متوافقة 100% مع كافة معالجات أندرويد وتابلتات ARM64 دون الحاجة للاتصال بالإنترنت.
+          ### مصحف القيام — V5.6.1 (نسخة ترقيعية خفيفة — نظام التخزين المزدوج وإلغاء استنزاف الذاكرة)
+          تحديث برمجي فائق الاستقرار يعتمد معمارية Double-Buffering (Ping-Pong) مع فصل خيط الميكروفون عن خيط المعالجة، والتخصيص الصفري الكامل للذاكرة (Zero-Allocation Buffers) لمنع أي تجمد أو إيقاف من الـ Garbage Collector أثناء القراءة الطويلة في قيام الليل، مع إضافة شريط وسجل تشخيص لحظي لاستهلاك الذاكرة.
 
 

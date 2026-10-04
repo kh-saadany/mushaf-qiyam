@@ -15,6 +15,8 @@ import java.io.FileOutputStream
 import java.nio.FloatBuffer
 import java.nio.IntBuffer
 import java.nio.LongBuffer
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
@@ -22,6 +24,7 @@ import kotlin.math.sqrt
 /**
  * AudioRecognizer: Real-time Streaming Automatic Speech Recognition for the Holy Quran.
  * Powered by FastConformer Quran Streaming Transducer via Native ONNX Runtime.
+ * Features Ping-Pong Double Buffering, Producer-Consumer Threading, and Zero-Allocation Decoding.
  */
 class AudioRecognizer(private val context: Context) {
 
@@ -34,8 +37,30 @@ class AudioRecognizer(private val context: Context) {
 
     private var audioRecord: AudioRecord? = null
     private val isRecording = AtomicBoolean(false)
-    private var recordingThread: Thread? = null
+    private var captureThread: Thread? = null
+    private var inferenceThread: Thread? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Ping-Pong Double Buffering & Producer-Consumer Queue
+    private val pingPongBuffers = Array(2) { FloatArray(WINDOW_SAMPLES) }
+    private val inferenceQueue = ArrayBlockingQueue<Int>(2)
+
+    // Preallocated buffers for zero-allocation inference loop
+    private val flatFeatures = FloatArray(80 * (1 + WINDOW_SAMPLES / FastConformerFbank.HOP_LENGTH))
+    private val s1 = FloatArray(640)
+    private val s2 = FloatArray(640)
+    private val frameEncOut = FloatArray(512)
+    private val targetBuf = IntBuffer.allocate(1)
+    private val targetLenBuf = IntBuffer.wrap(intArrayOf(1))
+    private val s1Buf = FloatBuffer.allocate(640)
+    private val s2Buf = FloatBuffer.allocate(640)
+    private val outTokens = ArrayList<Int>(64)
+    private val eoFlatBuffer = FloatArray(512 * 64)
+
+    private val encSliceShape = longArrayOf(1, 512, 1)
+    private val targetShape = longArrayOf(1, 1)
+    private val targetLenShape = longArrayOf(1)
+    private val stateShape = longArrayOf(1, 1, 640)
 
     private var ortEnv: OrtEnvironment? = null
     private var encoderSession: OrtSession? = null
@@ -49,6 +74,7 @@ class AudioRecognizer(private val context: Context) {
     var onAudioLevel: ((Float) -> Unit)? = null
     var onPartialResult: ((String) -> Unit)? = null
     var onError: ((String) -> Unit)? = null
+    var onMemoryUpdate: ((String) -> Unit)? = null
 
     private fun resolveFilePath(modelDirInAssets: String, fileName: String): String? {
         val internalFile = File(context.filesDir, "$modelDirInAssets/$fileName")
@@ -137,6 +163,7 @@ class AudioRecognizer(private val context: Context) {
                 jointSession = env.createSession(jointPath, sessionOptions)
 
                 AppLogger.i(TAG, "Native ONNX Runtime FastConformer Quran engine initialized successfully")
+                logMemoryUsage("Post-Init")
                 true
             } else {
                 AppLogger.w(TAG, "FastConformer Quran model files missing: encoder=$encoderPath, joint=$jointPath, tokens=$tokensPath")
@@ -152,6 +179,22 @@ class AudioRecognizer(private val context: Context) {
             mainHandler.post { onError?.invoke("تنبيه المحرك: ${t.localizedMessage}") }
             false
         }
+    }
+
+    /**
+     * Reports live Java Heap and Native RAM diagnostics to both AppLogger and UI callbacks.
+     */
+    fun logMemoryUsage(contextTag: String = "Periodic") {
+        try {
+            val rt = Runtime.getRuntime()
+            val usedHeapMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)
+            val totalHeapMb = rt.totalMemory() / (1024 * 1024)
+            val maxHeapMb = rt.maxMemory() / (1024 * 1024)
+            val nativeAllocMb = android.os.Debug.getNativeHeapAllocatedSize() / (1024 * 1024)
+            val memStr = "RAM: Heap ${usedHeapMb}MB/${totalHeapMb}MB (Max ${maxHeapMb}MB) | Native: ${nativeAllocMb}MB"
+            AppLogger.i("MemoryDiag", "[$contextTag] $memStr")
+            mainHandler.post { onMemoryUpdate?.invoke(memStr) }
+        } catch (_: Throwable) {}
     }
 
     @SuppressLint("MissingPermission")
@@ -183,27 +226,64 @@ class AudioRecognizer(private val context: Context) {
                 return false
             }
 
+            inferenceQueue.clear()
             audioRecord?.startRecording()
             isRecording.set(true)
-            AppLogger.i(TAG, "Audio recording started successfully")
+            logMemoryUsage("Start-Listening")
+            AppLogger.i(TAG, "Audio recording started successfully (Ping-Pong Double Buffering Enabled)")
 
-            recordingThread = thread(start = true, name = "FastConformerAudioThread") {
+            // 1. Dedicated Inference Consumer Worker Thread
+            inferenceThread = thread(start = true, name = "FastConformerInferenceThread") {
+                AppLogger.i(TAG, "FastConformer Inference Consumer thread started")
+                var lastEmittedText = ""
+                var inferenceCounter = 0
+
+                while (isRecording.get()) {
+                    try {
+                        val bufferIndex = inferenceQueue.poll(100, TimeUnit.MILLISECONDS) ?: continue
+                        if (bufferIndex == -1) {
+                            lastEmittedText = ""
+                            continue
+                        }
+
+                        val audioWindow = pingPongBuffers[bufferIndex]
+                        val feats = fbank.computeFeatures(audioWindow)
+                        val recognized = decodeWindow(feats)
+
+                        if (recognized.isNotBlank() && recognized != lastEmittedText) {
+                            lastEmittedText = recognized
+                            AppLogger.i(TAG, "Recognized text (FastConformer Native ONNX): $recognized")
+                            mainHandler.post { onPartialResult?.invoke(recognized) }
+                        }
+
+                        inferenceCounter++
+                        if (inferenceCounter % 15 == 0) {
+                            logMemoryUsage("Continuous-Inference")
+                        }
+                    } catch (t: Throwable) {
+                        AppLogger.e(TAG, "Error in inference worker loop", t)
+                    }
+                }
+                AppLogger.i(TAG, "FastConformer Inference Consumer thread stopped")
+            }
+
+            // 2. Dedicated Audio Capture Producer Thread (Never blocks on inference!)
+            captureThread = thread(start = true, name = "FastConformerAudioCaptureThread") {
                 val readChunk = ShortArray(512)
-                val windowBuffer = FloatArray(WINDOW_SAMPLES)
+                val floatSamples = FloatArray(512)
+                val slidingBuffer = FloatArray(WINDOW_SAMPLES)
                 var accumulatedSamples = 0
                 var samplesSinceLastInference = 0
-
-                var lastEmittedText = ""
+                var pingPongWriteIdx = 0
                 var consecutiveSilenceFrames = 0
 
-                AppLogger.i(TAG, "Native FastConformer Audio capture loop started (16kHz Mono, 1.8s sliding window)")
+                AppLogger.i(TAG, "FastConformer Audio Capture Producer loop started (16kHz Mono, 1.8s sliding window)")
 
                 while (isRecording.get()) {
                     try {
                         val readSamples = audioRecord?.read(readChunk, 0, readChunk.size) ?: 0
                         if (readSamples > 0) {
                             var sum = 0.0
-                            val floatSamples = FloatArray(readSamples)
                             for (i in 0 until readSamples) {
                                 val s = readChunk[i] / 32768.0f
                                 floatSamples[i] = s
@@ -219,30 +299,29 @@ class AudioRecognizer(private val context: Context) {
                                 consecutiveSilenceFrames++
                             }
 
-                            // Slide buffer left and insert new audio samples at the end
-                            System.arraycopy(windowBuffer, readSamples, windowBuffer, 0, WINDOW_SAMPLES - readSamples)
-                            System.arraycopy(floatSamples, 0, windowBuffer, WINDOW_SAMPLES - readSamples, readSamples)
+                            // Slide buffer left and insert new audio samples at the end (Zero-allocation)
+                            System.arraycopy(slidingBuffer, readSamples, slidingBuffer, 0, WINDOW_SAMPLES - readSamples)
+                            System.arraycopy(floatSamples, 0, slidingBuffer, WINDOW_SAMPLES - readSamples, readSamples)
 
                             accumulatedSamples = minOf(WINDOW_SAMPLES, accumulatedSamples + readSamples)
                             samplesSinceLastInference += readSamples
 
-                            // Trigger inference every HOP_SAMPLES (0.6s) if window is full
+                            // Dispatch window every HOP_SAMPLES (0.6s) if window is full
                             if (accumulatedSamples >= WINDOW_SAMPLES && samplesSinceLastInference >= HOP_SAMPLES) {
                                 samplesSinceLastInference = 0
 
-                                // If speech was present recently (~within 1.4s)
                                 if (consecutiveSilenceFrames < 45) {
-                                    val feats = fbank.computeFeatures(windowBuffer)
-                                    val recognized = decodeWindow(feats)
-                                    if (recognized.isNotBlank() && recognized != lastEmittedText) {
-                                        lastEmittedText = recognized
-                                        AppLogger.i(TAG, "Recognized text (FastConformer Native ONNX): $recognized")
-                                        mainHandler.post { onPartialResult?.invoke(recognized) }
+                                    // Copy snapshot to ping-pong buffer and notify consumer
+                                    System.arraycopy(slidingBuffer, 0, pingPongBuffers[pingPongWriteIdx], 0, WINDOW_SAMPLES)
+                                    val queued = inferenceQueue.offer(pingPongWriteIdx)
+                                    if (queued) {
+                                        pingPongWriteIdx = 1 - pingPongWriteIdx
+                                    } else {
+                                        AppLogger.w(TAG, "Inference queue busy; frame dropped without blocking capture")
                                     }
                                 } else {
-                                    // Reset deduplication state during silence
-                                    if (consecutiveSilenceFrames >= 38 && lastEmittedText.isNotEmpty()) {
-                                        lastEmittedText = ""
+                                    if (consecutiveSilenceFrames >= 38) {
+                                        inferenceQueue.offer(-1)
                                     }
                                 }
                             }
@@ -251,7 +330,7 @@ class AudioRecognizer(private val context: Context) {
                         AppLogger.e(TAG, "Error in audio capture loop", t)
                     }
                 }
-                AppLogger.i(TAG, "Audio capture thread stopped")
+                AppLogger.i(TAG, "FastConformer Audio Capture Producer loop stopped")
             }
             true
         } catch (t: Throwable) {
@@ -263,6 +342,7 @@ class AudioRecognizer(private val context: Context) {
 
     /**
      * Decodes extracted Mel features using FastConformer Encoder and Joint Transducer.
+     * Uses preallocated buffers to eliminate object allocations in the hot loop.
      */
     private fun decodeWindow(features: Array<FloatArray>): String {
         val env = ortEnv ?: return ""
@@ -272,8 +352,7 @@ class AudioRecognizer(private val context: Context) {
         val numFrames = features[0].size
         if (numFrames <= 0) return ""
 
-        // 1. Flatten features: [1, 80, numFrames] in row-major order
-        val flatFeatures = FloatArray(80 * numFrames)
+        // 1. Flatten features: [1, 80, numFrames] in row-major order (Zero-allocation using preallocated flatFeatures)
         var offset = 0
         for (m in 0 until 80) {
             System.arraycopy(features[m], 0, flatFeatures, offset, numFrames)
@@ -282,7 +361,7 @@ class AudioRecognizer(private val context: Context) {
 
         val audioTensor = OnnxTensor.createTensor(
             env,
-            FloatBuffer.wrap(flatFeatures),
+            FloatBuffer.wrap(flatFeatures, 0, 80 * numFrames),
             longArrayOf(1, 80, numFrames.toLong())
         )
         val lengthTensor = OnnxTensor.createTensor(
@@ -291,7 +370,6 @@ class AudioRecognizer(private val context: Context) {
             longArrayOf(1)
         )
 
-        var eoFlat: FloatArray? = null
         var encodedLength = 0
 
         try {
@@ -310,9 +388,13 @@ class AudioRecognizer(private val context: Context) {
                     if (entry.key == "outputs") {
                         val outTensor = entry.value as OnnxTensor
                         val totalFloats = 512 * encodedLength
-                        val buffer = FloatArray(totalFloats)
-                        outTensor.floatBuffer.get(buffer)
-                        eoFlat = buffer
+                        if (totalFloats <= eoFlatBuffer.size) {
+                            outTensor.floatBuffer.get(eoFlatBuffer, 0, totalFloats)
+                        } else {
+                            val temp = FloatArray(totalFloats)
+                            outTensor.floatBuffer.get(temp)
+                            System.arraycopy(temp, 0, eoFlatBuffer, 0, minOf(temp.size, eoFlatBuffer.size))
+                        }
                     }
                 }
             }
@@ -321,106 +403,101 @@ class AudioRecognizer(private val context: Context) {
             lengthTensor.close()
         }
 
-        val encOutputs = eoFlat ?: return ""
         if (encodedLength <= 0) return ""
 
         // 2. Greedy search on Joint Network
-        val s1 = FloatArray(640)
-        val s2 = FloatArray(640)
+        s1.fill(0f)
+        s2.fill(0f)
         var lastTarget = blankId
-        val outTokens = mutableListOf<Int>()
+        outTokens.clear()
 
-        val frameEncOut = FloatArray(512)
-        val targetBuf = IntBuffer.allocate(1)
-        val targetLenBuf = IntBuffer.wrap(intArrayOf(1))
-        val s1Buf = FloatBuffer.allocate(640)
-        val s2Buf = FloatBuffer.allocate(640)
+        // Create targetLenTensor once before outer loop to save allocations
+        targetLenBuf.clear()
+        targetLenBuf.put(0, 1)
+        val targetLenTensor = OnnxTensor.createTensor(env, targetLenBuf, targetLenShape)
 
-        val encSliceShape = longArrayOf(1, 512, 1)
-        val targetShape = longArrayOf(1, 1)
-        val targetLenShape = longArrayOf(1)
-        val stateShape = longArrayOf(1, 1, 640)
+        try {
+            for (t in 0 until encodedLength) {
+                // Extract channel slice eo[:, :, t:t+1]
+                for (c in 0 until 512) {
+                    frameEncOut[c] = eoFlatBuffer[c * encodedLength + t]
+                }
 
-        for (t in 0 until encodedLength) {
-            // Extract channel slice eo[:, :, t:t+1]
-            for (c in 0 until 512) {
-                frameEncOut[c] = encOutputs[c * encodedLength + t]
-            }
+                for (u in 0 until 5) {
+                    targetBuf.clear()
+                    targetBuf.put(0, lastTarget)
 
-            for (u in 0 until 5) {
-                targetBuf.clear()
-                targetBuf.put(0, lastTarget)
+                    s1Buf.clear()
+                    s1Buf.put(s1)
+                    s1Buf.flip()
 
-                s1Buf.clear()
-                s1Buf.put(s1)
-                s1Buf.flip()
+                    s2Buf.clear()
+                    s2Buf.put(s2)
+                    s2Buf.flip()
 
-                s2Buf.clear()
-                s2Buf.put(s2)
-                s2Buf.flip()
+                    val encSliceTensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(frameEncOut), encSliceShape)
+                    val targetTensor = OnnxTensor.createTensor(env, targetBuf, targetShape)
+                    val s1Tensor = OnnxTensor.createTensor(env, s1Buf, stateShape)
+                    val s2Tensor = OnnxTensor.createTensor(env, s2Buf, stateShape)
 
-                val encSliceTensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(frameEncOut), encSliceShape)
-                val targetTensor = OnnxTensor.createTensor(env, targetBuf, targetShape)
-                val targetLenTensor = OnnxTensor.createTensor(env, targetLenBuf, targetLenShape)
-                val s1Tensor = OnnxTensor.createTensor(env, s1Buf, stateShape)
-                val s2Tensor = OnnxTensor.createTensor(env, s2Buf, stateShape)
+                    var shouldBreak = false
+                    try {
+                        val jointInputs = mapOf(
+                            "encoder_outputs" to encSliceTensor,
+                            "targets" to targetTensor,
+                            "target_length" to targetLenTensor,
+                            "input_states_1" to s1Tensor,
+                            "input_states_2" to s2Tensor
+                        )
 
-                var shouldBreak = false
-                try {
-                    val jointInputs = mapOf(
-                        "encoder_outputs" to encSliceTensor,
-                        "targets" to targetTensor,
-                        "target_length" to targetLenTensor,
-                        "input_states_1" to s1Tensor,
-                        "input_states_2" to s2Tensor
-                    )
+                        joint.run(jointInputs).use { jointResult ->
+                            var logitsTensor: OnnxTensor? = null
+                            var ns1Tensor: OnnxTensor? = null
+                            var ns2Tensor: OnnxTensor? = null
 
-                    joint.run(jointInputs).use { jointResult ->
-                        var logitsTensor: OnnxTensor? = null
-                        var ns1Tensor: OnnxTensor? = null
-                        var ns2Tensor: OnnxTensor? = null
-
-                        for (entry in jointResult) {
-                            when (entry.key) {
-                                "outputs" -> logitsTensor = entry.value as OnnxTensor
-                                "output_states_1" -> ns1Tensor = entry.value as OnnxTensor
-                                "output_states_2" -> ns2Tensor = entry.value as OnnxTensor
-                            }
-                        }
-
-                        if (logitsTensor != null) {
-                            val fb = logitsTensor.floatBuffer
-                            var maxK = 0
-                            var maxVal = Float.NEGATIVE_INFINITY
-                            val count = fb.remaining()
-                            for (k in 0 until count) {
-                                val v = fb.get(k)
-                                if (v > maxVal) {
-                                    maxVal = v
-                                    maxK = k
+                            for (entry in jointResult) {
+                                when (entry.key) {
+                                    "outputs" -> logitsTensor = entry.value as OnnxTensor
+                                    "output_states_1" -> ns1Tensor = entry.value as OnnxTensor
+                                    "output_states_2" -> ns2Tensor = entry.value as OnnxTensor
                                 }
                             }
 
-                            if (maxK == blankId) {
-                                shouldBreak = true
-                            } else {
-                                outTokens.add(maxK)
-                                lastTarget = maxK
-                                ns1Tensor?.floatBuffer?.get(s1)
-                                ns2Tensor?.floatBuffer?.get(s2)
+                            if (logitsTensor != null) {
+                                val fb = logitsTensor.floatBuffer
+                                var maxK = 0
+                                var maxVal = Float.NEGATIVE_INFINITY
+                                val count = fb.remaining()
+                                for (k in 0 until count) {
+                                    val v = fb.get(k)
+                                    if (v > maxVal) {
+                                        maxVal = v
+                                        maxK = k
+                                    }
+                                }
+
+                                if (maxK == blankId) {
+                                    shouldBreak = true
+                                } else {
+                                    outTokens.add(maxK)
+                                    lastTarget = maxK
+                                    ns1Tensor?.floatBuffer?.get(s1)
+                                    ns2Tensor?.floatBuffer?.get(s2)
+                                }
                             }
                         }
+                    } finally {
+                        encSliceTensor.close()
+                        targetTensor.close()
+                        s1Tensor.close()
+                        s2Tensor.close()
                     }
-                } finally {
-                    encSliceTensor.close()
-                    targetTensor.close()
-                    targetLenTensor.close()
-                    s1Tensor.close()
-                    s2Tensor.close()
-                }
 
-                if (shouldBreak) break
+                    if (shouldBreak) break
+                }
             }
+        } finally {
+            targetLenTensor.close()
         }
 
         if (outTokens.isEmpty()) return ""
@@ -438,7 +515,9 @@ class AudioRecognizer(private val context: Context) {
         if (!isRecording.get()) return
         isRecording.set(false)
 
-        try { recordingThread?.join(1000) } catch (_: Throwable) {}
+        inferenceQueue.offer(-1) // unblock consumer
+        try { captureThread?.join(1000) } catch (_: Throwable) {}
+        try { inferenceThread?.join(1000) } catch (_: Throwable) {}
 
         try {
             audioRecord?.apply {
@@ -448,9 +527,12 @@ class AudioRecognizer(private val context: Context) {
         } catch (_: Throwable) {}
 
         audioRecord = null
-        recordingThread = null
+        captureThread = null
+        inferenceThread = null
+        inferenceQueue.clear()
 
-        AppLogger.i(TAG, "Audio recording stopped")
+        logMemoryUsage("Stop-Listening")
+        AppLogger.i(TAG, "Audio recording and inference worker stopped")
     }
 
     fun release() {

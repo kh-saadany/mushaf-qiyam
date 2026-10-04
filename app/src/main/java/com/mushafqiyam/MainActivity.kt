@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.6.0"
+        const val APP_VERSION = "5.6.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -165,8 +165,11 @@ fun MainAppScreen(
         }
     }
 
+    var memoryStatus by remember { mutableStateOf("RAM: في انتظار بدء التشغيل...") }
+
     audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
     audioRecognizer?.onPartialResult = handlePartialResult
+    audioRecognizer?.onMemoryUpdate = { mem -> memoryStatus = mem }
     audioRecognizer?.onError = { err ->
         AppLogger.e("UI", "AudioRecognizer error: $err")
         engineStatus = "⚠️ $err"
@@ -212,6 +215,14 @@ fun MainAppScreen(
                     text = engineStatus,
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center
+                )
+                Text(
+                    text = memoryStatus,
+                    fontSize = 11.sp,
+                    color = Color(0xFF455A64),
+                    textAlign = TextAlign.Center,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(top = 2.dp)
                 )
                 if (matchSimilarityText.isNotEmpty()) {
                     Text(

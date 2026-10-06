@@ -42,33 +42,61 @@ object FuzzyMatcher {
     }
 
     /**
-     * Normalizes Arabic text for flexible matching:
-     * - Removes Tashkeel (diacritics)
+     * Normalizes Arabic text for flexible matching across both Uthmani and Imla'i scripts:
+     * - Removes BOM, Tashkeel (diacritics), dagger alef, and Quranic tajweed/pause marks
      * - Expands Quranic disjointed letters (الم -> الف لام ميم)
-     * - Normalizes Alef forms (أ, إ, آ -> ا)
+     * - Normalizes Alef/Hamza forms (أ, إ, آ, ٱ -> ا, ؤ -> و, ئ -> ي)
      * - Normalizes Taa Marbouta (ة -> ه) and Alef Maqsura (ى -> ي)
      */
     fun normalizeArabic(text: String): String {
         if (text.isBlank()) return ""
-        val withoutDiacritics = text.replace(Regex("[\\u0617-\\u061A\\u064B-\\u0652]"), "")
+        val withoutDiacritics = text
+            .replace("\uFEFF", "")
+            .replace(Regex("[\\u0617-\\u061A\\u064B-\\u065F\\u0670\\u06D6-\\u06ED]"), "")
         val expanded = expandMuqattaat(withoutDiacritics)
         return expanded
             .replace(Regex("[إأآٱ]"), "ا")
+            .replace('ؤ', 'و')
+            .replace('ئ', 'ي')
+            .replace('ء', 'ا')
             .replace('ة', 'ه')
             .replace('ى', 'ي')
-            .replace(Regex("[^\\u0600-\\u06FF\\s]"), "")
+            .replace(Regex("[^\\u0621-\\u064A\\s]"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
     }
 
     /**
-     * Compares recognized streaming text against candidate verses
-     * in range [-1 to +3] relative to currentIndex using adaptive threshold rules:
-     * - Current verse (0) and Next verse (+1): threshold = 0.45 (45%)
-     * - Second next verse (+2): threshold = 0.55 (55%)
-     * - Third next verse (+3): threshold = 0.60 (60%)
-     * - Previous verse (-1): threshold = 0.60 (60%)
+     * Produces an orthography-agnostic skeleton of a normalized Arabic word to bridge
+     * Uthmani (dagger-alif omitted in cleanText, e.g. العلمين, الصرط, الكتب, الصلوه)
+     * and Imla'i ASR output (العالمين, الصراط, الكتاب, الصلاه).
      */
+    fun skeletonWord(word: String): String {
+        if (word.length <= 2) return word
+        var w = word
+        // Handle Uthmani Waw-Alef before Taa Marbouta (الصلوه -> الصلاه, الزكوه -> الزكاه, الحيوه -> الحياه)
+        if (w.endsWith("وه") && w.length >= 4) {
+            w = w.substring(0, w.length - 2) + "اه"
+        }
+        // Strip medial Alef 'ا' after the first character (or after 'ال' / 'وال' / 'فال' / 'بال' / 'لل' prefix)
+        val prefixLen = when {
+            w.startsWith("وال") || w.startsWith("فال") || w.startsWith("بال") || w.startsWith("كال") -> 3
+            w.startsWith("ال") || w.startsWith("لل") -> 2
+            else -> 1
+        }
+        if (w.length <= prefixLen + 1) return w
+        val sb = StringBuilder(w.length)
+        sb.append(w, 0, prefixLen)
+        for (i in prefixLen until w.length) {
+            val ch = w[i]
+            // Keep final 'ا' if it is the very last letter of a short word, otherwise strip medial 'ا'
+            if (ch != 'ا') {
+                sb.append(ch)
+            }
+        }
+        return if (sb.length >= 2) sb.toString() else w
+    }
+
     fun matchVerse(
         recognizedText: String,
         candidateVerses: List<String>,
@@ -80,10 +108,8 @@ object FuzzyMatcher {
         var bestMatch: MatchResult? = null
         var maxSim = 0.0
 
-        // Search range: [-1, +3] relative to currentIndex
         val startIndex = if (currentIndex >= 0) maxOf(0, currentIndex - 1) else 0
         val endIndex = if (currentIndex >= 0) minOf(candidateVerses.size - 1, currentIndex + 3) else minOf(candidateVerses.size - 1, 3)
-
         val baseIndex = if (currentIndex >= 0) currentIndex else 0
 
         for (index in startIndex..endIndex) {
@@ -93,9 +119,8 @@ object FuzzyMatcher {
                 val recWords = cleanRec.split(" ").filter { it.isNotBlank() }
                 val verseWords = cleanVerse.split(" ").filter { it.isNotBlank() }
 
-                // Check shared words count with Levenshtein fuzzy word matching (e.g. ملك vs مالك)
                 val sharedWordsCount = recWords.count { rw ->
-                    verseWords.any { vw -> rw == vw || normalizedLevenshtein(rw, vw) >= 0.70 }
+                    verseWords.any { vw -> wordSimilarity(rw, vw) >= 0.70 }
                 }
                 val isWordCountValid = if (verseWords.size <= 1) {
                     sharedWordsCount >= 1
@@ -105,17 +130,14 @@ object FuzzyMatcher {
 
                 if (isWordCountValid) {
                     val baseSim = calculateSimilarity(cleanRec, cleanVerse)
-                    
-                    // Apply Forward-Bias Bonus (+0.12) to favor forward progression over backward jumps
                     val effectiveSim = if (index > baseIndex) baseSim + 0.12 else baseSim
 
-                    // Adaptive threshold determination based on distance relative to baseIndex
                     val requiredThreshold = when (index - baseIndex) {
-                        -1 -> 0.60   // Previous verse: 60%
-                        0 -> 0.45    // Current verse: 45%
-                        1 -> 0.45    // Next verse: 45%
-                        2 -> 0.55    // Second next verse: 55%
-                        3 -> 0.60    // Third next verse: 60%
+                        -1 -> 0.60
+                        0 -> 0.45
+                        1 -> 0.45
+                        2 -> 0.55
+                        3 -> 0.60
                         else -> 0.60
                     }
 
@@ -135,14 +157,8 @@ object FuzzyMatcher {
         return bestMatch
     }
 
-    /**
-     * Calculates normalized similarity with both full Levenshtein and sliding token window match.
-     */
     private fun calculateSimilarity(recognized: String, verse: String): Double {
-        // Direct Levenshtein similarity
         val fullSim = normalizedLevenshtein(recognized, verse)
-        
-        // Sliding window token similarity for partial streaming inputs
         val recTokens = recognized.split(" ")
         val verseTokens = verse.split(" ")
 
@@ -164,11 +180,21 @@ object FuzzyMatcher {
         return fullSim
     }
 
-    fun wordSimilarity(s1: String, s2: String): Double = normalizedLevenshtein(s1, s2)
-
     /**
-     * Calculates Levenshtein distance and normalizes it to a 0.0-1.0 similarity score.
+     * Compares two normalized Arabic words, accounting for both exact Levenshtein similarity
+     * and Uthmani/Imla'i skeleton equivalence (e.g. العالمين == العلمين, الصراط == الصرط).
      */
+    fun wordSimilarity(s1: String, s2: String): Double {
+        if (s1 == s2) return 1.0
+        val directSim = normalizedLevenshtein(s1, s2)
+        if (directSim >= 0.92) return directSim
+        val sk1 = skeletonWord(s1)
+        val sk2 = skeletonWord(s2)
+        if (sk1 == sk2 && sk1.length >= 2) return 0.98
+        val skelSim = normalizedLevenshtein(sk1, sk2) * 0.96
+        return max(directSim, skelSim)
+    }
+
     fun normalizedLevenshtein(s1: String, s2: String): Double {
         val maxLen = max(s1.length, s2.length)
         if (maxLen == 0) return 1.0
@@ -200,4 +226,3 @@ object FuzzyMatcher {
         return cost[len0 - 1]
     }
 }
-

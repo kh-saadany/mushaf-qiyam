@@ -11,7 +11,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.Locale
-import kotlin.math.abs
 
 /**
  * MushafPageRepository: Manages the 604 Mushaf pages, 6,236 verses,
@@ -25,6 +24,9 @@ object MushafPageRepository {
     private const val REF_HEIGHT = 1941f
     private const val PAGES_DIR_NAME = "mushaf_pages"
     private const val EXTRACTION_MARKER = ".extracted_v1"
+
+    private const val CLEAN_BASMALAH_PREFIX = "بسم الله الرحمن الرحيم "
+    private const val UTHMANI_BASMALAH_PREFIX = "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ "
 
     data class MushafVerse(
         val page: Int,
@@ -59,6 +61,7 @@ object MushafPageRepository {
     private val pagesVerses = HashMap<Int, List<MushafVerse>>(604)
     private val pagesBoxes = HashMap<Int, List<AyahBoundingBox>>(604)
     private val allVersesList = ArrayList<MushafVerse>(6236)
+    private val verseKeyToGlobalIndex = HashMap<Int, Int>(6236)
     private val surahInfoList = ArrayList<SurahInfo>(114)
 
     // Keep at most 3 decoded page bitmaps in memory to guarantee low RAM usage
@@ -84,6 +87,7 @@ object MushafPageRepository {
         pagesVerses.clear()
         pagesBoxes.clear()
         allVersesList.clear()
+        verseKeyToGlobalIndex.clear()
         surahInfoList.clear()
 
         // 1. Load quran-pages.json
@@ -106,9 +110,20 @@ object MushafPageRepository {
                 val surah = vObj.getInt("surah")
                 val surahName = vObj.getString("surahName").replace("\uFEFF", "").trim()
                 val ayah = vObj.getInt("ayah")
-                val text = vObj.getString("text").replace("\uFEFF", "").trim()
-                val cleanText = vObj.getString("cleanText").replace("\uFEFF", "").trim()
+                var text = vObj.getString("text").replace("\uFEFF", "").trim()
+                var cleanText = vObj.getString("cleanText").replace("\uFEFF", "").trim()
 
+                // Strip prepended Basmalah on surahs 2..114 ayah 1 so verse tokens match the Mushaf highlight boxes
+                if (surah > 1 && ayah == 1) {
+                    if (cleanText.startsWith(CLEAN_BASMALAH_PREFIX)) {
+                        cleanText = cleanText.substring(CLEAN_BASMALAH_PREFIX.length).trim()
+                    }
+                    if (text.startsWith(UTHMANI_BASMALAH_PREFIX)) {
+                        text = text.substring(UTHMANI_BASMALAH_PREFIX.length).trim()
+                    }
+                }
+
+                val currentGlobalIdx = globalIdx++
                 val mv = MushafVerse(
                     page = pageNum,
                     surah = surah,
@@ -116,10 +131,11 @@ object MushafPageRepository {
                     ayah = ayah,
                     text = text,
                     cleanText = cleanText,
-                    globalIndex = globalIdx++
+                    globalIndex = currentGlobalIdx
                 )
                 verseList.add(mv)
                 allVersesList.add(mv)
+                verseKeyToGlobalIndex[surah * 1000 + ayah] = currentGlobalIdx
 
                 if (!surahStartPage.containsKey(surah)) {
                     surahStartPage[surah] = pageNum
@@ -258,6 +274,21 @@ object MushafPageRepository {
         }
     }
 
+    fun getAllVerses(): List<MushafVerse> = allVersesList
+
+    fun getVerseByGlobalIndex(globalIndex: Int): MushafVerse? {
+        return allVersesList.getOrNull(globalIndex)
+    }
+
+    fun getGlobalVerseIndex(surah: Int, ayah: Int): Int {
+        return verseKeyToGlobalIndex[surah * 1000 + ayah] ?: 0
+    }
+
+    fun getVerse(surah: Int, ayah: Int): MushafVerse? {
+        val idx = verseKeyToGlobalIndex[surah * 1000 + ayah] ?: return null
+        return allVersesList.getOrNull(idx)
+    }
+
     fun getPageVerses(pageNumber: Int): List<MushafVerse> {
         return pagesVerses[pageNumber.coerceIn(1, 604)] ?: emptyList()
     }
@@ -283,14 +314,10 @@ object MushafPageRepository {
         return distinctSurahs.joinToString(" • ")
     }
 
-    /**
-     * Finds the (surah, ayah) at a normalized tap coordinate (normX, normY in 0..1) on the given page.
-     */
     fun findTappedAyah(pageNumber: Int, normX: Float, normY: Float): Pair<Int, Int>? {
         val boxes = getPageBoxes(pageNumber)
         if (boxes.isEmpty()) return null
 
-        // 1. Direct hit test
         val directHit = boxes.firstOrNull { b ->
             normX in b.normLeft..b.normRight && normY in b.normTop..b.normBottom
         }
@@ -298,7 +325,6 @@ object MushafPageRepository {
             return Pair(directHit.surah, directHit.ayah)
         }
 
-        // 2. Nearest box within a small vertical/horizontal tolerance (for taps slightly between lines)
         val sameLineBoxes = boxes.filter { b ->
             normY in (b.normTop - 0.015f)..(b.normBottom + 0.015f)
         }

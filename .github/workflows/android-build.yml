@@ -56,11 +56,16 @@ jobs:
         gradle wrapper --gradle-version 8.6
         chmod +x gradlew
 
-    - name: Download Model Assets for Offline ASR
+    - name: Download Model Assets for Offline ASR & Mushaf Pages
       run: |
         mkdir -p app/src/main/assets/tilawa_model
+        cp -f assets/quran-pages.json app/src/main/assets/quran-pages.json
+        cp -f assets/ayah-boxes.json app/src/main/assets/ayah-boxes.json
         COMMIT_MSG=$(git log -1 --pretty=%B)
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
+          echo "Full build: Copying 604 Mushaf pages from assets/mushaf - small..."
+          mkdir -p app/src/main/assets/mushaf_pages
+          cp -f "assets/mushaf - small"/*.png app/src/main/assets/mushaf_pages/
           echo "Full build: Downloading FastConformer Quran Streaming Transducer ONNX models (~129MB)..."
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/encoder.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/encoder.int8.onnx"
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/decoder.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/decoder.int8.onnx"
@@ -71,7 +76,7 @@ jobs:
           python scripts/fix_encoder_conv.py app/src/main/assets/tilawa_model/encoder.int8.onnx app/src/main/assets/tilawa_model/encoder.onnx
           rm -f app/src/main/assets/tilawa_model/encoder.int8.onnx
         else
-          echo "Lite build: Skipping heavy ONNX model downloads for ultra-compact patch APK."
+          echo "Lite build: Skipping heavy ONNX model downloads and Mushaf pages for ultra-compact patch APK."
           curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/tokens.txt"
         fi
 
@@ -118,12 +123,15 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.6.1"
-        name: "مصحف القيام — V5.6.1 (Lite - Double-Buffering & Zero-Allocation FastConformer Engine)"
+        tag: "v5.7.0"
+        name: "مصحف القيام — V5.7.0 (Full - Interactive Visual Mushaf Viewer & Ayah Highlighting)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — V5.6.1 (نسخة ترقيعية خفيفة — نظام التخزين المزدوج وإلغاء استنزاف الذاكرة)
-          تحديث برمجي فائق الاستقرار يعتمد معمارية Double-Buffering (Ping-Pong) مع فصل خيط الميكروفون عن خيط المعالجة، والتخصيص الصفري الكامل للذاكرة (Zero-Allocation Buffers) لمنع أي تجمد أو إيقاف من الـ Garbage Collector أثناء القراءة الطويلة في قيام الليل، مع إضافة شريط وسجل تشخيص لحظي لاستهلاك الذاكرة.
+          ### مصحف القيام — V5.7.0 (النسخة الكاملة — عارض المصحف البصري وتظليل الآيات التفاعلي)
+          تتضمن هذه النسخة الكاملة (المرحلة 1):
+          - شحن وحفظ جميع صفحات المصحف الشريف (604 صفحات مضغوطة عالية الوضوح) في الذاكرة الداخلية للجهاز لتعتمد عليها كافة النسخ الخفيفة القادمة.
+          - عارض المصحف التفاعلي بالوضع العمودي مع التقليب بالسحب (RTL Swipe) والانتقال السريع لأي سورة أو صفحة.
+          - تظليل بصري شفاف (Canvas Overlay) لحدود الآية النشطة بدقة الكلمة وعلامة الآية، مع دعم الضغط المباشر على أي آية لتظليلها.
 
 

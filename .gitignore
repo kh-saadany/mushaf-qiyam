@@ -19,8 +19,14 @@ local.properties
 /app/libs/
 /app/src/main/assets/*.onnx
 /app/src/main/assets/*.json
+!/app/src/main/assets/quran-pages.json
+!/app/src/main/assets/ayah-boxes.json
+/app/src/main/assets/mushaf_pages/
 /app/src/main/assets/tilawa_model/model.onnx
 /app/src/main/assets/tilawa_model/*.bin
+
+# Backup original size Mushaf folder
+assets/mushaf - Original size/
 
 # Large binary model files
 assets/*.bin
@@ -32,5 +38,4 @@ assets/*.onnx
 scratch/node_modules/
 scratch/package-lock.json
 node_modules/
-!app/src/main/res/raw/silero_vad.onnx  
- 
+!app/src/main/res/raw/silero_vad.onnx

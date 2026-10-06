@@ -17,7 +17,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
@@ -31,18 +30,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.6.1"
+        const val APP_VERSION = "5.7.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -57,7 +61,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = Color(0xFFF5F5F0)
                 ) {
                     MainAppScreen(
                         appVersion = APP_VERSION,
@@ -82,9 +86,15 @@ fun MainAppScreen(
 ) {
     val context = LocalContext.current
     var isListening by remember { mutableStateOf(false) }
-    var engineStatus by remember { mutableStateOf("جاري تهيئة المحرك...") }
+    var engineStatus by remember { mutableStateOf("⏳ جاري تهيئة المصحف والمحرك...") }
     var recognizedText by remember { mutableStateOf("") }
     var audioLevel by remember { mutableFloatStateOf(0f) }
+    var repoReady by remember { mutableStateOf(false) }
+
+    // Mushaf Viewer State (Page 1..604, Surah 1..114, Ayah 1..N)
+    var currentPage by remember { mutableIntStateOf(1) }
+    var activeSurah by remember { mutableIntStateOf(1) }
+    var activeAyah by remember { mutableIntStateOf(1) }
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -107,23 +117,39 @@ fun MainAppScreen(
     }
 
     LaunchedEffect(Unit) {
-        engineStatus = "⏳ جاري تهيئة محرك FastConformer القرآني..."
-        val statusMessage = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val success = audioRecognizer?.initEngine("tilawa_model") ?: false
-            if (success) {
-                "✅ محرك FastConformer Quran Streaming جاهز"
+        withContext(Dispatchers.IO) {
+            val repoOk = MushafPageRepository.initRepository(context) { progressMsg ->
+                engineStatus = progressMsg
+            }
+            repoReady = repoOk
+            engineStatus = "⏳ جاري تهيئة محرك FastConformer القرآني..."
+            val asrOk = audioRecognizer?.initEngine("tilawa_model") ?: false
+            val pageCount = MushafPageRepository.getAvailableLocalPageCount(context)
+            engineStatus = if (asrOk) {
+                "✅ المحرك جاهز | صفحات المصحف المحفوظة: $pageCount / 604"
             } else {
-                "⚠️ المحرك يعمل بوضع الحماية من الانهيار"
+                "⚠️ المحرك بوضع الحماية | صفحات المصحف المحفوظة: $pageCount / 604"
             }
         }
-        engineStatus = statusMessage
     }
 
     val sampleVerses = remember { QuranData.getSampleVerses() }
     var activeVerseIndex by remember { mutableIntStateOf(0) }
-    var matchSimilarityText by remember { mutableStateOf("") }
-
+    var matchSimilarityText by remember { mutableStateOf("اضغط على أي آية في الصفحة لتظليلها أو اسحب لتقليب الصفحات") }
     var graceEmptyFrames by remember { mutableIntStateOf(0) }
+
+    val syncSampleVerseToMushafPage: (Int) -> Unit = { sampleIdx ->
+        // Sample verses 0..10 are Surah Ad-Duha (93:1..11), 11..18 are Surah Ash-Sharh (94:1..8) on page 596
+        if (sampleIdx in 0..10) {
+            currentPage = 596
+            activeSurah = 93
+            activeAyah = sampleIdx + 1
+        } else if (sampleIdx in 11..18) {
+            currentPage = 596
+            activeSurah = 94
+            activeAyah = sampleIdx - 10
+        }
+    }
 
     val handlePartialResult: (String) -> Unit = { rawText ->
         if (rawText.isNotBlank()) {
@@ -139,22 +165,10 @@ fun MainAppScreen(
                 val targetVerse = trackingResult.matchedVerseIndex
                 if (targetVerse != null) {
                     graceEmptyFrames = 0
-
-                    if (targetVerse == activeVerseIndex) {
-                        matchSimilarityText = "🎯 مطابقة الآية ${(targetVerse + 1)} (نسبة التشابه: ${(trackingResult.highestSimilarity * 100).toInt()}%)"
-                    } else if (targetVerse == activeVerseIndex + 1) {
-                        activeVerseIndex = targetVerse
-                        matchSimilarityText = "🎯 مطابقة الآية ${(targetVerse + 1)} (فورية - نسبة التشابه: ${(trackingResult.highestSimilarity * 100).toInt()}%)"
-                        AppLogger.i("VerseMatch", "Confirmed next verse [${targetVerse + 1}]: ${sampleVerses[targetVerse]}")
-                    } else if (targetVerse > activeVerseIndex) {
-                        activeVerseIndex = targetVerse
-                        matchSimilarityText = "🎯 مطابقة الآية ${(targetVerse + 1)} (قفز للأمام - نسبة التشابه: ${(trackingResult.highestSimilarity * 100).toInt()}%)"
-                        AppLogger.i("VerseMatch", "Confirmed forward jump to verse [${targetVerse + 1}]: ${sampleVerses[targetVerse]}")
-                    } else {
-                        activeVerseIndex = targetVerse
-                        matchSimilarityText = "🎯 إعادة الآية ${(targetVerse + 1)} (نسبة التشابه: ${(trackingResult.highestSimilarity * 100).toInt()}%)"
-                        AppLogger.i("VerseMatch", "Confirmed repeat of verse [${targetVerse + 1}]: ${sampleVerses[targetVerse]}")
-                    }
+                    activeVerseIndex = targetVerse
+                    syncSampleVerseToMushafPage(targetVerse)
+                    matchSimilarityText = "🎯 مطابقة الآية $activeSurah:$activeAyah (نسبة التشابه: ${(trackingResult.highestSimilarity * 100).toInt()}%)"
+                    AppLogger.i("VerseMatch", "Confirmed verse [$activeSurah:$activeAyah]: ${sampleVerses[targetVerse]}")
                 }
             } else {
                 graceEmptyFrames++
@@ -175,318 +189,258 @@ fun MainAppScreen(
         engineStatus = "⚠️ $err"
     }
 
+    var showDiagnosticsPanel by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
     val logs by AppLogger.logs.collectAsState()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(12.dp)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        // App Header
-        Text(
-            text = "مصحف القيام",
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
-
-        Text(
-            text = "الإصدار $appVersion (FastConformer Quran Engine - Native ONNX)",
-            fontSize = 12.sp,
-            color = Color.Gray,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        // Engine Status Card
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(
+        // Compact Top Bar: App Title + Mic Button + Diagnostics Toggle
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    text = engineStatus,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center
-                )
-                Text(
-                    text = memoryStatus,
-                    fontSize = 11.sp,
-                    color = Color(0xFF455A64),
-                    textAlign = TextAlign.Center,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
-                if (matchSimilarityText.isNotEmpty()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "مصحف القيام",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1B5E20)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "V$appVersion",
+                            fontSize = 11.sp,
+                            color = Color.Gray
+                        )
+                    }
                     Text(
                         text = matchSimilarityText,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
                         color = Color(0xFF2E7D32),
-                        modifier = Modifier.padding(top = 4.dp)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (!hasMicPermission) {
+                        Button(
+                            onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Text("صلاحية الميكروفون", fontSize = 11.sp)
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                if (isListening) {
+                                    audioRecognizer?.stopListening()
+                                    isListening = false
+                                    AppLogger.i("UI", "User clicked Stop Listening")
+                                } else {
+                                    recognizedText = ""
+                                    activeVerseIndex = 0
+                                    QuranVocabularyFilter.resetPointerToVerse(0)
+                                    val started: Boolean = audioRecognizer?.startListening() == true
+                                    if (started) {
+                                        isListening = true
+                                        AppLogger.i("UI", "User clicked Start Listening (FastConformer Quran)")
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isListening) MaterialTheme.colorScheme.error else Color(0xFF2E7D32)
+                            ),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.height(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isListening) Icons.Default.Stop else Icons.Default.Mic,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(if (isListening) "إيقاف" else "استماع", fontSize = 12.sp)
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { showDiagnosticsPanel = !showDiagnosticsPanel },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (showDiagnosticsPanel) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = "إظهار/إخفاء التشخيص"
+                        )
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Mic Permission / Start Button
-        if (!hasMicPermission) {
-            Button(
-                onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("منح صلاحية الميكروفون")
-            }
-        } else {
-            Button(
-                onClick = {
-                    if (isListening) {
-                        audioRecognizer?.stopListening()
-                        isListening = false
-                        AppLogger.i("UI", "User clicked Stop Listening")
-                    } else {
-                        recognizedText = ""
-                        activeVerseIndex = 0
-                        matchSimilarityText = ""
-                        QuranVocabularyFilter.resetPointerToVerse(0)
-                        val started: Boolean = audioRecognizer?.startListening() == true
-                        if (started) {
-                            isListening = true
-                            AppLogger.i("UI", "User clicked Start Listening (FastConformer Quran)")
-                        }
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isListening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-            ) {
-                Icon(
-                    imageVector = if (isListening) Icons.Default.Stop else Icons.Default.Mic,
-                    contentDescription = null
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(if (isListening) "إيقاف الاستماع" else "بدء الاستماع والتتبع التفاعلي")
-            }
-        }
-
-        // Live Audio Volume Wave Bar
+        // Live Audio Volume Wave Bar when listening
         if (isListening) {
-            Spacer(modifier = Modifier.height(8.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
+                    .padding(bottom = 4.dp)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp))
                     .background(Color.LightGray)
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
                         .fillMaxWidth(fraction = audioLevel.coerceIn(0.05f, 1.0f))
-                        .background(MaterialTheme.colorScheme.primary)
+                        .background(Color(0xFF2E7D32))
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Interactive Quran Display Box with Active Verse Highlighting
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1.2f),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(10.dp)
-            ) {
-                Text(
-                    text = "📖 المصحف التفاعلي (متابعة التلاوة الحية):",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    textAlign = TextAlign.Right,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Divider(modifier = Modifier.padding(vertical = 6.dp))
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    itemsIndexed(sampleVerses) { index, verse ->
-                        val isActive = index == activeVerseIndex
-                        val bgColor = if (isActive) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.surface
-                        val borderColor = if (isActive) Color(0xFF4CAF50) else Color.Transparent
-                        val textColor = if (isActive) Color(0xFF1B5E20) else MaterialTheme.colorScheme.onSurface
-
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    activeVerseIndex = index
-                                    QuranVocabularyFilter.resetPointerToVerse(index)
-                                    matchSimilarityText = "🎯 تم اختيار الآية ${(index + 1)} يدوياً"
-                                },
-                            colors = CardDefaults.cardColors(containerColor = bgColor),
-                            border = if (isActive) androidx.compose.foundation.BorderStroke(2.dp, borderColor) else null
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "﴿${index + 1}﴾",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isActive) Color(0xFF2E7D32) else Color.Gray
-                                )
-                                Text(
-                                    text = verse,
-                                    fontSize = 18.sp,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                    color = textColor,
-                                    textAlign = TextAlign.Right,
-                                    modifier = Modifier.weight(1f).padding(start = 8.dp)
-                                )
-                            }
-                        }
-                    }
+        // Main Interactive Mushaf Page Viewer (Occupies primary portrait area)
+        MushafPageViewer(
+            currentPage = currentPage,
+            activeSurah = activeSurah,
+            activeAyah = activeAyah,
+            onPageChanged = { newPage ->
+                currentPage = newPage
+                val pageVerses = MushafPageRepository.getPageVerses(newPage)
+                val hasCurrentActive = pageVerses.any { it.surah == activeSurah && it.ayah == activeAyah }
+                if (!hasCurrentActive && pageVerses.isNotEmpty()) {
+                    val first = pageVerses.first()
+                    activeSurah = first.surah
+                    activeAyah = first.ayah
+                    matchSimilarityText = "📖 ${first.surahName} — الآية ${first.ayah} (صفحة $newPage)"
                 }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Recognized Raw Text Stream Box
-        Card(
+            },
+            onAyahTapped = { page, surah, ayah ->
+                currentPage = page
+                activeSurah = surah
+                activeAyah = ayah
+                val sName = MushafPageRepository.getSurahName(surah)
+                matchSimilarityText = "🎯 تم تحديد: $sName — الآية $ayah (صفحة $page)"
+                AppLogger.i("MushafUI", "User tapped Ayah [$surah:$ayah] on page $page")
+            },
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(0.7f),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(8.dp)
-            ) {
-                Text(
-                    text = "النص الذي تم التعرف عليه من التلاوة المباشرة:",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.secondary,
-                    textAlign = TextAlign.Right,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFFF9F9F9), RoundedCornerShape(4.dp))
-                        .padding(6.dp)
-                ) {
-                    Text(
-                        text = if (recognizedText.isEmpty()) "في انتظار بدء التلاوة..." else recognizedText,
-                        fontSize = 14.sp,
-                        color = if (recognizedText.isEmpty()) Color.LightGray else Color.Black,
-                        textAlign = TextAlign.Right,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        }
+                .weight(1f)
+        )
 
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Diagnostics / Debug Logs Collapsible Section
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (showLogs) Modifier.weight(1.0f) else Modifier),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Column(modifier = Modifier.padding(6.dp)) {
-                Row(
+        // Collapsible Bottom Panel for Engine Status, RAM Diagnostics, Recognized Text & Logs
+        AnimatedVisibility(visible = showDiagnosticsPanel) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { showLogs = !showLogs },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(top = 6.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    Text(
-                        text = "🛠️ سجلات التشخيص المباشرة (${logs.size})",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    IconButton(onClick = { showLogs = !showLogs }, modifier = Modifier.size(24.dp)) {
-                        Icon(
-                            imageVector = if (showLogs) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp)
+                    ) {
+                        Text(
+                            text = engineStatus,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
                         )
-                    }
-                }
+                        Text(
+                            text = memoryStatus,
+                            fontSize = 10.sp,
+                            color = Color(0xFF455A64),
+                            fontFamily = FontFamily.Monospace
+                        )
 
-                AnimatedVisibility(visible = showLogs) {
-                    Column {
-                        Row(
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.End
+                                .background(Color.White, RoundedCornerShape(4.dp))
+                                .padding(6.dp)
                         ) {
-                            Button(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    val logText = AppLogger.getAllLogsText()
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("MushafQiyam Logs", logText))
-                                    Toast.makeText(context, "تم نسخ السجلات إلى الحافظة", Toast.LENGTH_SHORT).show()
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                                modifier = Modifier.height(28.dp)
-                            ) {
-                                Text("نسخ السجل", fontSize = 10.sp)
+                            Text(
+                                text = if (recognizedText.isEmpty()) "النص المتعرف عليه سيظهر هنا..." else recognizedText,
+                                fontSize = 12.sp,
+                                color = if (recognizedText.isEmpty()) Color.Gray else Color.Black,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "🛠️ السجلات (${logs.size})",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { showLogs = !showLogs }
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(
+                                    onClick = { showLogs = !showLogs },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp)
+                                ) {
+                                    Text(if (showLogs) "إخفاء السجل" else "عرض السجل", fontSize = 10.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val logText = AppLogger.getAllLogsText()
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("MushafQiyam Logs", logText))
+                                        Toast.makeText(context, "تم نسخ السجلات إلى الحافظة", Toast.LENGTH_SHORT).show()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp)
+                                ) {
+                                    Text("نسخ السجل", fontSize = 10.sp)
+                                }
                             }
                         }
 
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp)
-                                .background(Color.Black, RoundedCornerShape(4.dp))
-                                .padding(6.dp)
-                        ) {
-                            items(logs) { entry ->
-                                val color = when (entry.level) {
-                                    "ERROR" -> Color(0xFFFF5252)
-                                    "WARN" -> Color(0xFFFFD740)
-                                    else -> if (entry.message.contains("Confirmed") || entry.message.contains("🎯")) Color(0xFF69F0AE) else Color(0xFFE0E0E0)
+                        AnimatedVisibility(visible = showLogs) {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                                    .height(110.dp)
+                                    .background(Color.Black, RoundedCornerShape(4.dp))
+                                    .padding(6.dp)
+                            ) {
+                                items(logs) { entry ->
+                                    val color = when (entry.level) {
+                                        "ERROR" -> Color(0xFFFF5252)
+                                        "WARN" -> Color(0xFFFFD740)
+                                        else -> if (entry.message.contains("Confirmed") || entry.message.contains("🎯")) Color(0xFF69F0AE) else Color(0xFFE0E0E0)
+                                    }
+                                    val displayText = "[${entry.timestamp}] [${entry.level}] ${entry.tag}: ${entry.message}"
+                                    Text(
+                                        text = displayText,
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = color,
+                                        modifier = Modifier.padding(vertical = 1.dp)
+                                    )
                                 }
-                                val displayText = "[${entry.timestamp}] [${entry.level}] ${entry.tag}: ${entry.message}"
-                                Text(
-                                    text = displayText,
-                                    fontSize = 10.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = color,
-                                    modifier = Modifier.padding(vertical = 1.dp)
-                                )
                             }
                         }
                     }

@@ -78,7 +78,7 @@ object QuranVocabularyFilter {
 
     // Inverted index for < 2ms global discovery across 6,236 verses
     private val skeletonToGlobalIndices = HashMap<String, IntArray>(16384)
-    private var skeletonsByLength: Array<MutableList<String>> = Array(25) { ArrayList() }
+    private var skeletonsByLength: Array<ArrayList<String>> = Array(25) { ArrayList() }
 
     // Current mode and word pointer in the recitation sequence
     var recitationMode: RecitationMode = RecitationMode.DISCOVERY

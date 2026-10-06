@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.8.0"
+        const val APP_VERSION = "5.8.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -93,6 +93,7 @@ fun MainAppScreen(
     var currentPage by remember { mutableIntStateOf(1) }
     var activeSurah by remember { mutableIntStateOf(1) }
     var activeAyah by remember { mutableIntStateOf(1) }
+    var isDiscoveryMode by remember { mutableStateOf(true) }
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -119,9 +120,10 @@ fun MainAppScreen(
             MushafPageRepository.initRepository(context) { progressMsg ->
                 engineStatus = progressMsg
             }
-            engineStatus = "⏳ جاري بناء الفهرس المتسلسل لكامل المصحف (6,236 آية)..."
+            engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
             QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
-            QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
+            QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
+            isDiscoveryMode = true
 
             engineStatus = "⏳ جاري تهيئة محرك FastConformer القرآني..."
             val asrOk = audioRecognizer?.initEngine("tilawa_model") ?: false
@@ -135,7 +137,7 @@ fun MainAppScreen(
     }
 
     var matchSimilarityText by remember {
-        mutableStateOf("اختر أي صفحة أو اضغط على آية البداية ثم اضغط استماع")
+        mutableStateOf("🔍 وضع الاكتشاف الشامل (اقرأ أي آية أو اضغط على آية لتثبيت البداية)")
     }
     var graceEmptyFrames by remember { mutableIntStateOf(0) }
 
@@ -143,6 +145,7 @@ fun MainAppScreen(
         if (rawText.isNotBlank()) {
             val trackingResult = QuranVocabularyFilter.filterAndTrackFullMushaf(rawText)
             val filteredText = trackingResult.filteredText
+            isDiscoveryMode = (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.DISCOVERY)
 
             if (filteredText.isNotBlank()) {
                 val fullText = if (recognizedText.isEmpty()) filteredText else "$recognizedText $filteredText"
@@ -166,10 +169,17 @@ fun MainAppScreen(
                     }
 
                     val simPercent = (trackingResult.highestSimilarity * 100).toInt()
-                    matchSimilarityText = "🎯 ${mv.surahName} — آية ${mv.ayah} (ص ${mv.page}) | تطابق $simPercent%"
-
-                    if (mv.surah != prevSurah || mv.ayah != prevAyah) {
-                        AppLogger.i("VerseMatch", "Confirmed verse [${mv.surah}:${mv.ayah}] (Page ${mv.page}): ${mv.text}")
+                    if (trackingResult.fatihahCompletedNow) {
+                        matchSimilarityText = "🔍 اكتملت الفاتحة — بانتظار اكتشاف السورة/الآية التالية..."
+                        AppLogger.i("RakahCycle", "Al-Fatihah completed [1:7]; switched to DISCOVERY mode (staying on Page 1)")
+                    } else if (trackingResult.discoveredNewLocation) {
+                        matchSimilarityText = "🧭 تم اكتشاف: ${mv.surahName} — آية ${mv.ayah} (ص ${mv.page}) | تطابق $simPercent%"
+                        AppLogger.i("Discovery", "Discovered verse [${mv.surah}:${mv.ayah}] (Page ${mv.page}): ${mv.text}")
+                    } else {
+                        matchSimilarityText = "🎯 ${mv.surahName} — آية ${mv.ayah} (ص ${mv.page}) | تطابق $simPercent%"
+                        if (mv.surah != prevSurah || mv.ayah != prevAyah) {
+                            AppLogger.i("VerseMatch", "Confirmed verse [${mv.surah}:${mv.ayah}] (Page ${mv.page}): ${mv.text}")
+                        }
                     }
                 }
             } else {
@@ -200,7 +210,7 @@ fun MainAppScreen(
             .fillMaxSize()
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        // Compact Top Bar: App Title + Mic Button + Diagnostics Toggle
+        // Compact Top Bar: App Title + Discovery Mode Button + Mic Button + Diagnostics Toggle
         CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
             Row(
                 modifier = Modifier
@@ -228,7 +238,7 @@ fun MainAppScreen(
                         text = matchSimilarityText,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color(0xFF2E7D32),
+                        color = if (isDiscoveryMode) Color(0xFF1565C0) else Color(0xFF2E7D32),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -236,8 +246,26 @@ fun MainAppScreen(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
+                    // Quick toggle to enter 6,236-verse Discovery Mode at any time
+                    OutlinedButton(
+                        onClick = {
+                            QuranVocabularyFilter.enterDiscoveryMode("User clicked Discovery button")
+                            isDiscoveryMode = true
+                            matchSimilarityText = "🔍 وضع الاكتشاف الشامل نشط — اقرأ أي آية من المصحف..."
+                            AppLogger.i("UI", "User activated Global Discovery Mode")
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(36.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (isDiscoveryMode) Color(0xFFE3F2FD) else Color.Transparent,
+                            contentColor = if (isDiscoveryMode) Color(0xFF1565C0) else Color(0xFF2E7D32)
+                        )
+                    ) {
+                        Text(if (isDiscoveryMode) "🔍 اكتشاف نشط" else "🔍 اكتشاف", fontSize = 11.sp)
+                    }
+
                     if (!hasMicPermission) {
                         Button(
                             onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
@@ -255,13 +283,22 @@ fun MainAppScreen(
                                     AppLogger.i("UI", "User clicked Stop Listening")
                                 } else {
                                     recognizedText = ""
-                                    QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
+                                    if (!isDiscoveryMode) {
+                                        QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
+                                    } else {
+                                        QuranVocabularyFilter.enterDiscoveryMode("Start Listening in Discovery Mode")
+                                    }
                                     val started: Boolean = audioRecognizer?.startListening() == true
                                     if (started) {
                                         isListening = true
-                                        val sName = MushafPageRepository.getSurahName(activeSurah)
-                                        matchSimilarityText = "🎙️ جاري التتبع من: $sName — آية $activeAyah (ص $currentPage)"
-                                        AppLogger.i("UI", "User started listening from [$activeSurah:$activeAyah] (Page $currentPage)")
+                                        if (isDiscoveryMode) {
+                                            matchSimilarityText = "🎙️🔍 جاري الاستماع لاكتشاف أي سورة أو آية..."
+                                            AppLogger.i("UI", "User started listening in Global DISCOVERY mode")
+                                        } else {
+                                            val sName = MushafPageRepository.getSurahName(activeSurah)
+                                            matchSimilarityText = "🎙️ جاري التتبع من: $sName — آية $activeAyah (ص $currentPage)"
+                                            AppLogger.i("UI", "User started listening from [$activeSurah:$activeAyah] (Page $currentPage)")
+                                        }
                                     }
                                 }
                             },
@@ -327,6 +364,7 @@ fun MainAppScreen(
                     activeSurah = first.surah
                     activeAyah = first.ayah
                     QuranVocabularyFilter.resetPointerToSurahAyah(first.surah, first.ayah)
+                    isDiscoveryMode = false
                     matchSimilarityText = "📖 نقطة البداية: ${first.surahName} — آية ${first.ayah} (ص $newPage)"
                 }
             },
@@ -335,9 +373,10 @@ fun MainAppScreen(
                 activeSurah = surah
                 activeAyah = ayah
                 QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)
+                isDiscoveryMode = false
                 val sName = MushafPageRepository.getSurahName(surah)
                 matchSimilarityText = "🎯 نقطة البداية: $sName — آية $ayah (ص $page)"
-                AppLogger.i("MushafUI", "User tapped Ayah [$surah:$ayah] on page $page (pointer updated)")
+                AppLogger.i("MushafUI", "User tapped Ayah [$surah:$ayah] on page $page (pointer locked)")
             },
             modifier = Modifier
                 .fillMaxWidth()

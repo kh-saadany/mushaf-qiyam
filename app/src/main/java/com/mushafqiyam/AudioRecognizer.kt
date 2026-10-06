@@ -293,7 +293,7 @@ class AudioRecognizer(private val context: Context) {
                             val level = (rms * 5.0f).coerceIn(0.0f, 1.0f)
                             mainHandler.post { onAudioLevel?.invoke(level) }
 
-                            if (rms > 0.012f) {
+                            if (rms > 0.004f) {
                                 consecutiveSilenceFrames = 0
                             } else {
                                 consecutiveSilenceFrames++

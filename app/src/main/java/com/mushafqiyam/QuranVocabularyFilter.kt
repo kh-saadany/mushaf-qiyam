@@ -137,6 +137,10 @@ object QuranVocabularyFilter {
                 if (vIdx > 0) {
                     logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
                 }
+            } else if (mushafVerses[vIdx].surah == 1 && mushafVerses[vIdx].ayah == 3) {
+                if (vIdx > 0) {
+                    logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
+                }
             } else if (verseTokens.size == 1) {
                 var nextIdx = vIdx + 1
                 while (nextIdx < mushafVerses.size) {
@@ -305,7 +309,7 @@ object QuranVocabularyFilter {
         if (allWords.isEmpty()) return emptyList()
 
         val lookbehind = 2
-        val baseLookahead = if (consecutiveMismatches >= 3) 15 else 8
+        val baseLookahead = 20
         val targetEnd = if (pendingNextVerseFirstWordGlobalIdx > activeWordPointer) {
             maxOf(activeWordPointer + baseLookahead, pendingNextVerseFirstWordGlobalIdx + 4)
         } else {
@@ -361,6 +365,11 @@ object QuranVocabularyFilter {
 
         // 2. If in DISCOVERY mode, run global 6,236-verse discovery engine
         if (recitationMode == RecitationMode.DISCOVERY) {
+            val accumulatedText = discoveryRollingWords.joinToString(" ") { it.normWord } + " " + cleanRaw
+            if (accumulatedText.contains("بسم الله الرحمن الرحيم") || cleanRaw.contains("بسم الله الرحمن الرحيم")) {
+                discoveryRollingWords.clear()
+                return TrackingResult("", null, null, 0, 0.0, RecitationMode.DISCOVERY)
+            }
             val discovered = discoverVerseFromRawWords(rawWords)
             if (discovered != null) {
                 return discovered
@@ -384,17 +393,17 @@ object QuranVocabularyFilter {
             return windowResult
         }
 
-        // 5. Auto-Recovery disabled during TRACKING mode to prevent random jumps on noise.
-        // if (consecutiveMismatches >= 3) {
-        //     val recovered = discoverVerseFromRawWords(rawWords)
-        //     if (recovered != null) {
-        //         AppLogger.i(
-        //             TAG,
-        //             "Auto-Recovery discovered new verse [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}] after $consecutiveMismatches mismatches"
-        //         )
-        //         return recovered
-        //     }
-        // }
+        // 5. Smart Auto-Recovery
+        if (consecutiveMismatches >= 4) {
+            val recovered = discoverVerseFromRawWords(rawWords)
+            if (recovered != null) {
+                AppLogger.i(
+                    TAG,
+                    "Auto-Recovery discovered new verse [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}] after $consecutiveMismatches mismatches"
+                )
+                return recovered
+            }
+        }
 
         return windowResult
     }
@@ -706,7 +715,13 @@ object QuranVocabularyFilter {
                 PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }
         }
         if (!isOnlyTransitionWords) {
-            consecutiveMismatches++
+            val hasValidQuranWord = rawWords.any { rw ->
+                val skel = FuzzyMatcher.skeletonWord(rw)
+                skeletonToGlobalIndices.containsKey(skel)
+            }
+            if (hasValidQuranWord) {
+                consecutiveMismatches++
+            }
         }
     }
 
@@ -1057,6 +1072,8 @@ object QuranVocabularyFilter {
                 if (vIdx > 0) {
                     logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
                 }
+            } else if (cleanVerse == "الرحمن الرحيم" && vIdx > 0 && FuzzyMatcher.normalizeArabic(verses[vIdx - 1]).contains("الحمد لله رب العالمين")) {
+                logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
             } else if (verseTokens.size == 1) {
                 var nextIdx = vIdx + 1
                 while (nextIdx < verses.size) {

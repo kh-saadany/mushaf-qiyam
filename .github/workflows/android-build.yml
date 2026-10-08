@@ -123,8 +123,8 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.8.2"
-        name: "مصحف القيام — V5.8.2 (Lite - UI Overhaul & Logical Merging)"
+        tag: "v5.9.0"
+        name: "مصحف القيام — V5.9.0 (Full - Smart Tracking Resilience)"
         allowUpdates: true
         recreate: true
         body: |

@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.8.2"
+        const val APP_VERSION = "5.9.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -101,7 +101,7 @@ fun MainAppScreen(
     var activeSurah by remember { mutableIntStateOf(1) }
     var activeAyah by remember { mutableIntStateOf(1) }
     var isDiscoveryMode by remember { mutableStateOf(true) }
-    var isScrollMode by remember { mutableStateOf(false) }
+    var isScrollMode by remember { mutableStateOf(true) }
 
     var hasMicPermission by remember {
         mutableStateOf(

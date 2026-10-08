@@ -53,6 +53,7 @@ object QuranVocabularyFilter {
     data class QuranWord(
         val globalIndex: Int,
         val verseIndex: Int,
+        val displayVerseIndex: Int,
         val wordIndexInVerse: Int,
         val originalText: String,
         val normalizedText: String,
@@ -127,15 +128,45 @@ object QuranVocabularyFilter {
 
         var globalIdx = 0
 
+        val logicalVerseMap = IntArray(mushafVerses.size) { it }
+        for (vIdx in mushafVerses.indices) {
+            val cleanVerse = FuzzyMatcher.normalizeArabic(mushafVerses[vIdx].cleanText)
+            val verseTokens = cleanVerse.split(" ").filter { it.isNotBlank() }
+            
+            if (cleanVerse.contains("فباي الاء ربكما تكذبان") || cleanVerse.contains("ويل يومئذ للمكذبين") || cleanVerse.contains("فبأي آلاء ربكما تكذبان")) {
+                if (vIdx > 0) {
+                    logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
+                }
+            } else if (verseTokens.size == 1) {
+                var nextIdx = vIdx + 1
+                while (nextIdx < mushafVerses.size) {
+                    val nextClean = FuzzyMatcher.normalizeArabic(mushafVerses[nextIdx].cleanText)
+                    val nextTokens = nextClean.split(" ").filter { it.isNotBlank() }
+                    if (nextTokens.size > 1 && !nextClean.contains("فباي الاء") && !nextClean.contains("ويل يومئذ")) {
+                        break
+                    }
+                    nextIdx++
+                }
+                logicalVerseMap[vIdx] = minOf(nextIdx, mushafVerses.size - 1)
+            }
+        }
+
+        firstWordMap.fill(-1)
+        countMap.fill(0)
+
         for ((vIdx, mv) in mushafVerses.withIndex()) {
-            firstWordMap[vIdx] = globalIdx
+            val logicalVIdx = logicalVerseMap[vIdx]
+            if (firstWordMap[logicalVIdx] == -1) {
+                firstWordMap[logicalVIdx] = globalIdx
+            }
+            
             val cleanVerse = FuzzyMatcher.normalizeArabic(mv.cleanText)
             val verseTokens = cleanVerse.split(" ").filter { it.isNotBlank() }
             val rawTokens = mv.text.split(" ").filter {
                 it.isNotBlank() && it.any { ch -> ch in '\u0621'..'\u064A' || ch == '\u0671' }
             }
 
-            countMap[vIdx] = verseTokens.size
+            countMap[logicalVIdx] += verseTokens.size
 
             for (wIdx in verseTokens.indices) {
                 val orig = if (wIdx < rawTokens.size) rawTokens[wIdx] else verseTokens[wIdx]
@@ -146,7 +177,8 @@ object QuranVocabularyFilter {
                 words.add(
                     QuranWord(
                         globalIndex = cIdx,
-                        verseIndex = vIdx,
+                        verseIndex = logicalVIdx,
+                        displayVerseIndex = vIdx,
                         wordIndexInVerse = wIdx,
                         originalText = orig,
                         normalizedText = norm,
@@ -352,18 +384,17 @@ object QuranVocabularyFilter {
             return windowResult
         }
 
-        // 5. Auto-Recovery: if tracking has >= 3 consecutive mismatches, feed words to global discovery
-        //    so if the reciter jumped to another Surah or page, we find it seamlessly!
-        if (consecutiveMismatches >= 3) {
-            val recovered = discoverVerseFromRawWords(rawWords)
-            if (recovered != null) {
-                AppLogger.i(
-                    TAG,
-                    "Auto-Recovery discovered new verse [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}] after $consecutiveMismatches mismatches"
-                )
-                return recovered
-            }
-        }
+        // 5. Auto-Recovery disabled during TRACKING mode to prevent random jumps on noise.
+        // if (consecutiveMismatches >= 3) {
+        //     val recovered = discoverVerseFromRawWords(rawWords)
+        //     if (recovered != null) {
+        //         AppLogger.i(
+        //             TAG,
+        //             "Auto-Recovery discovered new verse [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}] after $consecutiveMismatches mismatches"
+        //         )
+        //         return recovered
+        //     }
+        // }
 
         return windowResult
     }
@@ -634,20 +665,22 @@ object QuranVocabularyFilter {
         verseIdx: Int,
         highestSim: Double
     ): TrackingResult {
-        val mv = MushafPageRepository.getVerseByGlobalIndex(verseIdx)
+        val displayIdx = matchedWords.lastOrNull()?.displayVerseIndex ?: verseIdx
+        val mv = MushafPageRepository.getVerseByGlobalIndex(displayIdx)
         val filteredStr = matchedWords.joinToString(" ") { it.originalText }
 
         // Check if the reciter just reached the end of Surah Al-Fatihah (1:7 "ولا الضالين")
+        // Note: we still check the logical verse (verseIdx == 6) internally, but let's just use mv's logic.
         if (mv != null && mv.surah == 1 && mv.ayah == 7) {
             val fatihahEndWordIdx = verseFirstWordIndex[6] + verseWordCount[6] - 1 // "الضالين"
             val reachedEndOfFatihah = matchedWords.any { w ->
-                w.globalIndex >= fatihahEndWordIdx || w.skeletonText == "الضلين"
+                w.globalIndex >= fatihahEndWordIdx || w.skeletonText == "الضلين" || w.skeletonText == "المغضوب"
             }
             if (reachedEndOfFatihah) {
                 enterDiscoveryMode("Completed Al-Fatihah 1:7 (ولا الضالين)")
                 return TrackingResult(
                     filteredText = filteredStr,
-                    matchedVerseIndex = verseIdx,
+                    matchedVerseIndex = displayIdx,
                     matchedVerse = mv,
                     matchedWordsCount = matchedWords.size,
                     highestSimilarity = highestSim,
@@ -659,7 +692,7 @@ object QuranVocabularyFilter {
 
         return TrackingResult(
             filteredText = filteredStr,
-            matchedVerseIndex = verseIdx,
+            matchedVerseIndex = displayIdx,
             matchedVerse = mv,
             matchedWordsCount = matchedWords.size,
             highestSimilarity = highestSim,
@@ -1011,22 +1044,53 @@ object QuranVocabularyFilter {
         if (hash == cachedVersesHash && allWords.isNotEmpty()) return
 
         val words = ArrayList<QuranWord>()
-        val firstWordMap = IntArray(verses.size)
-        val countMap = IntArray(verses.size)
+        val firstWordMap = IntArray(verses.size) { -1 }
+        val countMap = IntArray(verses.size) { 0 }
+
+        val logicalVerseMap = IntArray(verses.size) { it }
+        for (vIdx in verses.indices) {
+            val verse = verses[vIdx]
+            val cleanVerse = FuzzyMatcher.normalizeArabic(verse)
+            val verseTokens = cleanVerse.split(" ").filter { it.isNotBlank() }
+            
+            if (cleanVerse.contains("فباي الاء ربكما تكذبان") || cleanVerse.contains("ويل يومئذ للمكذبين") || cleanVerse.contains("فبأي آلاء ربكما تكذبان")) {
+                if (vIdx > 0) {
+                    logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
+                }
+            } else if (verseTokens.size == 1) {
+                var nextIdx = vIdx + 1
+                while (nextIdx < verses.size) {
+                    val nextClean = FuzzyMatcher.normalizeArabic(verses[nextIdx])
+                    val nextTokens = nextClean.split(" ").filter { it.isNotBlank() }
+                    if (nextTokens.size > 1 && !nextClean.contains("فباي الاء") && !nextClean.contains("ويل يومئذ")) {
+                        break
+                    }
+                    nextIdx++
+                }
+                logicalVerseMap[vIdx] = minOf(nextIdx, verses.size - 1)
+            }
+        }
+        
         var globalIdx = 0
         for ((vIdx, verse) in verses.withIndex()) {
-            firstWordMap[vIdx] = globalIdx
+            val logicalVIdx = logicalVerseMap[vIdx]
+            
+            if (firstWordMap[logicalVIdx] == -1) {
+                firstWordMap[logicalVIdx] = globalIdx
+            }
             val cleanVerse = FuzzyMatcher.normalizeArabic(verse)
             val verseTokens = cleanVerse.split(" ").filter { it.isNotBlank() }
             val rawTokens = verse.split(" ").filter { it.isNotBlank() }
-            countMap[vIdx] = verseTokens.size
+            
+            countMap[logicalVIdx] += verseTokens.size
             for (wIdx in verseTokens.indices) {
                 val orig = if (wIdx < rawTokens.size) rawTokens[wIdx] else verseTokens[wIdx]
                 val norm = verseTokens[wIdx]
                 words.add(
                     QuranWord(
                         globalIndex = globalIdx++,
-                        verseIndex = vIdx,
+                        verseIndex = logicalVIdx,
+                        displayVerseIndex = vIdx,
                         wordIndexInVerse = wIdx,
                         originalText = orig,
                         normalizedText = norm,

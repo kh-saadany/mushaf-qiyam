@@ -10,14 +10,11 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,12 +28,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,180 +47,139 @@ fun MushafPageViewer(
     currentPage: Int,
     activeSurah: Int,
     activeAyah: Int,
+    isScrollMode: Boolean,
     onPageChanged: (Int) -> Unit,
     onAyahTapped: (page: Int, surah: Int, ayah: Int) -> Unit,
+    onFiveTap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(
-        initialPage = (currentPage - 1).coerceIn(0, 603),
-        pageCount = { 604 }
-    )
+    Box(modifier = modifier.fillMaxSize()) {
+        if (isScrollMode) {
+            val lazyListState = rememberLazyListState()
+            var viewportHeight by remember { mutableIntStateOf(0) }
+            var itemHeight by remember { mutableIntStateOf(0) }
 
-    var showJumpDialog by remember { mutableStateOf(false) }
-
-    // Synchronize external currentPage changes (e.g. automatic page turn or dialog jump) with pagerState
-    LaunchedEffect(currentPage) {
-        val targetIdx = (currentPage - 1).coerceIn(0, 603)
-        if (pagerState.currentPage != targetIdx) {
-            pagerState.animateScrollToPage(targetIdx)
-        }
-    }
-
-    // Notify parent when user swipes page manually
-    LaunchedEffect(pagerState.settledPage) {
-        val newPage = pagerState.settledPage + 1
-        if (newPage != currentPage) {
-            onPageChanged(newPage)
-        }
-    }
-
-    val displayedPage = pagerState.currentPage + 1
-    val pageTitle = remember(displayedPage, MushafPageRepository.isInitialized) {
-        if (MushafPageRepository.isInitialized) {
-            MushafPageRepository.getPageHeaderTitle(displayedPage)
-        } else {
-            "صفحة $displayedPage"
-        }
-    }
-
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Top Mushaf Navigation Header Bar (RTL)
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 4.dp),
-                color = Color(0xFF1B5E20),
-                shape = RoundedCornerShape(8.dp),
-                tonalElevation = 2.dp
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    // Previous Page Button (in RTL, right side goes to previous page)
-                    IconButton(
-                        onClick = {
-                            if (displayedPage > 1) {
-                                coroutineScope.launch {
-                                    pagerState.animateScrollToPage(displayedPage - 2)
-                                }
-                            }
-                        },
-                        enabled = displayedPage > 1,
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ChevronRight,
-                            contentDescription = "الصفحة السابقة",
-                            tint = if (displayedPage > 1) Color.White else Color(0x66FFFFFF)
-                        )
+            LaunchedEffect(currentPage, activeSurah, activeAyah) {
+                if (itemHeight > 0 && viewportHeight > 0) {
+                    val boxes = MushafPageRepository.getAyahBoxesOnPage(currentPage, activeSurah, activeAyah)
+                    if (boxes.isNotEmpty()) {
+                        val box = boxes.first()
+                        val yInPage = box.normTop * itemHeight
+                        val offset = (yInPage - (viewportHeight / 2)).toInt()
+                        lazyListState.animateScrollToItem(currentPage - 1, offset)
                     }
+                }
+            }
 
-                    // Center clickable Surah & Page selector
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable { showJumpDialog = true }
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MenuBook,
-                            contentDescription = null,
-                            tint = Color(0xFFFFD54F),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = pageTitle,
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            color = Color(0xFF2E7D32),
-                            shape = RoundedCornerShape(4.dp)
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                LazyColumn(
+                    state = lazyListState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onGloballyPositioned { viewportHeight = it.size.height }
+                ) {
+                    items(604) { index ->
+                        val pageNum = index + 1
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onGloballyPositioned { itemHeight = it.size.height }
                         ) {
-                            Text(
-                                text = "ص $displayedPage / 604",
-                                color = Color(0xFFFFF59D),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
+                            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                MushafSinglePageCanvas(
+                                    pageNumber = pageNum,
+                                    activeSurah = activeSurah,
+                                    activeAyah = activeAyah,
+                                    onTapAyah = { s, a -> onAyahTapped(pageNum, s, a) },
+                                    onFiveTap = onFiveTap
+                                )
+                            }
                         }
                     }
+                }
+            }
+        } else {
+            val pagerState = rememberPagerState(
+                initialPage = (currentPage - 1).coerceIn(0, 603),
+                pageCount = { 604 }
+            )
 
-                    // Next Page Button (in RTL, left side advances to next page)
-                    IconButton(
-                        onClick = {
-                            if (displayedPage < 604) {
-                                coroutineScope.launch {
-                                    pagerState.animateScrollToPage(displayedPage)
-                                }
-                            }
-                        },
-                        enabled = displayedPage < 604,
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ChevronLeft,
-                            contentDescription = "الصفحة التالية",
-                            tint = if (displayedPage < 604) Color.White else Color(0x66FFFFFF)
+            LaunchedEffect(currentPage) {
+                val targetIdx = (currentPage - 1).coerceIn(0, 603)
+                if (pagerState.currentPage != targetIdx) {
+                    pagerState.animateScrollToPage(targetIdx)
+                }
+            }
+
+            LaunchedEffect(pagerState.settledPage) {
+                val newPage = pagerState.settledPage + 1
+                if (newPage != currentPage) {
+                    onPageChanged(newPage)
+                }
+            }
+
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                HorizontalPager(
+                    state = pagerState,
+                    beyondBoundsPageCount = 1,
+                    modifier = Modifier.fillMaxSize()
+                ) { pageIndex ->
+                    val pageNumber = pageIndex + 1
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        MushafSinglePageCanvas(
+                            pageNumber = pageNumber,
+                            activeSurah = activeSurah,
+                            activeAyah = activeAyah,
+                            onTapAyah = { s, a -> onAyahTapped(pageNumber, s, a) },
+                            onFiveTap = onFiveTap
+                        )
+                    }
+                }
+            }
+            
+            // Top Peek Overlay
+            var peekText by remember { mutableStateOf("") }
+            val pageVerses = remember(currentPage, MushafPageRepository.isInitialized) {
+                if (MushafPageRepository.isInitialized) MushafPageRepository.getPageVerses(currentPage) else emptyList()
+            }
+            val isLastVerseActive = pageVerses.lastOrNull()?.let { it.surah == activeSurah && it.ayah == activeAyah } ?: false
+
+            LaunchedEffect(isLastVerseActive, currentPage) {
+                if (isLastVerseActive && currentPage < 604) {
+                    val nextVerses = MushafPageRepository.getPageVerses(currentPage + 1)
+                    val nextVerse = nextVerses.firstOrNull()
+                    if (nextVerse != null) {
+                        val words = nextVerse.text.split(" ").take(5).joinToString(" ")
+                        peekText = words + "..."
+                    } else {
+                        peekText = ""
+                    }
+                } else {
+                    peekText = ""
+                }
+            }
+
+            if (peekText.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Text(
+                            text = peekText,
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .background(Color(0xAA000000), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
                         )
                     }
                 }
             }
         }
-
-        // RTL HorizontalPager for natural Arabic right-to-left page flipping
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-            HorizontalPager(
-                state = pagerState,
-                beyondBoundsPageCount = 1,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            ) { pageIndex ->
-                val pageNumber = pageIndex + 1
-
-                // Inside the page canvas, force LTR so (0,0) is always top-left of the image
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                    MushafSinglePageCanvas(
-                        pageNumber = pageNumber,
-                        activeSurah = activeSurah,
-                        activeAyah = activeAyah,
-                        onTapAyah = { s, a -> onAyahTapped(pageNumber, s, a) }
-                    )
-                }
-            }
-        }
-    }
-
-    if (showJumpDialog) {
-        SurahPagePickerDialog(
-            currentPage = displayedPage,
-            onDismiss = { showJumpDialog = false },
-            onSelectPage = { targetPage, targetSurah, targetAyah ->
-                showJumpDialog = false
-                onPageChanged(targetPage)
-                onAyahTapped(targetPage, targetSurah, targetAyah)
-            }
-        )
     }
 }
 
@@ -232,7 +188,8 @@ private fun MushafSinglePageCanvas(
     pageNumber: Int,
     activeSurah: Int,
     activeAyah: Int,
-    onTapAyah: (surah: Int, ayah: Int) -> Unit
+    onTapAyah: (surah: Int, ayah: Int) -> Unit,
+    onFiveTap: () -> Unit
 ) {
     val context = LocalContext.current
     var pageBitmap by remember(pageNumber) { mutableStateOf<ImageBitmap?>(null) }
@@ -254,13 +211,15 @@ private fun MushafSinglePageCanvas(
         }
     }
 
+    var tapCount by remember { mutableIntStateOf(0) }
+    var lastTapTime by remember { mutableStateOf(0L) }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 2.dp),
         contentAlignment = Alignment.Center
     ) {
-        // Exact 1200:1941 aspect ratio container ensures 100% pixel alignment between Image, Canvas, and Tap gestures
         Box(
             modifier = Modifier
                 .fillMaxHeight()
@@ -270,6 +229,19 @@ private fun MushafSinglePageCanvas(
                 .border(1.dp, Color(0xFFD7CCC8), RoundedCornerShape(8.dp))
                 .pointerInput(pageNumber) {
                     detectTapGestures { tapOffset ->
+                        val now = System.currentTimeMillis()
+                        if (now - lastTapTime < 500) {
+                            tapCount++
+                        } else {
+                            tapCount = 1
+                        }
+                        lastTapTime = now
+
+                        if (tapCount >= 5) {
+                            tapCount = 0
+                            onFiveTap()
+                        }
+
                         if (size.width > 0 && size.height > 0) {
                             val normX = (tapOffset.x / size.width.toFloat()).coerceIn(0f, 1f)
                             val normY = (tapOffset.y / size.height.toFloat()).coerceIn(0f, 1f)
@@ -290,7 +262,6 @@ private fun MushafSinglePageCanvas(
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Draw semi-transparent highlight boxes for the active verse
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
@@ -303,7 +274,6 @@ private fun MushafSinglePageCanvas(
                         val boxW = (box.normRight - box.normLeft) * w
                         val boxH = (box.normBottom - box.normTop) * h
 
-                        // Translucent emerald highlight (22% opacity) keeping text crystal clear
                         drawRoundRect(
                             color = Color(0x384CAF50),
                             topLeft = Offset(left, top),
@@ -311,7 +281,6 @@ private fun MushafSinglePageCanvas(
                             cornerRadius = cornerRadius
                         )
 
-                        // Subtle border around the highlighted line segment
                         drawRoundRect(
                             color = Color(0xAA2E7D32),
                             topLeft = Offset(left, top),
@@ -401,7 +370,6 @@ fun SurahPagePickerDialog(
                         .fillMaxWidth()
                         .height(380.dp)
                 ) {
-                    // Direct Page Number Jump
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,

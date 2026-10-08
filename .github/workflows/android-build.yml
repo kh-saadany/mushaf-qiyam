@@ -123,8 +123,8 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.8.1"
-        name: "مصحف القيام — V5.8.1 (Lite - Stage 3 Full-Mushaf Discovery & Rakah Intelligence)"
+        tag: "v5.8.2"
+        name: "مصحف القيام — V5.8.2 (Lite - UI Overhaul & Logical Merging)"
         allowUpdates: true
         recreate: true
         body: |

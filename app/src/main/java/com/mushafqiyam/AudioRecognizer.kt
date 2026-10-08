@@ -251,9 +251,12 @@ class AudioRecognizer(private val context: Context) {
                         val recognized = decodeWindow(feats)
 
                         if (recognized.isNotBlank() && recognized != lastEmittedText) {
-                            lastEmittedText = recognized
-                            AppLogger.i(TAG, "Recognized text (FastConformer Native ONNX): $recognized")
-                            mainHandler.post { onPartialResult?.invoke(recognized) }
+                            val blacklist = listOf("المصدر", "نهاية الدرس", "الجزائر", "شركة الهدى للخدمات التقنية", "سؤال", "إحسان", "الاحسان", "الجزاء", "شيخ")
+                            if (!blacklist.contains(recognized)) {
+                                lastEmittedText = recognized
+                                AppLogger.i(TAG, "Recognized text (FastConformer Native ONNX): $recognized")
+                                mainHandler.post { onPartialResult?.invoke(recognized) }
+                            }
                         }
 
                         inferenceCounter++
@@ -293,7 +296,7 @@ class AudioRecognizer(private val context: Context) {
                             val level = (rms * 5.0f).coerceIn(0.0f, 1.0f)
                             mainHandler.post { onAudioLevel?.invoke(level) }
 
-                            if (rms > 0.004f) {
+                            if (rms > 0.010f) {
                                 consecutiveSilenceFrames = 0
                             } else {
                                 consecutiveSilenceFrames++

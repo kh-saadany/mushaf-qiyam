@@ -123,8 +123,8 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v5.9.0"
-        name: "مصحف القيام — V5.9.0 (Full - Smart Tracking Resilience)"
+        tag: "v5.9.1"
+        name: "مصحف القيام — V5.9.1 (Lite - Landscape UI & Bismillah Fix)"
         allowUpdates: true
         recreate: true
         body: |

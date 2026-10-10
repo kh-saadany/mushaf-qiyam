@@ -1025,6 +1025,14 @@ object QuranVocabularyFilter {
 
         val finalWord = matchedQuranWords.last()
         val discoveredVIdx = finalWord.verseIndex
+        
+        // ADD THIS CHECK:
+        val prospectiveVerse = MushafPageRepository.getVerseByGlobalIndex(discoveredVIdx)
+        if (prospectiveVerse?.surah == 1 && prospectiveVerse?.ayah == 1) {
+            // Ignore Bismillah as Ayah 1:1 match to prevent jumping to Fatihah between Surahs
+            return null
+        }
+
         confirmedVerseIndex = discoveredVIdx
         activeWordPointer = minOf(allWords.size - 1, finalWord.globalIndex + 1)
         recitationMode = RecitationMode.TRACKING

@@ -6,6 +6,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -34,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
@@ -50,7 +54,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "5.9.0"
+        const val APP_VERSION = "5.9.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -90,7 +94,7 @@ fun MainAppScreen(
     audioRecognizer: AudioRecognizer?
 ) {
     val context = LocalContext.current
-    val activity = context as? Activity
+    val activity = context as? ComponentActivity
     var isListening by remember { mutableStateOf(false) }
     var engineStatus by remember { mutableStateOf("⏳ جاري تهيئة المصحف والمحرك...") }
     var recognizedText by remember { mutableStateOf("") }
@@ -102,6 +106,14 @@ fun MainAppScreen(
     var activeAyah by remember { mutableIntStateOf(1) }
     var isDiscoveryMode by remember { mutableStateOf(true) }
     var isScrollMode by remember { mutableStateOf(true) }
+
+    LaunchedEffect(isScrollMode) {
+        if (isScrollMode) {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        } else {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
 
     var hasMicPermission by remember {
         mutableStateOf(
@@ -321,117 +333,188 @@ fun MainAppScreen(
         )
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        // Live Audio Volume Wave Bar when listening
-        if (isListening) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(5.dp)
-                    .background(Color.LightGray)
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    Row(modifier = Modifier.fillMaxSize()) {
+        if (isLandscape) {
+            // Left Navigation Rail
+            Surface(
+                color = Color(0xFF1B5E20),
+                modifier = Modifier.fillMaxHeight().width(72.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(fraction = audioLevel.coerceIn(0.05f, 1.0f))
-                        .background(Color(0xFF2E7D32))
-                )
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Column(
+                        modifier = Modifier.fillMaxHeight().padding(vertical = 12.dp, horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        IconButton(onClick = { activity?.finishAffinity() }) {
+                            Icon(Icons.Default.ExitToApp, "خروج", tint = Color.White)
+                        }
+
+                        IconButton(onClick = { isScrollMode = !isScrollMode }) {
+                            Icon(if (isScrollMode) Icons.Default.SwapVert else Icons.Default.SwapHoriz, "وضع القراءة", tint = Color.White)
+                        }
+
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            IconButton(onClick = { if (currentPage < 604) currentPage++ }) {
+                                Icon(Icons.Default.ChevronRight, "التالي", tint = Color.White)
+                            }
+
+                            IconButton(
+                                onClick = { showJumpDialog = true },
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            ) {
+                                Icon(Icons.Default.MenuBook, contentDescription = "Surah", tint = Color.White)
+                            }
+
+                            IconButton(onClick = { if (currentPage > 1) currentPage-- }) {
+                                Icon(Icons.Default.ChevronLeft, "السابق", tint = Color.White)
+                            }
+                        }
+
+                        if (!hasMicPermission) {
+                            IconButton(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
+                                Icon(Icons.Default.Mic, "صلاحية الميكروفون", tint = Color.Gray)
+                            }
+                        } else {
+                            IconButton(onClick = {
+                                if (isListening) {
+                                    audioRecognizer?.stopListening()
+                                    isListening = false
+                                } else {
+                                    if (!isDiscoveryMode) {
+                                        QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
+                                    } else {
+                                        QuranVocabularyFilter.enterDiscoveryMode("Start Listening")
+                                    }
+                                    val started = audioRecognizer?.startListening() == true
+                                    isListening = started
+                                }
+                            }) {
+                                Icon(if (isListening) Icons.Default.Stop else Icons.Default.Mic, "استماع", tint = if (isListening) Color.Red else Color.White)
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        // Main Interactive Mushaf Page Viewer
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            MushafPageViewer(
-                currentPage = currentPage,
-                activeSurah = activeSurah,
-                activeAyah = activeAyah,
-                isScrollMode = isScrollMode,
-                onPageChanged = { newPage ->
-                    currentPage = newPage
-                    val pageVerses = MushafPageRepository.getPageVerses(newPage)
-                    val hasCurrentActive = pageVerses.any { it.surah == activeSurah && it.ayah == activeAyah }
-                    if (!hasCurrentActive && pageVerses.isNotEmpty()) {
-                        val first = pageVerses.first()
-                        activeSurah = first.surah
-                        activeAyah = first.ayah
-                        QuranVocabularyFilter.resetPointerToSurahAyah(first.surah, first.ayah)
-                        isDiscoveryMode = false
-                    }
-                },
-                onAyahTapped = { page, surah, ayah ->
-                    currentPage = page
-                    activeSurah = surah
-                    activeAyah = ayah
-                    QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)
-                    isDiscoveryMode = false
-                },
-                onFiveTap = {
-                    showDiagnosticsPanel = true
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // Fixed Bottom Bar
-        Surface(
-            color = Color(0xFF1B5E20),
-            modifier = Modifier.fillMaxWidth()
+        Column(
+            modifier = Modifier.fillMaxHeight().weight(1f)
         ) {
-            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+            // Live Audio Volume Wave Bar when listening
+            if (isListening) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .background(Color.LightGray)
                 ) {
-                    IconButton(onClick = { activity?.finishAffinity() }) {
-                        Icon(Icons.Default.ExitToApp, "خروج", tint = Color.White)
-                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(fraction = audioLevel.coerceIn(0.05f, 1.0f))
+                            .background(Color(0xFF2E7D32))
+                    )
+                }
+            }
 
-                    IconButton(onClick = { isScrollMode = !isScrollMode }) {
-                        Icon(if (isScrollMode) Icons.Default.SwapVert else Icons.Default.SwapHoriz, "وضع القراءة", tint = Color.White)
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                        IconButton(onClick = { if (currentPage < 604) currentPage++ }) {
-                            Icon(Icons.Default.ChevronRight, "التالي", tint = Color.White)
+            // Main Interactive Mushaf Page Viewer
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                MushafPageViewer(
+                    currentPage = currentPage,
+                    activeSurah = activeSurah,
+                    activeAyah = activeAyah,
+                    isScrollMode = isScrollMode,
+                    onPageChanged = { newPage ->
+                        currentPage = newPage
+                        val pageVerses = MushafPageRepository.getPageVerses(newPage)
+                        val hasCurrentActive = pageVerses.any { it.surah == activeSurah && it.ayah == activeAyah }
+                        if (!hasCurrentActive && pageVerses.isNotEmpty()) {
+                            val first = pageVerses.first()
+                            activeSurah = first.surah
+                            activeAyah = first.ayah
+                            QuranVocabularyFilter.resetPointerToSurahAyah(first.surah, first.ayah)
+                            isDiscoveryMode = false
                         }
+                    },
+                    onAyahTapped = { page, surah, ayah ->
+                        currentPage = page
+                        activeSurah = surah
+                        activeAyah = ayah
+                        QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)
+                        isDiscoveryMode = false
+                    },
+                    onFiveTap = {
+                        showDiagnosticsPanel = true
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
 
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { showJumpDialog = true }.padding(horizontal = 8.dp)
+            if (!isLandscape) {
+                // Fixed Bottom Bar
+                Surface(
+                    color = Color(0xFF1B5E20),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            val sName = if (MushafPageRepository.isInitialized) MushafPageRepository.getSurahName(activeSurah) else ""
-                            Text(sName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text("ص $currentPage", color = Color(0xFFFFF59D), fontSize = 12.sp)
-                        }
-
-                        IconButton(onClick = { if (currentPage > 1) currentPage-- }) {
-                            Icon(Icons.Default.ChevronLeft, "السابق", tint = Color.White)
-                        }
-                    }
-
-                    if (!hasMicPermission) {
-                        IconButton(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
-                            Icon(Icons.Default.Mic, "صلاحية الميكروفون", tint = Color.Gray)
-                        }
-                    } else {
-                        IconButton(onClick = {
-                            if (isListening) {
-                                audioRecognizer?.stopListening()
-                                isListening = false
-                            } else {
-                                if (!isDiscoveryMode) {
-                                    QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
-                                } else {
-                                    QuranVocabularyFilter.enterDiscoveryMode("Start Listening")
-                                }
-                                val started = audioRecognizer?.startListening() == true
-                                isListening = started
+                            IconButton(onClick = { activity?.finishAffinity() }) {
+                                Icon(Icons.Default.ExitToApp, "خروج", tint = Color.White)
                             }
-                        }) {
-                            Icon(if (isListening) Icons.Default.Stop else Icons.Default.Mic, "استماع", tint = if (isListening) Color.Red else Color.White)
+
+                            IconButton(onClick = { isScrollMode = !isScrollMode }) {
+                                Icon(if (isScrollMode) Icons.Default.SwapVert else Icons.Default.SwapHoriz, "وضع القراءة", tint = Color.White)
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                                IconButton(onClick = { if (currentPage < 604) currentPage++ }) {
+                                    Icon(Icons.Default.ChevronRight, "التالي", tint = Color.White)
+                                }
+
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.clickable { showJumpDialog = true }.padding(horizontal = 8.dp)
+                                ) {
+                                    val sName = if (MushafPageRepository.isInitialized) MushafPageRepository.getSurahName(activeSurah) else ""
+                                    Text(sName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text("ص $currentPage", color = Color(0xFFFFF59D), fontSize = 12.sp)
+                                }
+
+                                IconButton(onClick = { if (currentPage > 1) currentPage-- }) {
+                                    Icon(Icons.Default.ChevronLeft, "السابق", tint = Color.White)
+                                }
+                            }
+
+                            if (!hasMicPermission) {
+                                IconButton(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
+                                    Icon(Icons.Default.Mic, "صلاحية الميكروفون", tint = Color.Gray)
+                                }
+                            } else {
+                                IconButton(onClick = {
+                                    if (isListening) {
+                                        audioRecognizer?.stopListening()
+                                        isListening = false
+                                    } else {
+                                        if (!isDiscoveryMode) {
+                                            QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
+                                        } else {
+                                            QuranVocabularyFilter.enterDiscoveryMode("Start Listening")
+                                        }
+                                        val started = audioRecognizer?.startListening() == true
+                                        isListening = started
+                                    }
+                                }) {
+                                    Icon(if (isListening) Icons.Default.Stop else Icons.Default.Mic, "استماع", tint = if (isListening) Color.Red else Color.White)
+                                }
+                            }
                         }
                     }
                 }

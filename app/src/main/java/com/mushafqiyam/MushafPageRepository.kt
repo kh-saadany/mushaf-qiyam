@@ -47,6 +47,13 @@ object MushafPageRepository {
         val normBottom: Float
     )
 
+    data class PageLine(
+        val lineNumber: Int,
+        val normTop: Float,
+        val normBottom: Float,
+        val boxes: List<AyahBoundingBox>
+    )
+
     data class SurahInfo(
         val number: Int,
         val name: String,
@@ -60,6 +67,7 @@ object MushafPageRepository {
 
     private val pagesVerses = HashMap<Int, List<MushafVerse>>(604)
     private val pagesBoxes = HashMap<Int, List<AyahBoundingBox>>(604)
+    private val pagesLines = HashMap<Int, List<PageLine>>(604)
     private val allVersesList = ArrayList<MushafVerse>(6236)
     private val verseKeyToGlobalIndex = HashMap<Int, Int>(6236)
     private val surahInfoList = ArrayList<SurahInfo>(114)
@@ -190,9 +198,40 @@ object MushafPageRepository {
                 )
             }
             pagesBoxes[pageNum] = boxList
+
+            // Group boxes on this page into vertical line bands (standard 15 lines in Madani Mushaf)
+            val lineGroups = ArrayList<LineAccumulator>()
+            for (box in boxList) {
+                val midY = (box.normTop + box.normBottom) / 2f
+                val tolerance = 35f / REF_HEIGHT // ~0.018 in normalized coords
+                val existing = lineGroups.firstOrNull { kotlin.math.abs(it.midY - midY) < tolerance }
+                if (existing != null) {
+                    existing.boxes.add(box)
+                } else {
+                    val acc = LineAccumulator(midY)
+                    acc.boxes.add(box)
+                    lineGroups.add(acc)
+                }
+            }
+            lineGroups.sortBy { it.midY }
+            val pageLinesList = lineGroups.mapIndexed { idx, acc ->
+                val minTop = acc.boxes.minOf { it.normTop }
+                val maxBottom = acc.boxes.maxOf { it.normBottom }
+                PageLine(
+                    lineNumber = idx + 1,
+                    normTop = minTop,
+                    normBottom = maxBottom,
+                    boxes = acc.boxes.sortedByDescending { it.normRight } // RTL order on the line
+                )
+            }
+            pagesLines[pageNum] = pageLinesList
         }
 
-        AppLogger.i(TAG, "Loaded ${pagesVerses.size} pages, ${allVersesList.size} verses, and ${pagesBoxes.values.sumOf { it.size }} highlight boxes.")
+        AppLogger.i(TAG, "Loaded ${pagesVerses.size} pages, ${allVersesList.size} verses, ${pagesBoxes.values.sumOf { it.size }} highlight boxes, and ${pagesLines.values.sumOf { it.size }} lines.")
+    }
+
+    private class LineAccumulator(val midY: Float) {
+        val boxes = ArrayList<AyahBoundingBox>()
     }
 
     private fun extractBundledPagesIfNeeded(context: Context, onProgress: ((String) -> Unit)?) {
@@ -297,8 +336,29 @@ object MushafPageRepository {
         return pagesBoxes[pageNumber.coerceIn(1, 604)] ?: emptyList()
     }
 
+    fun getPageLines(pageNumber: Int): List<PageLine> {
+        return pagesLines[pageNumber.coerceIn(1, 604)] ?: emptyList()
+    }
+
     fun getAyahBoxesOnPage(pageNumber: Int, surah: Int, ayah: Int): List<AyahBoundingBox> {
         return getPageBoxes(pageNumber).filter { it.surah == surah && it.ayah == ayah }
+    }
+
+    /**
+     * Finds the lines that contain parts of the given Ayah on the given page.
+     * Returns a pair of: (Current matching Line, Next upcoming Line if any)
+     */
+    fun findAyahLinesOnPage(pageNumber: Int, surah: Int, ayah: Int): Pair<PageLine?, PageLine?> {
+        val lines = getPageLines(pageNumber)
+        val matchingIndices = lines.mapIndexedNotNull { idx, line ->
+            if (line.boxes.any { it.surah == surah && it.ayah == ayah }) idx else null
+        }
+        if (matchingIndices.isEmpty()) return Pair(null, null)
+
+        val firstLineIdx = matchingIndices.first()
+        val currentLine = lines[firstLineIdx]
+        val nextLine = lines.getOrNull(firstLineIdx + 1)
+        return Pair(currentLine, nextLine)
     }
 
     fun getSurahList(): List<SurahInfo> = surahInfoList

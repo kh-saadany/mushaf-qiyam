@@ -24,3 +24,6 @@
   [Quran.com GitHub](https://github.com/quran)
 * **محرك التشغيل (ONNX Runtime):** مكتبة التشغيل مفتوحة المصدر من Microsoft 
   [ONNX Runtime](https://onnxruntime.ai/)
+
+## 📖 التوثيق المعماري للمطورين
+للاطلاع على تفاصيل المعمارية الهندسية، خوارزميات محرك التتبع الصوتي، والتجارب السابقة للمشروع، يرجى مراجعة [الدليل المعماري الشامل (ARCHITECTURE.md)](ARCHITECTURE.md).

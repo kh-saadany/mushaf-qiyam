@@ -61,11 +61,14 @@ fun MushafPageViewer(
 
             LaunchedEffect(currentPage, activeSurah, activeAyah) {
                 if (itemHeight > 0 && viewportHeight > 0) {
-                    val boxes = MushafPageRepository.getAyahBoxesOnPage(currentPage, activeSurah, activeAyah)
-                    if (boxes.isNotEmpty()) {
-                        val box = boxes.first()
-                        val yInPage = box.normTop * itemHeight
-                        val offset = (yInPage - (viewportHeight / 2)).toInt()
+                    val (currentLine, _) = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah)
+                    val targetNormTop = currentLine?.normTop 
+                        ?: MushafPageRepository.getAyahBoxesOnPage(currentPage, activeSurah, activeAyah).firstOrNull()?.normTop
+                    if (targetNormTop != null) {
+                        val yInPage = targetNormTop * itemHeight
+                        // Top-Third Focus: place the active line at ~30% from the top of the viewport
+                        // This leaves ~70% below for the rest of the verse and upcoming verses.
+                        val offset = (yInPage - (viewportHeight * 0.30f)).toInt()
                         lazyListState.animateScrollToItem(currentPage - 1, offset)
                     }
                 }
@@ -203,12 +206,26 @@ private fun MushafSinglePageCanvas(
         isLoading = false
     }
 
-    val activeBoxes = remember(pageNumber, activeSurah, activeAyah, MushafPageRepository.isInitialized) {
+    val (currentLine, nextLine) = remember(pageNumber, activeSurah, activeAyah, MushafPageRepository.isInitialized) {
         if (MushafPageRepository.isInitialized) {
+            MushafPageRepository.findAyahLinesOnPage(pageNumber, activeSurah, activeAyah)
+        } else {
+            Pair(null, null)
+        }
+    }
+
+    val activeBoxes = remember(currentLine, pageNumber, activeSurah, activeAyah, MushafPageRepository.isInitialized) {
+        if (currentLine != null) {
+            currentLine.boxes
+        } else if (MushafPageRepository.isInitialized) {
             MushafPageRepository.getAyahBoxesOnPage(pageNumber, activeSurah, activeAyah)
         } else {
             emptyList()
         }
+    }
+
+    val lookaheadBoxes = remember(nextLine) {
+        nextLine?.boxes ?: emptyList()
     }
 
     var tapCount by remember { mutableIntStateOf(0) }
@@ -268,6 +285,22 @@ private fun MushafSinglePageCanvas(
                     val cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
                     val strokeWidth = 1.5.dp.toPx()
 
+                    // 1. Draw lookahead upcoming line with a subtle, soft translucent tint (~15% opacity)
+                    for (box in lookaheadBoxes) {
+                        val left = box.normLeft * w
+                        val top = box.normTop * h
+                        val boxW = (box.normRight - box.normLeft) * w
+                        val boxH = (box.normBottom - box.normTop) * h
+
+                        drawRoundRect(
+                            color = Color(0x184CAF50), // Subtle preview tint
+                            topLeft = Offset(left, top),
+                            size = Size(boxW, boxH),
+                            cornerRadius = cornerRadius
+                        )
+                    }
+
+                    // 2. Draw active currently recited line with clear highlight
                     for (box in activeBoxes) {
                         val left = box.normLeft * w
                         val top = box.normTop * h

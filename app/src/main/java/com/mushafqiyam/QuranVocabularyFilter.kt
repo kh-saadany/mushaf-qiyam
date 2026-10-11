@@ -757,8 +757,15 @@ object QuranVocabularyFilter {
             }
         }
 
+        // Distinctive Fatihah words that DO NOT exist in the Basmalah ("بسم الله الرحمن الرحيم")
+        val FATIHAH_EXCLUSIVE_SKELETONS = setOf(
+            "الحمد", "العلمين", "ملك", "الدين", "اياك", "نعبد", "نستعين"
+        )
+
         // Require at least 2 ordered words of Al-Fatihah (1:2..1:5) with consecutive proximity
-        if (matched.size >= 2 && (matched.last().globalIndex - matched.first().globalIndex) <= 4) {
+        // AND at least one exclusive Fatihah word to avoid false jumps on Basmalah between Surahs ("الرحمن الرحيم")
+        val hasExclusiveFatihahWord = matched.any { FATIHAH_EXCLUSIVE_SKELETONS.contains(it.skeletonText) }
+        if (matched.size >= 2 && (matched.last().globalIndex - matched.first().globalIndex) <= 4 && hasExclusiveFatihahWord) {
             val targetVIdx = matched.last().verseIndex
             confirmedVerseIndex = targetVIdx
             activeWordPointer = minOf(allWords.size - 1, matched.last().globalIndex + 1)

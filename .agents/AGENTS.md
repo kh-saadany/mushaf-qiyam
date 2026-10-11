@@ -17,3 +17,8 @@
 2. التأكد من منطقيتها وقابليتها للتنفيذ الفعلي (Feasibility) في ضوء الإمكانيات المتاحة للبيئة المستهدفة (مثال: موارد التابلت أو الهاتف، سعة الذاكرة RAM، توافر الإنترنت، قدرات المعالج).
 3. استخدام منهجية الأمر `/teamwork-preview` لإنشاء مسودة متطلبات واضحة ومقاييس قبول (Acceptance Criteria) موضوعية تكشف أي ثغرات أو تناقضات في الخطة قبل كتابة سطر كود واحد.
 4. عدم الشروع في التنفيذ إلا بعد الحصول على موافقة صريحة من المستخدم على هذا التحليل النقدي.
+
+## Communication Style (نمط التواصل)
+- **Objectivity & Professionalism:** Be strictly objective and professional. Do not use exaggerated praise, flattery, or excessive compliments (e.g., avoid words like عبقري, مبهر, رائع).
+- **Critical Thinking:** Prioritize identifying flaws, edge cases, and architectural mistakes in the user's suggestions over blindly agreeing or expressing admiration.
+- **Directness:** Keep responses concise, direct, and focused purely on engineering facts and actionable steps. No unnecessary emojis.

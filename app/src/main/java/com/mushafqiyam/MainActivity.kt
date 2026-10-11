@@ -21,16 +21,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.ExitToApp
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.Bookmarks
+import androidx.compose.material.icons.outlined.FormatLineSpacing
+import androidx.compose.material.icons.outlined.MicNone
+import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -42,10 +44,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,7 +59,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.5.0.1"
+        const val APP_VERSION = "0.5.1.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -223,6 +228,10 @@ fun MainAppScreen(
     var showLogs by remember { mutableStateOf(false) }
     val logs by AppLogger.logs.collectAsState()
     var showJumpDialog by remember { mutableStateOf(false) }
+    val prefs = remember { context.getSharedPreferences("mushaf_prefs", Context.MODE_PRIVATE) }
+    var showSplashDialog by remember {
+        mutableStateOf(prefs.getBoolean("show_splash_dialog", true))
+    }
 
     if (showDiagnosticsPanel) {
         AlertDialog(
@@ -339,6 +348,12 @@ fun MainAppScreen(
         )
     }
 
+    if (showSplashDialog) {
+        SplashScreenDialog(
+            onDismiss = { showSplashDialog = false }
+        )
+    }
+
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -355,12 +370,12 @@ fun MainAppScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        IconButton(onClick = { activity?.finishAffinity() }) {
-                            Icon(Icons.Default.ExitToApp, "خروج", tint = Color.White)
+                        IconButton(onClick = { performCompleteExit(activity, audioRecognizer) }) {
+                            Icon(Icons.Outlined.PowerSettingsNew, "خروج", tint = Color.White)
                         }
 
                         IconButton(onClick = { isScrollMode = !isScrollMode }) {
-                            Icon(if (isScrollMode) Icons.Default.SwapVert else Icons.Default.SwapHoriz, "وضع القراءة", tint = Color.White)
+                            Icon(if (isScrollMode) Icons.Outlined.FormatLineSpacing else Icons.Outlined.AutoStories, "وضع القراءة", tint = Color.White)
                         }
 
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -372,7 +387,7 @@ fun MainAppScreen(
                                 onClick = { showJumpDialog = true },
                                 modifier = Modifier.padding(vertical = 8.dp)
                             ) {
-                                Icon(Icons.Default.MenuBook, contentDescription = "Surah", tint = Color.White)
+                                Icon(Icons.Outlined.Bookmarks, contentDescription = "السور", tint = Color.White)
                             }
 
                             IconButton(onClick = { if (currentPage > 1) currentPage-- }) {
@@ -382,7 +397,7 @@ fun MainAppScreen(
 
                         if (!hasMicPermission) {
                             IconButton(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
-                                Icon(Icons.Default.Mic, "صلاحية الميكروفون", tint = Color.Gray)
+                                Icon(Icons.Outlined.MicNone, "صلاحية الميكروفون", tint = Color.Gray)
                             }
                         } else {
                             IconButton(onClick = {
@@ -399,7 +414,11 @@ fun MainAppScreen(
                                     isListening = started
                                 }
                             }) {
-                                Icon(if (isListening) Icons.Default.Stop else Icons.Default.Mic, "استماع", tint = if (isListening) Color.Red else Color.White)
+                                Icon(
+                                    if (isListening) Icons.Default.GraphicEq else Icons.Outlined.MicNone,
+                                    "استماع",
+                                    tint = if (isListening) Color(0xFF00E676) else Color.White
+                                )
                             }
                         }
                     }
@@ -473,12 +492,12 @@ fun MainAppScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            IconButton(onClick = { activity?.finishAffinity() }) {
-                                Icon(Icons.Default.ExitToApp, "خروج", tint = Color.White)
+                            IconButton(onClick = { performCompleteExit(activity, audioRecognizer) }) {
+                                Icon(Icons.Outlined.PowerSettingsNew, "خروج", tint = Color.White)
                             }
 
                             IconButton(onClick = { isScrollMode = !isScrollMode }) {
-                                Icon(if (isScrollMode) Icons.Default.SwapVert else Icons.Default.SwapHoriz, "وضع القراءة", tint = Color.White)
+                                Icon(if (isScrollMode) Icons.Outlined.FormatLineSpacing else Icons.Outlined.AutoStories, "وضع القراءة", tint = Color.White)
                             }
 
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
@@ -502,7 +521,7 @@ fun MainAppScreen(
 
                             if (!hasMicPermission) {
                                 IconButton(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
-                                    Icon(Icons.Default.Mic, "صلاحية الميكروفون", tint = Color.Gray)
+                                    Icon(Icons.Outlined.MicNone, "صلاحية الميكروفون", tint = Color.Gray)
                                 }
                             } else {
                                 IconButton(onClick = {
@@ -519,10 +538,161 @@ fun MainAppScreen(
                                         isListening = started
                                     }
                                 }) {
-                                    Icon(if (isListening) Icons.Default.Stop else Icons.Default.Mic, "استماع", tint = if (isListening) Color.Red else Color.White)
+                                    Icon(
+                                        if (isListening) Icons.Default.GraphicEq else Icons.Outlined.MicNone,
+                                        "استماع",
+                                        tint = if (isListening) Color(0xFF00E676) else Color.White
+                                    )
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun performCompleteExit(activity: ComponentActivity?, audioRecognizer: AudioRecognizer?) {
+    try {
+        audioRecognizer?.release()
+    } catch (_: Exception) {}
+    activity?.finishAndRemoveTask()
+    android.os.Process.killProcess(android.os.Process.myPid())
+    kotlin.system.exitProcess(0)
+}
+
+@Composable
+fun SplashScreenDialog(
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("mushaf_prefs", Context.MODE_PRIVATE) }
+    var doNotShowAgain by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = {
+            if (doNotShowAgain) {
+                prefs.edit().putBoolean("show_splash_dialog", false).commit()
+            }
+            onDismiss()
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .wrapContentHeight()
+                .padding(vertical = 24.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFFFCFDF9),
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp
+        ) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "مُصْحَفُ القِيَام",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1B5E20),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Text(
+                        text = "تطبيق رقمي يتابع تلاوتك في صلاة القيام والتهجد، ويظلل السطر الذي تقرأه تلقائياً دون حاجة إلى لمس الجهاز.",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = Color(0xFF263238),
+                        lineHeight = 24.sp,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "كيف تستخدم التطبيق؟\n" +
+                                "موضع الجهاز: ضع هاتفك أو جهازك اللوحي (التابلت) على حاملٍ في مستوى نظرك وقريباً من موضع صلاتك.\n" +
+                                "بدء القراءة: اختر السورة أو الصفحة التي تريد أن تبدأ منها، ثم اضغط زر الاستماع.\n" +
+                                "أثناء الصلاة: اقرأ بتمهلٍ واطمئنان؛ سيتولى التطبيق تحريك الآيات وصفحات المصحف تباعاً مع جريان صوتك.",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = Color(0xFF37474F),
+                        lineHeight = 23.sp,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = "يعمل التطبيق محلياً بالكامل دون اتصال بالإنترنت، وهو في مرحلة التطوير والتجريب.",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF546E7A),
+                        lineHeight = 21.sp,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { doNotShowAgain = !doNotShowAgain }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = doNotShowAgain,
+                            onCheckedChange = { doNotShowAgain = it },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = Color(0xFF1B5E20)
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "عدم إظهار هذه الشاشة في المستقبل",
+                            fontSize = 13.sp,
+                            color = Color(0xFF455A64)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            if (doNotShowAgain) {
+                                prefs.edit().putBoolean("show_splash_dialog", false).commit()
+                            }
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1B5E20)
+                        )
+                    ) {
+                        Text(
+                            text = "بدء التشغيل",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
                     }
                 }
             }

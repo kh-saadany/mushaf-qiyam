@@ -118,22 +118,33 @@ jobs:
           mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-lite.apk
         fi
 
+    - name: Clean & Hide Previous GitHub Releases
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        python scripts/cleanup_releases.py
+
     - name: Create Single Release Asset
       uses: ncipollo/release-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v0.5.0.1"
-        name: "مصحف القيام — V0.5.0.1 (Patch - Dynamic Line Progress & Locality Bias)"
+        tag: "v0.5.1.0"
+        name: "مصحف القيام — V0.5.1.0 (Full Release - Splash Screen & Icon Refresh)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — الإصدار الترقيعي الخفيف V0.5.0.1 (Patch Release)
+          ### مصحف القيام — الإصدار الكامل المعتمد V0.5.1.0 (Full Release)
 
-          يتضمن هذا التحديث الترقيعي:
-          1. **التظليل السطري الديناميكي للآيات الطويلة:** ربط التظليل بنسبة الكلمات المقروءة داخل الآية لينتقل التظليل بسلاسة من السطر الأول إلى الثاني والثالث أثناء قراءة الآيات الطويلة بدلاً من التجمد.
-          2. **حماية التتبع وأولوية الجوار المحلي (Local Locality Bias):** إعطاء وزن ترجيحي مضاعف (2.5x) للصفحة الحالية لمنع القفز إلى متشابهات السور البعيدة.
-          3. **بوابات الاسترداد الصوتي:** منع الاسترداد التلقائي إلا عند توفر صمت يتجاوز 3.5 ثوانٍ أو رصد تكبير صريح.
+          يتضمن هذا التحديث الكامل:
+          1. **شاشة الترحيب والبداية (Splash Dialog):** واجهة تعريفية بتعليمات الاستخدام، وزر بدء التشغيل، وخيار تذكر التفضيل وعدم إظهار الشاشة مستقبلاً.
+          2. **تحديث الأيقونات التفاعلية:**
+             - أيقونة إنهاء التطبيق (PowerSettingsNew).
+             - أيقونة التمرير الرأسي السطري (FormatLineSpacing) وأيقونة الصفحات (AutoStories).
+             - أيقونة فهرس السور بالشريط الجانبي (Bookmarks).
+             - أيقونة الاستماع التفاعلية (MicNone عند وضع الانتظار / GraphicEq المضيء بالأخضر عند الاستماع النشط).
+          3. **حزمة المحرك المدمج وكامل صفحات المصحف:** دمج نماذج FastConformer وكافة صفحات المصحف (604 صفحات بدقة فائقة) للتشغيل المحلي دون إنترنت.
 
 
 

@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.5.0-beta"
+        const val APP_VERSION = "0.5.0.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -104,6 +104,7 @@ fun MainAppScreen(
     var currentPage by remember { mutableIntStateOf(1) }
     var activeSurah by remember { mutableIntStateOf(1) }
     var activeAyah by remember { mutableIntStateOf(1) }
+    var activeWordProgress by remember { mutableFloatStateOf(0f) }
     var isDiscoveryMode by remember { mutableStateOf(true) }
     var isScrollMode by remember { mutableStateOf(true) }
 
@@ -180,6 +181,11 @@ fun MainAppScreen(
 
                     activeSurah = mv.surah
                     activeAyah = mv.ayah
+                    activeWordProgress = if (trackingResult.totalWordsInAyah > 1) {
+                        (trackingResult.currentWordInAyah.toFloat() / trackingResult.totalWordsInAyah.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        0f
+                    }
 
                     if (mv.page != prevPage) {
                         currentPage = mv.page
@@ -427,6 +433,7 @@ fun MainAppScreen(
                     currentPage = currentPage,
                     activeSurah = activeSurah,
                     activeAyah = activeAyah,
+                    wordProgress = activeWordProgress,
                     isScrollMode = isScrollMode,
                     onPageChanged = { newPage ->
                         currentPage = newPage

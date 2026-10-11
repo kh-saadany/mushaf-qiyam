@@ -51,6 +51,7 @@ fun MushafPageViewer(
     onPageChanged: (Int) -> Unit,
     onAyahTapped: (page: Int, surah: Int, ayah: Int) -> Unit,
     onFiveTap: () -> Unit,
+    wordProgress: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -59,9 +60,9 @@ fun MushafPageViewer(
             var viewportHeight by remember { mutableIntStateOf(0) }
             var itemHeight by remember { mutableIntStateOf(0) }
 
-            LaunchedEffect(currentPage, activeSurah, activeAyah) {
+            LaunchedEffect(currentPage, activeSurah, activeAyah, (wordProgress * 10).toInt()) {
                 if (itemHeight > 0 && viewportHeight > 0) {
-                    val (currentLine, _) = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah)
+                    val (currentLine, _) = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, wordProgress)
                     val targetNormTop = currentLine?.normTop 
                         ?: MushafPageRepository.getAyahBoxesOnPage(currentPage, activeSurah, activeAyah).firstOrNull()?.normTop
                     if (targetNormTop != null) {
@@ -93,6 +94,7 @@ fun MushafPageViewer(
                                     pageNumber = pageNum,
                                     activeSurah = activeSurah,
                                     activeAyah = activeAyah,
+                                    wordProgress = wordProgress,
                                     onTapAyah = { s, a -> onAyahTapped(pageNum, s, a) },
                                     onFiveTap = onFiveTap
                                 )
@@ -133,6 +135,7 @@ fun MushafPageViewer(
                             pageNumber = pageNumber,
                             activeSurah = activeSurah,
                             activeAyah = activeAyah,
+                            wordProgress = wordProgress,
                             onTapAyah = { s, a -> onAyahTapped(pageNumber, s, a) },
                             onFiveTap = onFiveTap
                         )
@@ -191,6 +194,7 @@ private fun MushafSinglePageCanvas(
     pageNumber: Int,
     activeSurah: Int,
     activeAyah: Int,
+    wordProgress: Float = 0f,
     onTapAyah: (surah: Int, ayah: Int) -> Unit,
     onFiveTap: () -> Unit
 ) {
@@ -206,9 +210,9 @@ private fun MushafSinglePageCanvas(
         isLoading = false
     }
 
-    val (currentLine, nextLine) = remember(pageNumber, activeSurah, activeAyah, MushafPageRepository.isInitialized) {
+    val (currentLine, nextLine) = remember(pageNumber, activeSurah, activeAyah, (wordProgress * 10).toInt(), MushafPageRepository.isInitialized) {
         if (MushafPageRepository.isInitialized) {
-            MushafPageRepository.findAyahLinesOnPage(pageNumber, activeSurah, activeAyah)
+            MushafPageRepository.findAyahLinesOnPage(pageNumber, activeSurah, activeAyah, wordProgress)
         } else {
             Pair(null, null)
         }

@@ -346,18 +346,21 @@ object MushafPageRepository {
 
     /**
      * Finds the lines that contain parts of the given Ayah on the given page.
+     * Takes wordProgress (fraction 0.0f..1.0f) to determine which line inside multi-line Ayahs is currently active.
      * Returns a pair of: (Current matching Line, Next upcoming Line if any)
      */
-    fun findAyahLinesOnPage(pageNumber: Int, surah: Int, ayah: Int): Pair<PageLine?, PageLine?> {
+    fun findAyahLinesOnPage(pageNumber: Int, surah: Int, ayah: Int, wordProgress: Float = 0f): Pair<PageLine?, PageLine?> {
         val lines = getPageLines(pageNumber)
         val matchingIndices = lines.mapIndexedNotNull { idx, line ->
             if (line.boxes.any { it.surah == surah && it.ayah == ayah }) idx else null
         }
         if (matchingIndices.isEmpty()) return Pair(null, null)
 
-        val firstLineIdx = matchingIndices.first()
-        val currentLine = lines[firstLineIdx]
-        val nextLine = lines.getOrNull(firstLineIdx + 1)
+        // Select the active line within the Ayah's lines based on word progress
+        val lineOffset = ((matchingIndices.size * wordProgress.coerceIn(0f, 0.999f)).toInt()).coerceIn(0, matchingIndices.size - 1)
+        val activeLineIdx = matchingIndices[lineOffset]
+        val currentLine = lines[activeLineIdx]
+        val nextLine = lines.getOrNull(activeLineIdx + 1)
         return Pair(currentLine, nextLine)
     }
 

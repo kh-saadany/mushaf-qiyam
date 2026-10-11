@@ -68,7 +68,9 @@ object QuranVocabularyFilter {
         val highestSimilarity: Double,
         val recitationMode: RecitationMode = RecitationMode.TRACKING,
         val fatihahCompletedNow: Boolean = false,
-        val discoveredNewLocation: Boolean = false
+        val discoveredNewLocation: Boolean = false,
+        val currentWordInAyah: Int = 0,
+        val totalWordsInAyah: Int = 1
     )
 
     private var allWords: List<QuranWord> = emptyList()
@@ -102,6 +104,7 @@ object QuranVocabularyFilter {
         private set
 
     private var lastFatihahCompletedTimeMs: Long = 0L
+    private var lastMatchedSpeechTimeMs: Long = System.currentTimeMillis()
 
     // Rolling word buffer for multi-frame discovery
     private data class RollingAsrWord(
@@ -388,18 +391,30 @@ object QuranVocabularyFilter {
 
         // 4. Normal Sequential Window Tracking with Monotonic Chain & Two-Ordered-Words Rule
         val windowResult = trackWithinSequentialWindow(rawWords)
+        val now = System.currentTimeMillis()
         if (windowResult.filteredText.isNotBlank()) {
+            lastMatchedSpeechTimeMs = now
             discoveryRollingWords.clear()
             return windowResult
         }
 
-        // 5. Smart Auto-Recovery
-        if (consecutiveMismatches >= 4) {
+        // 5. Smart Auto-Recovery with Agreed Transition Gates:
+        // Recovery is ONLY triggered if:
+        // (consecutiveMismatches >= 4) AND ((Silence >= 3500ms) OR (Takbir/Transition keyword detected))
+        val hasTakbirOrTransition = rawWords.any { rw ->
+            TRANSITION_WORDS.any { tw -> FuzzyMatcher.wordSimilarity(rw, tw) >= 0.78 } ||
+                PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }
+        }
+        val silenceDurationMs = if (lastMatchedSpeechTimeMs > 0L) now - lastMatchedSpeechTimeMs else 0L
+        val canTriggerRecovery = consecutiveMismatches >= 4 && (silenceDurationMs >= 3500L || hasTakbirOrTransition)
+
+        if (canTriggerRecovery) {
             val recovered = discoverVerseFromRawWords(rawWords)
             if (recovered != null) {
+                lastMatchedSpeechTimeMs = now
                 AppLogger.i(
                     TAG,
-                    "Auto-Recovery discovered new verse [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}] after $consecutiveMismatches mismatches"
+                    "Auto-Recovery discovered new verse [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}] after $consecutiveMismatches mismatches (Silence=${silenceDurationMs}ms, Takbir=$hasTakbirOrTransition)"
                 )
                 return recovered
             }
@@ -680,6 +695,10 @@ object QuranVocabularyFilter {
 
         // Check if the reciter just reached the end of Surah Al-Fatihah (1:7 "ولا الضالين")
         // Note: we still check the logical verse (verseIdx == 6) internally, but let's just use mv's logic.
+        val lastWord = matchedWords.lastOrNull()
+        val wordInAyah = lastWord?.wordIndexInVerse ?: 0
+        val totalWords = if (verseIdx in verseWordCount.indices) verseWordCount[verseIdx] else 1
+
         if (mv != null && mv.surah == 1 && mv.ayah == 7) {
             val fatihahEndWordIdx = verseFirstWordIndex[6] + verseWordCount[6] - 1 // "الضالين"
             val reachedEndOfFatihah = matchedWords.any { w ->
@@ -694,7 +713,9 @@ object QuranVocabularyFilter {
                     matchedWordsCount = matchedWords.size,
                     highestSimilarity = highestSim,
                     recitationMode = RecitationMode.DISCOVERY,
-                    fatihahCompletedNow = true
+                    fatihahCompletedNow = true,
+                    currentWordInAyah = wordInAyah,
+                    totalWordsInAyah = maxOf(1, totalWords)
                 )
             }
         }
@@ -705,7 +726,9 @@ object QuranVocabularyFilter {
             matchedVerse = mv,
             matchedWordsCount = matchedWords.size,
             highestSimilarity = highestSim,
-            recitationMode = recitationMode
+            recitationMode = recitationMode,
+            currentWordInAyah = wordInAyah,
+            totalWordsInAyah = maxOf(1, totalWords)
         )
     }
 
@@ -983,6 +1006,8 @@ object QuranVocabularyFilter {
         }
 
         // Rank candidate verses by their best chain score
+        // With Local Locality Bias (2.5x multiplier for verses on current or adjacent page to prevent false jumps)
+        val currentAyahPage = MushafPageRepository.getVerseByGlobalIndex(confirmedVerseIndex)?.page ?: -1
         var bestIdx = -1
         var bestScore = 0.0
         var bestVerseIdx = -1
@@ -990,7 +1015,11 @@ object QuranVocabularyFilter {
 
         for (i in 0 until m) {
             val vIdx = allWords[allHits[i].globalWordIdx].verseIndex
-            val s = chainScore[i]
+            val candPage = MushafPageRepository.getVerseByGlobalIndex(vIdx)?.page ?: -1
+            val isLocalNeighborhood = currentAyahPage > 0 && kotlin.math.abs(candPage - currentAyahPage) <= 1
+            val localityMultiplier = if (isLocalNeighborhood) 2.50 else 1.00
+            val s = chainScore[i] * localityMultiplier
+
             if (s > bestScore) {
                 if (vIdx != bestVerseIdx) {
                     secondBestScore = bestScore

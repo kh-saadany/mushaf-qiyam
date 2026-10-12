@@ -11,8 +11,8 @@ android {
         applicationId = "com.mushafqiyam"
         minSdk = 24
         targetSdk = 34
-        versionCode = 59
-        versionName = "0.5.1.0"
+        versionCode = 70
+        versionName = "0.7.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -48,17 +48,15 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             pickFirsts += "**/libonnxruntime.so"
-            pickFirsts += "**/libonnxruntime4j_jni.so"
         }
         jniLibs {
             pickFirsts += "**/libonnxruntime.so"
-            pickFirsts += "**/libonnxruntime4j_jni.so"
         }
     }
 }
 
 dependencies {
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
+    implementation(files("libs/sherpa-onnx-1.13.4.aar"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - path-b-zipformer
   workflow_dispatch:
 
 permissions:
@@ -30,6 +31,11 @@ jobs:
       run: |
         gradle wrapper --gradle-version 8.6
         chmod +x gradlew
+
+    - name: Download Sherpa AAR Binary
+      run: |
+        mkdir -p app/libs
+        curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
 
     - name: Run Kotlin Compilation Verification
       run: ./gradlew compileReleaseKotlin
@@ -58,26 +64,27 @@ jobs:
 
     - name: Download Model Assets for Offline ASR & Mushaf Pages
       run: |
+        mkdir -p app/libs
+        echo "Downloading Sherpa-ONNX 1.13.4 AAR binary..."
+        curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
         mkdir -p app/src/main/assets/tilawa_model
         cp -f assets/quran-pages.json app/src/main/assets/quran-pages.json
         cp -f assets/ayah-boxes.json app/src/main/assets/ayah-boxes.json
         COMMIT_MSG=$(git log -1 --pretty=%B)
+        HF_AUTH=""
+        if [ -n "${{ secrets.HF_TOKEN }}" ]; then
+          HF_AUTH="-H \"Authorization: Bearer ${{ secrets.HF_TOKEN }}\""
+        fi
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           echo "Full build: Copying 604 Mushaf pages from assets/mushaf - small..."
           mkdir -p app/src/main/assets/mushaf_pages
           cp -f "assets/mushaf - small"/*.png app/src/main/assets/mushaf_pages/
-          echo "Full build: Downloading FastConformer Quran Streaming Transducer ONNX models (~129MB)..."
-          curl -L --retry 5 -o app/src/main/assets/tilawa_model/encoder.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/encoder.int8.onnx"
-          curl -L --retry 5 -o app/src/main/assets/tilawa_model/decoder.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/decoder.int8.onnx"
-          curl -L --retry 5 -o app/src/main/assets/tilawa_model/joiner.int8.onnx "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/joiner.int8.onnx"
-          curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/tokens.txt"
-          echo "Transforming encoder to remove ConvInteger for ARM64 Android compatibility..."
-          pip install onnx numpy
-          python scripts/fix_encoder_conv.py app/src/main/assets/tilawa_model/encoder.int8.onnx app/src/main/assets/tilawa_model/encoder.onnx
-          rm -f app/src/main/assets/tilawa_model/encoder.int8.onnx
+          echo "Full build: Downloading Zipformer2-CTC Quran Phoneme ONNX model (~65MB)..."
+          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/model.int8.onnx "https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/zipformer_p_arabic_v3.int8.onnx"
+          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/tokens.txt"
         else
           echo "Lite build: Skipping heavy ONNX model downloads and Mushaf pages for ultra-compact patch APK."
-          curl -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8/resolve/main/tokens.txt"
+          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/tokens.txt"
         fi
 
     - name: Decode Keystore
@@ -130,12 +137,12 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v0.5.1.0"
-        name: "مصحف القيام — V0.5.1.0 (Full Release - Splash Screen & Icon Refresh)"
+        tag: "v0.7.0.0"
+        name: "مصحف القيام — V0.7.0.0 (Full Release - Zipformer2 Phonemes)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — الإصدار الكامل المعتمد V0.5.1.0 (Full Release)
+          ### مصحف القيام — الإصدار الكامل المعتمد V0.7.0.0 (Full Release - Zipformer2 Phonemes)
 
           يتضمن هذا التحديث الكامل:
           1. **شاشة الترحيب والبداية (Splash Dialog):** واجهة تعريفية بتعليمات الاستخدام، وزر بدء التشغيل، وخيار تذكر التفضيل وعدم إظهار الشاشة مستقبلاً.
@@ -144,7 +151,7 @@ jobs:
              - أيقونة التمرير الرأسي السطري (FormatLineSpacing) وأيقونة الصفحات (AutoStories).
              - أيقونة فهرس السور بالشريط الجانبي (Bookmarks).
              - أيقونة الاستماع التفاعلية (MicNone عند وضع الانتظار / GraphicEq المضيء بالأخضر عند الاستماع النشط).
-          3. **حزمة المحرك المدمج وكامل صفحات المصحف:** دمج نماذج FastConformer وكافة صفحات المصحف (604 صفحات بدقة فائقة) للتشغيل المحلي دون إنترنت.
+          3. **محرك الفونيمات القرآنية التجويدي (Zipformer2-CTC):** دمج نموذج Zipformer2-CTC وكافة صفحات المصحف (604 صفحات بدقة فائقة) للتشغيل المستقل الكامل دون إنترنت.
 
 
 

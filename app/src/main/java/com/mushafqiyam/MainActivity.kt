@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.5.1.0"
+        const val APP_VERSION = "0.7.0.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -151,7 +151,7 @@ fun MainAppScreen(
             QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
             isDiscoveryMode = true
 
-            engineStatus = "⏳ جاري تهيئة محرك FastConformer القرآني..."
+            engineStatus = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
             val asrOk = audioRecognizer?.initEngine("tilawa_model") ?: false
             val pageCount = MushafPageRepository.getAvailableLocalPageCount(context)
             engineStatus = if (asrOk) {

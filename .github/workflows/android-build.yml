@@ -25,12 +25,14 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
 
-    - name: Setup Gradle Wrapper
-      run: |
-        gradle wrapper --gradle-version 8.6
-        chmod +x gradlew
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.6'
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
 
     - name: Download Sherpa AAR Binary
       run: |
@@ -55,12 +57,14 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
 
-    - name: Setup Gradle Wrapper
-      run: |
-        gradle wrapper --gradle-version 8.6
-        chmod +x gradlew
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.6'
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
 
     - name: Download Model Assets for Offline ASR & Mushaf Pages
       run: |
@@ -79,12 +83,23 @@ jobs:
           echo "Full build: Copying 604 Mushaf pages from assets/mushaf - small..."
           mkdir -p app/src/main/assets/mushaf_pages
           cp -f "assets/mushaf - small"/*.png app/src/main/assets/mushaf_pages/
-          echo "Full build: Downloading Zipformer2-CTC Quran Phoneme ONNX model (~65MB)..."
-          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/model.int8.onnx "https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/zipformer_p_arabic_v3.int8.onnx"
-          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/tokens.txt"
+          echo "Full build: Downloading Zipformer2-CTC Quran Phoneme ONNX model (~69MB)..."
+          MODEL_URL="https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/zipformer_p_arabic_v3.int8.onnx"
+          TOKENS_URL="https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/tokens.txt"
+          if [ -z "${{ secrets.HF_TOKEN }}" ]; then
+            echo "HF_TOKEN not set, using verified mirror..."
+            MODEL_URL="https://huggingface.co/voidwaveDev/phoneme-v3/resolve/main/zipformer_p_arabic_v3.1.int8.onnx"
+            TOKENS_URL="https://huggingface.co/voidwaveDev/phoneme-v3/resolve/main/tokens.txt"
+          fi
+          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/model.int8.onnx "$MODEL_URL"
+          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "$TOKENS_URL"
         else
           echo "Lite build: Skipping heavy ONNX model downloads and Mushaf pages for ultra-compact patch APK."
-          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/tokens.txt"
+          TOKENS_URL="https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3/resolve/main/tokens.txt"
+          if [ -z "${{ secrets.HF_TOKEN }}" ]; then
+            TOKENS_URL="https://huggingface.co/voidwaveDev/phoneme-v3/resolve/main/tokens.txt"
+          fi
+          eval curl $HF_AUTH -L --retry 5 -o app/src/main/assets/tilawa_model/tokens.txt "$TOKENS_URL"
         fi
 
     - name: Decode Keystore
@@ -119,10 +134,10 @@ jobs:
 
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           echo "Packaging Full Release APK..."
-          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-full.apk
+          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-b-full.apk
         else
           echo "Packaging Lite Release APK..."
-          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-lite.apk
+          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-b-lite.apk
         fi
 
     - name: Clean & Hide Previous GitHub Releases
@@ -138,11 +153,11 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
         tag: "v0.7.0.0"
-        name: "مصحف القيام — V0.7.0.0 (Full Release - Zipformer2 Phonemes)"
+        name: "مصحف القيام (ب) — V0.7.0.0 (Full Release - Zipformer2 Phonemes)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — الإصدار الكامل المعتمد V0.7.0.0 (Full Release - Zipformer2 Phonemes)
+          ### مصحف القيام (ب) — الإصدار الكامل المعتمد V0.7.0.0 (Full Release - Zipformer2 Phonemes)
 
           يتضمن هذا التحديث الكامل:
           1. **شاشة الترحيب والبداية (Splash Dialog):** واجهة تعريفية بتعليمات الاستخدام، وزر بدء التشغيل، وخيار تذكر التفضيل وعدم إظهار الشاشة مستقبلاً.

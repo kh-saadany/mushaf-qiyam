@@ -3,10 +3,71 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Deep Emerald Green Background -->
     <path
-        android:fillColor="#0D3B66"
+        android:fillColor="#064E3B"
         android:pathData="M0,0h108v108h-108z" />
+
+    <!-- Subtle Inner Border -->
+    <path
+        android:strokeColor="#047857"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:pathData="M6,22 C6,13 13,6 22,6 H86 C95,6 102,13 102,22 V86 C102,95 95,102 86,102 H22 C13,102 6,95 6,86 Z" />
+    <path
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="0.8"
+        android:fillColor="#00000000"
+        android:pathData="M10,24 C10,16 16,10 24,10 H84 C92,10 98,16 98,24 V84 C98,92 92,98 84,98 H24 C16,98 10,92 10,84 Z" />
+
+    <!-- Open Mushaf -->
     <path
         android:fillColor="#F4D03F"
-        android:pathData="M54,24 L74,74 H34 Z" />
+        android:strokeColor="#D97706"
+        android:strokeWidth="1"
+        android:pathData="M54,40 C42,36 30,38 20,41 L20,68 C30,65 42,63 54,67 Z" />
+    <path
+        android:fillColor="#F4D03F"
+        android:strokeColor="#D97706"
+        android:strokeWidth="1"
+        android:pathData="M54,40 C66,36 78,38 88,41 L88,68 C78,65 66,63 54,67 Z" />
+
+    <!-- Mushaf Script Lines -->
+    <path
+        android:strokeColor="#92400E"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M26,47 C34,45 42,45 48,47 M26,53 C34,51 42,51 48,53 M26,59 C34,57 42,57 48,59" />
+    <path
+        android:strokeColor="#92400E"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M60,47 C66,45 74,45 82,47 M60,53 C66,51 74,51 82,53 M60,59 C66,57 74,57 82,59" />
+
+    <!-- Mushaf Stand (Rehal) -->
+    <path
+        android:fillColor="#D97706"
+        android:strokeColor="#92400E"
+        android:strokeWidth="1"
+        android:pathData="M38,69 L54,77 L70,69 L64,84 L54,79 L44,84 Z" />
+
+    <!-- Distinctive Top-Right Badge for (ب) -->
+    <path
+        android:fillColor="#B45309"
+        android:strokeColor="#FDE68A"
+        android:strokeWidth="2"
+        android:pathData="M85,9 A14,14 0 1,1 84.99,9 Z" />
+
+    <!-- Arabic Letter (ب) inside Badge -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M78,21 C78,26 81,27.5 85,27.5 C89,27.5 92,26 92,21" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M85,30 A1.5,1.5 0 1,1 84.99,30 Z" />
 </vector>

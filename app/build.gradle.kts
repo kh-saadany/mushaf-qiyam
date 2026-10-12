@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.mushafqiyam"
+        applicationId = "com.mushafqiyam.zipformer"
         minSdk = 24
         targetSdk = 34
         versionCode = 70

@@ -208,9 +208,7 @@ class AudioRecognizer(private val context: Context) {
                 '۾' -> 'م'
                 'ۦ' -> 'ي'
                 'ۥ' -> 'و'
-                'ٲ' -> 'ا'
-                'ٱ' -> 'ا'
-                'آ', 'أ', 'إ' -> 'ا'
+                'ٲ', 'ٱ', 'آ', 'أ', 'إ', 'ء' -> 'ا'
                 'ة' -> 'ه'
                 'ى' -> 'ي'
                 // Strip harakat and tajweed auxiliary annotations
@@ -225,34 +223,25 @@ class AudioRecognizer(private val context: Context) {
                     lastChar = ' '
                 }
             } else {
-                // Collapse duplicate consonants/vowels arising from prolonged madds (e.g. "عاالمين" -> "عالمين")
-                // but preserve double lam in "لله"
-                if (mapped == lastChar && (mapped == 'ا' || mapped == 'و' || mapped == 'ي')) {
-                    continue
+                // Collapse duplicate consonants from gemination (shaddah) and prolonged madds
+                // but preserve double lam in "لله / الله"
+                if (mapped == lastChar) {
+                    val isDoubleLamAllah = (mapped == 'ل' && (sb.length >= 2 && sb[sb.length - 2] == 'ا' || (i + 1 < preprocessed.length && preprocessed[i + 1] == 'ه')))
+                    if (!isDoubleLamAllah) {
+                        continue
+                    }
                 }
                 sb.append(mapped)
                 lastChar = mapped
             }
         }
 
-        val rawWords = sb.toString().trim().split(" ").filter { it.isNotBlank() }
-        if (rawWords.isEmpty()) return ""
-
-        val restored = java.lang.StringBuilder(rawWords.size * 8)
-        for (idx in rawWords.indices) {
-            var w = rawWords[idx]
-            // Hamzatul wasl at utterance start: "ءلحمد" -> "الحمد"
-            if (w.startsWith("ء") && w.length >= 3) {
-                w = "ا" + w.substring(1)
-            }
-            // Wasl connection: drop of hamzatul wasl in recitation ("لعالمين" -> "العالمين", "لدين" -> "الدين")
-            if (w.startsWith("ل") && !w.startsWith("لل") && w.length >= 4) {
-                w = "ا$w"
-            }
-            if (idx > 0) restored.append(' ')
-            restored.append(w)
+        var result = sb.toString().trim()
+        // Strip spurious initial acoustic noise prefix before "الحمد" (e.g. "فلحمد" -> "الحمد")
+        if (result.startsWith("فلحمد") || result.startsWith("ولحمد")) {
+            result = result.substring(1)
         }
-        return restored.toString()
+        return result
     }
 
     @SuppressLint("MissingPermission")

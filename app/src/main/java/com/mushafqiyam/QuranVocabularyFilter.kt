@@ -83,6 +83,12 @@ object QuranVocabularyFilter {
     private val skeletonToGlobalIndices = HashMap<String, IntArray>(16384)
     private var skeletonsByLength: Array<ArrayList<String>> = Array(25) { ArrayList() }
 
+    // Character-Level representation for streaming continuous phoneme alignment
+    private var verseCanonicalChars: Array<String> = emptyArray()
+    private var verseWordCharOffsets: Array<IntArray> = emptyArray()
+    private val triGramToVerseIndices = HashMap<String, IntArray>(32768)
+    private val discoveryRollingChars = java.lang.StringBuilder(64)
+
     // Current mode and word pointer in the recitation sequence
     var recitationMode: RecitationMode = RecitationMode.DISCOVERY
         private set
@@ -128,6 +134,9 @@ object QuranVocabularyFilter {
         val firstWordMap = IntArray(mushafVerses.size)
         val countMap = IntArray(mushafVerses.size)
         val tempInverted = HashMap<String, IntArrayList>(16384)
+        val canonList = Array(mushafVerses.size) { "" }
+        val offsetsList = Array(mushafVerses.size) { IntArray(0) }
+        val tempTriGrams = HashMap<String, IntArrayList>(32768)
 
         var globalIdx = 0
 
@@ -175,11 +184,17 @@ object QuranVocabularyFilter {
 
             countMap[logicalVIdx] += verseTokens.size
 
+            val canonBuilder = java.lang.StringBuilder()
+            val offsets = IntArray(verseTokens.size)
+
             for (wIdx in verseTokens.indices) {
                 val orig = if (wIdx < rawTokens.size) rawTokens[wIdx] else verseTokens[wIdx]
                 val norm = verseTokens[wIdx]
                 val skel = FuzzyMatcher.skeletonWord(norm)
                 val cIdx = globalIdx++
+
+                canonBuilder.append(norm)
+                offsets[wIdx] = canonBuilder.length
 
                 words.add(
                     QuranWord(
@@ -202,6 +217,23 @@ object QuranVocabularyFilter {
                     list.add(cIdx)
                 }
             }
+
+            val canon = canonBuilder.toString()
+            canonList[vIdx] = canon
+            offsetsList[vIdx] = offsets
+
+            val seenInVerse = HashSet<String>()
+            for (j in 0 until canon.length - 2) {
+                val tri = canon.substring(j, j + 3)
+                if (seenInVerse.add(tri)) {
+                    var list = tempTriGrams[tri]
+                    if (list == null) {
+                        list = IntArrayList(8)
+                        tempTriGrams[tri] = list
+                    }
+                    list.add(vIdx)
+                }
+            }
         }
 
         skeletonToGlobalIndices.clear()
@@ -211,6 +243,14 @@ object QuranVocabularyFilter {
             val lenBucket = skel.length.coerceIn(0, 24)
             byLen[lenBucket].add(skel)
         }
+
+        triGramToVerseIndices.clear()
+        for ((tri, intList) in tempTriGrams) {
+            triGramToVerseIndices[tri] = intList.toIntArray()
+        }
+
+        verseCanonicalChars = canonList
+        verseWordCharOffsets = offsetsList
 
         allWords = words
         verseFirstWordIndex = firstWordMap
@@ -222,11 +262,12 @@ object QuranVocabularyFilter {
         consecutiveMismatches = 0
         clearPendingVerseTransition()
         discoveryRollingWords.clear()
+        discoveryRollingChars.setLength(0)
 
         val elapsed = System.currentTimeMillis() - startTime
         AppLogger.i(
             TAG,
-            "Full Mushaf indexed in ${elapsed}ms: ${mushafVerses.size} verses, ${words.size} words, ${skeletonToGlobalIndices.size} unique skeletons."
+            "Full Mushaf indexed in ${elapsed}ms: ${mushafVerses.size} verses, ${words.size} words, ${skeletonToGlobalIndices.size} unique skeletons, ${triGramToVerseIndices.size} 3-grams."
         )
     }
 
@@ -262,6 +303,7 @@ object QuranVocabularyFilter {
         consecutiveMismatches = 0
         clearPendingVerseTransition()
         discoveryRollingWords.clear()
+        discoveryRollingChars.setLength(0)
         if (reason.contains("Fatihah") || reason.contains("Ameen")) {
             lastFatihahCompletedTimeMs = System.currentTimeMillis()
         }
@@ -286,6 +328,7 @@ object QuranVocabularyFilter {
         consecutiveMismatches = 0
         clearPendingVerseTransition()
         discoveryRollingWords.clear()
+        discoveryRollingChars.setLength(0)
 
         val mv = MushafPageRepository.getVerseByGlobalIndex(confirmedVerseIndex)
         if (mv != null && mv.surah > 1) {
@@ -340,17 +383,17 @@ object QuranVocabularyFilter {
         }
 
         val cleanRaw = FuzzyMatcher.normalizeArabic(rawText)
-        val rawWords = cleanRaw.split(" ").filter { it.isNotBlank() }
-        if (rawWords.isEmpty()) {
+        val canonicalStream = cleanRaw.replace(" ", "")
+        if (canonicalStream.isBlank()) {
             return TrackingResult("", null, null, 0, 0.0, recitationMode)
         }
+        val rawWords = cleanRaw.split(" ").filter { it.isNotBlank() }
 
         // 1. Check if the user is currently in Surah Al-Fatihah (Surah 1) and said "آمين"
         val currentVerseObj = MushafPageRepository.getVerseByGlobalIndex(confirmedVerseIndex)
         if (recitationMode == RecitationMode.TRACKING && currentVerseObj?.surah == 1 && confirmedVerseIndex >= 5) {
-            val saidAmeen = rawWords.any { rw ->
-                AMEEN_WORDS.any { aw -> FuzzyMatcher.wordSimilarity(rw, aw) >= 0.80 }
-            }
+            val saidAmeen = canonicalStream.contains("امين") || canonicalStream.contains("ءامين") ||
+                rawWords.any { rw -> AMEEN_WORDS.any { aw -> FuzzyMatcher.wordSimilarity(rw, aw) >= 0.80 } }
             if (saidAmeen) {
                 val fatihah7 = MushafPageRepository.getVerseByGlobalIndex(6) ?: currentVerseObj
                 enterDiscoveryMode("Reciter said Ameen after Al-Fatihah")
@@ -366,22 +409,39 @@ object QuranVocabularyFilter {
             }
         }
 
-        // 2. If in DISCOVERY mode, run global 6,236-verse discovery engine
+        // 2. If in DISCOVERY mode, run character-based and rolling discovery
         if (recitationMode == RecitationMode.DISCOVERY) {
-            val accumulatedText = discoveryRollingWords.joinToString(" ") { it.normWord } + " " + cleanRaw
-            if (accumulatedText.contains("بسم الله الرحمن الرحيم") || cleanRaw.contains("بسم الله الرحمن الرحيم")) {
-                discoveryRollingWords.clear()
-                return TrackingResult("", null, null, 0, 0.0, RecitationMode.DISCOVERY)
+            val charDiscovered = discoverVerseFromCharacterStream(canonicalStream)
+            if (charDiscovered != null) {
+                return charDiscovered
             }
-            val discovered = discoverVerseFromRawWords(rawWords)
-            if (discovered != null) {
-                return discovered
+            if (rawWords.isNotEmpty()) {
+                val wordDiscovered = discoverVerseFromRawWords(rawWords)
+                if (wordDiscovered != null) {
+                    return wordDiscovered
+                }
             }
             return TrackingResult("", null, null, 0, 0.0, RecitationMode.DISCOVERY)
         }
 
         // 3. While in TRACKING mode on a non-Fatihah Surah, check if reciter stood up for a new Rakah and started Al-Fatihah
         if (currentVerseObj != null && currentVerseObj.surah != 1) {
+            if (canonicalStream.contains("الحمدلله") || (canonicalStream.contains("الحمد") && canonicalStream.contains("رب"))) {
+                val fatihah2 = MushafPageRepository.getVerseByGlobalIndex(1)
+                if (fatihah2 != null) {
+                    resetPointerToVerse(1)
+                    AppLogger.i(TAG, "New Rakah detected via character stream: switching to Surah Al-Fatihah [1:2]")
+                    return TrackingResult(
+                        filteredText = fatihah2.cleanText,
+                        matchedVerseIndex = 1,
+                        matchedVerse = fatihah2,
+                        matchedWordsCount = 1,
+                        highestSimilarity = 0.95,
+                        recitationMode = RecitationMode.TRACKING,
+                        discoveredNewLocation = true
+                    )
+                }
+            }
             val fatihahJump = detectAlFatihahStart(rawWords)
             if (fatihahJump != null) {
                 AppLogger.i(TAG, "New Rakah detected: switching to Surah Al-Fatihah [${fatihahJump.matchedVerse?.surah}:${fatihahJump.matchedVerse?.ayah}]")
@@ -389,38 +449,287 @@ object QuranVocabularyFilter {
             }
         }
 
-        // 4. Normal Sequential Window Tracking with Monotonic Chain & Two-Ordered-Words Rule
-        val windowResult = trackWithinSequentialWindow(rawWords)
+        // 4. Primary: Character-LCS Sequential Window Tracking
+        val lcsResult = trackWithinSequentialWindowCharacterLCS(canonicalStream)
         val now = System.currentTimeMillis()
-        if (windowResult.filteredText.isNotBlank()) {
+        if (lcsResult.filteredText.isNotBlank()) {
             lastMatchedSpeechTimeMs = now
             discoveryRollingWords.clear()
-            return windowResult
+            discoveryRollingChars.setLength(0)
+            return lcsResult
         }
 
-        // 5. Smart Auto-Recovery with Agreed Transition Gates:
-        // Recovery is ONLY triggered if:
-        // (consecutiveMismatches >= 4) AND ((Silence >= 3500ms) OR (Takbir/Transition keyword detected))
-        val hasTakbirOrTransition = rawWords.any { rw ->
-            TRANSITION_WORDS.any { tw -> FuzzyMatcher.wordSimilarity(rw, tw) >= 0.78 } ||
-                PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }
+        // Secondary fallback: Word-based window tracking (if space-separated words exist)
+        if (rawWords.size >= 2) {
+            val windowResult = trackWithinSequentialWindow(rawWords)
+            if (windowResult.filteredText.isNotBlank()) {
+                lastMatchedSpeechTimeMs = now
+                discoveryRollingWords.clear()
+                discoveryRollingChars.setLength(0)
+                return windowResult
+            }
         }
+
+        // 5. Smart Auto-Recovery
+        val hasTakbirOrTransition = canonicalStream.contains("اللهكبر") || canonicalStream.contains("سمعالله") ||
+            rawWords.any { rw ->
+                TRANSITION_WORDS.any { tw -> FuzzyMatcher.wordSimilarity(rw, tw) >= 0.78 } ||
+                    PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }
+            }
         val silenceDurationMs = if (lastMatchedSpeechTimeMs > 0L) now - lastMatchedSpeechTimeMs else 0L
         val canTriggerRecovery = consecutiveMismatches >= 4 && (silenceDurationMs >= 3500L || hasTakbirOrTransition)
 
         if (canTriggerRecovery) {
-            val recovered = discoverVerseFromRawWords(rawWords)
-            if (recovered != null) {
+            val recoveredChar = discoverVerseFromCharacterStream(canonicalStream)
+            if (recoveredChar != null) {
                 lastMatchedSpeechTimeMs = now
-                AppLogger.i(
-                    TAG,
-                    "Auto-Recovery discovered new verse [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}] after $consecutiveMismatches mismatches (Silence=${silenceDurationMs}ms, Takbir=$hasTakbirOrTransition)"
-                )
-                return recovered
+                AppLogger.i(TAG, "Auto-Recovery (Character) discovered [${recoveredChar.matchedVerse?.surah}:${recoveredChar.matchedVerse?.ayah}]")
+                return recoveredChar
+            }
+            if (rawWords.isNotEmpty()) {
+                val recovered = discoverVerseFromRawWords(rawWords)
+                if (recovered != null) {
+                    lastMatchedSpeechTimeMs = now
+                    AppLogger.i(TAG, "Auto-Recovery (Word) discovered [${recovered.matchedVerse?.surah}:${recovered.matchedVerse?.ayah}]")
+                    return recovered
+                }
             }
         }
 
-        return windowResult
+        return lcsResult
+    }
+
+    /**
+     * Continuous Character-LCS Sequential Window Tracking for streaming phoneme output.
+     */
+    private fun trackWithinSequentialWindowCharacterLCS(stream: String): TrackingResult {
+        if (stream.length < 2 || verseCanonicalChars.isEmpty() || confirmedVerseIndex !in verseCanonicalChars.indices) {
+            return TrackingResult("", null, null, 0, 0.0, recitationMode)
+        }
+
+        val v0 = confirmedVerseIndex
+        val v1 = minOf(verseCanonicalChars.size - 1, v0 + 1)
+        val v2 = minOf(verseCanonicalChars.size - 1, v0 + 2)
+
+        val c0 = verseCanonicalChars[v0]
+        val c1 = if (v1 != v0) verseCanonicalChars[v1] else ""
+        val c2 = if (v2 != v1 && v2 != v0) verseCanonicalChars[v2] else ""
+
+        val refWindow = c0 + c1 + c2
+        val len0 = c0.length
+        val len1 = c1.length
+
+        val (score, bestEndJ) = alignStreamToRef(stream, refWindow)
+        val matchRatio = if (stream.isNotEmpty()) score.toDouble() / stream.length.toDouble() else 0.0
+
+        if (matchRatio < 0.65 || score < 3) {
+            consecutiveMismatches++
+            return TrackingResult("", null, null, 0, matchRatio, recitationMode)
+        }
+
+        consecutiveMismatches = 0
+        lastMatchedSpeechTimeMs = System.currentTimeMillis()
+
+        val targetVerseIdx: Int
+        val offsetInVerse: Int
+        val totalVerseChars: Int
+
+        if (bestEndJ < len0 + 4) {
+            targetVerseIdx = v0
+            offsetInVerse = minOf(len0, bestEndJ)
+            totalVerseChars = len0
+        } else if (bestEndJ < len0 + len1 + 4 && v1 != v0) {
+            targetVerseIdx = v1
+            offsetInVerse = minOf(len1, bestEndJ - len0)
+            totalVerseChars = len1
+            confirmedVerseIndex = v1
+        } else if (v2 != v1 && v2 != v0) {
+            targetVerseIdx = v2
+            offsetInVerse = minOf(c2.length, bestEndJ - len0 - len1)
+            totalVerseChars = c2.length
+            confirmedVerseIndex = v2
+        } else {
+            targetVerseIdx = v0
+            offsetInVerse = minOf(len0, bestEndJ)
+            totalVerseChars = len0
+        }
+
+        val offsets = if (targetVerseIdx in verseWordCharOffsets.indices) verseWordCharOffsets[targetVerseIdx] else IntArray(0)
+        var wordInAyah = 0
+        for (wIdx in offsets.indices) {
+            if (offsetInVerse >= offsets[wIdx]) {
+                wordInAyah = minOf(offsets.size - 1, wIdx + 1)
+            } else {
+                break
+            }
+        }
+
+        val totalWords = if (targetVerseIdx in verseWordCount.indices) verseWordCount[targetVerseIdx] else maxOf(1, offsets.size)
+        val firstWordGlobal = if (targetVerseIdx in verseFirstWordIndex.indices) verseFirstWordIndex[targetVerseIdx] else 0
+        activeWordPointer = minOf(allWords.size - 1, firstWordGlobal + wordInAyah)
+
+        val mv = MushafPageRepository.getVerseByGlobalIndex(targetVerseIdx)
+        if (mv != null && mv.surah > 1) {
+            lastNonFatihahVerseIndex = targetVerseIdx
+        }
+
+        if (mv != null && mv.surah == 1 && mv.ayah == 7 && (offsetInVerse >= totalVerseChars - 4 || wordInAyah >= totalWords - 1)) {
+            enterDiscoveryMode("Completed Al-Fatihah 1:7 (ولا الضالين)")
+            return TrackingResult(
+                filteredText = mv.cleanText,
+                matchedVerseIndex = targetVerseIdx,
+                matchedVerse = mv,
+                matchedWordsCount = wordInAyah + 1,
+                highestSimilarity = matchRatio,
+                recitationMode = RecitationMode.DISCOVERY,
+                fatihahCompletedNow = true,
+                currentWordInAyah = wordInAyah,
+                totalWordsInAyah = maxOf(1, totalWords)
+            )
+        }
+
+        return TrackingResult(
+            filteredText = mv?.cleanText ?: "",
+            matchedVerseIndex = targetVerseIdx,
+            matchedVerse = mv,
+            matchedWordsCount = wordInAyah + 1,
+            highestSimilarity = matchRatio,
+            recitationMode = recitationMode,
+            currentWordInAyah = wordInAyah,
+            totalWordsInAyah = maxOf(1, totalWords)
+        )
+    }
+
+    /**
+     * Semi-global dynamic programming alignment: computes the longest common subsequence of stream inside ref.
+     * Returns Pair(maxScore, bestEndPositionInRef).
+     */
+    private fun alignStreamToRef(stream: String, ref: String): Pair<Int, Int> {
+        val m = stream.length
+        val n = ref.length
+        if (m == 0 || n == 0) return Pair(0, 0)
+
+        var prev = IntArray(n + 1)
+        var curr = IntArray(n + 1)
+
+        for (i in 1..m) {
+            val sc = stream[i - 1]
+            for (j in 1..n) {
+                if (sc == ref[j - 1]) {
+                    curr[j] = prev[j - 1] + 1
+                } else {
+                    curr[j] = maxOf(prev[j], curr[j - 1])
+                }
+            }
+            val tmp = prev
+            prev = curr
+            curr = tmp
+            curr.fill(0)
+        }
+
+        var maxScore = 0
+        var bestJ = 0
+        for (j in 1..n) {
+            if (prev[j] > maxScore) {
+                maxScore = prev[j]
+                bestJ = j
+            }
+        }
+        return Pair(maxScore, bestJ)
+    }
+
+    /**
+     * Fast 3-gram based candidate retrieval and character LCS verification for global discovery.
+     */
+    private fun discoverVerseFromCharacterStream(stream: String): TrackingResult? {
+        if (stream.length < 3 || triGramToVerseIndices.isEmpty()) return null
+
+        val now = System.currentTimeMillis()
+        if (discoveryRollingChars.isNotEmpty() && now - lastMatchedSpeechTimeMs > 8000L) {
+            discoveryRollingChars.setLength(0)
+        }
+
+        discoveryRollingChars.append(stream)
+        if (discoveryRollingChars.length > 50) {
+            discoveryRollingChars.delete(0, discoveryRollingChars.length - 40)
+        }
+
+        val rolling = discoveryRollingChars.toString()
+        if (rolling.length < 3) return null
+
+        if (rolling.contains("الحمد") || rolling.contains("للهرب") || rolling.contains("العالمين")) {
+            val fatihah2 = MushafPageRepository.getVerseByGlobalIndex(1)
+            if (fatihah2 != null) {
+                resetPointerToVerse(1)
+                discoveryRollingChars.setLength(0)
+                AppLogger.i(TAG, "Character Discovery locked onto Al-Fatihah [1:2]")
+                return TrackingResult(
+                    filteredText = fatihah2.cleanText,
+                    matchedVerseIndex = 1,
+                    matchedVerse = fatihah2,
+                    matchedWordsCount = 1,
+                    highestSimilarity = 0.95,
+                    recitationMode = RecitationMode.TRACKING,
+                    discoveredNewLocation = true
+                )
+            }
+        }
+
+        val candidateHits = HashMap<Int, Int>(64)
+        for (j in 0 until rolling.length - 2) {
+            val g = rolling.substring(j, j + 3)
+            val matches = triGramToVerseIndices[g] ?: continue
+            if (matches.size <= 80) {
+                for (vIdx in matches) {
+                    candidateHits[vIdx] = (candidateHits[vIdx] ?: 0) + 1
+                }
+            }
+        }
+
+        if (candidateHits.isEmpty()) return null
+
+        val topCandidates = candidateHits.entries
+            .sortedByDescending { e ->
+                val vLen = if (e.key in verseCanonicalChars.indices) verseCanonicalChars[e.key].length else 50
+                e.value.toDouble() / maxOf(10, vLen).toDouble()
+            }
+            .take(6)
+
+        var bestVIdx = -1
+        var bestRatio = 0.0
+
+        for (cand in topCandidates) {
+            val vIdx = cand.key
+            val canon = verseCanonicalChars[vIdx]
+            val (score, _) = alignStreamToRef(rolling, canon)
+            val ratio = score.toDouble() / minOf(rolling.length, canon.length).toDouble()
+            if (ratio > bestRatio && ratio >= 0.65) {
+                bestRatio = ratio
+                bestVIdx = vIdx
+            }
+        }
+
+        if (bestVIdx != -1) {
+            val mv = MushafPageRepository.getVerseByGlobalIndex(bestVIdx)
+            if (mv != null) {
+                if (mv.surah == 1 && mv.ayah == 1) {
+                    return null
+                }
+                resetPointerToVerse(bestVIdx)
+                discoveryRollingChars.setLength(0)
+                AppLogger.i(TAG, "Character Discovery locked onto verse [${mv.surah}:${mv.ayah}] with ratio ${"%.2f".format(bestRatio)}")
+                return TrackingResult(
+                    filteredText = mv.cleanText,
+                    matchedVerseIndex = bestVIdx,
+                    matchedVerse = mv,
+                    matchedWordsCount = 1,
+                    highestSimilarity = bestRatio,
+                    recitationMode = RecitationMode.TRACKING,
+                    discoveredNewLocation = true
+                )
+            }
+        }
+        return null
     }
 
     /**

@@ -619,20 +619,22 @@ object QuranVocabularyFilter {
             return TrackingResult("", null, null, 0, 0.0, recitationMode)
         }
 
-        val v0 = confirmedVerseIndex
-        val v1 = minOf(verseCanonicalChars.size - 1, v0 + 1)
-        val v2 = minOf(verseCanonicalChars.size - 1, v0 + 2)
+        // Window spans from utteranceAnchorVerseIndex up to confirmedVerseIndex + 2
+        val vStart = maxOf(0, minOf(utteranceAnchorVerseIndex, confirmedVerseIndex))
+        val effectiveStart = maxOf(vStart, confirmedVerseIndex - 4)
+        val vEnd = minOf(verseCanonicalChars.size - 1, confirmedVerseIndex + 2)
 
-        val c0 = verseCanonicalChars[v0]
-        val c1 = if (v1 != v0) verseCanonicalChars[v1] else ""
-        val c2 = if (v2 != v1 && v2 != v0) verseCanonicalChars[v2] else ""
+        val windowVerseIndices = ArrayList<Int>(vEnd - effectiveStart + 1)
+        val verseStartInRef = ArrayList<Int>(vEnd - effectiveStart + 1)
+        val refWindowBuilder = java.lang.StringBuilder(256)
 
-        val len0 = c0.length
-        val len1 = c1.length
-        val len2 = c2.length
+        for (v in effectiveStart..vEnd) {
+            windowVerseIndices.add(v)
+            verseStartInRef.add(refWindowBuilder.length)
+            refWindowBuilder.append(verseCanonicalChars[v])
+        }
 
-        // Bounded forward window of up to 3 verses
-        val refWindow = c0 + c1 + c2
+        val refWindow = refWindowBuilder.toString()
         if (refWindow.isEmpty()) {
             return TrackingResult("", null, null, 0, 0.0, recitationMode)
         }
@@ -657,34 +659,40 @@ object QuranVocabularyFilter {
         val bestEndJ = alignResult.endJ
         val bestStartJ = alignResult.startJ
 
-        val targetVerseIdx: Int
-        val offsetInVerse: Int
-        val totalVerseChars: Int
+        // Map bestEndJ to the matching verse in the window
+        var targetVerseIdx = confirmedVerseIndex
+        var offsetInVerse = 0
+        var totalVerseChars = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex].length else 1
 
-        // Strict Verse Advance Rule:
-        // Do NOT advance to v1 unless the match actually crosses well into v1 (at least 6 chars into v1)
-        // OR the current verse v0 is completed (offset in v0 >= len0 - 4).
-        if (bestEndJ <= len0 + 3) {
-            targetVerseIdx = v0
-            offsetInVerse = minOf(len0, bestEndJ)
-            totalVerseChars = len0
-        } else if (v1 != v0 && (bestEndJ >= len0 + 6 || bestStartJ >= len0 - 4)) {
-            // Check if match extends into v2
-            if (v2 != v1 && v2 != v0 && (len1 <= 12 || bestEndJ >= len0 + len1 + 6)) {
-                targetVerseIdx = v2
-                offsetInVerse = minOf(len2, maxOf(0, bestEndJ - len0 - len1))
-                totalVerseChars = len2
-                confirmedVerseIndex = v2
-            } else {
-                targetVerseIdx = v1
-                offsetInVerse = minOf(len1, maxOf(0, bestEndJ - len0))
-                totalVerseChars = len1
-                confirmedVerseIndex = v1
+        for (i in windowVerseIndices.indices.reversed()) {
+            val vIdx = windowVerseIndices[i]
+            val vStartPos = verseStartInRef[i]
+            val vLen = verseCanonicalChars[vIdx].length
+            if (bestEndJ >= vStartPos + 4 || i == 0) {
+                targetVerseIdx = vIdx
+                offsetInVerse = minOf(vLen, maxOf(0, bestEndJ - vStartPos))
+                totalVerseChars = vLen
+                break
             }
-        } else {
-            targetVerseIdx = v0
-            offsetInVerse = minOf(len0, bestEndJ)
-            totalVerseChars = len0
+        }
+
+        // Strict advance guards: never skip more than 1 verse in a single step unless confirmed
+        if (targetVerseIdx > confirmedVerseIndex + 1) {
+            val v2Pos = windowVerseIndices.indexOf(confirmedVerseIndex + 2)
+            val v2Start = if (v2Pos >= 0) verseStartInRef[v2Pos] else -1
+            if (v2Start >= 0 && bestEndJ >= v2Start + 6) {
+                confirmedVerseIndex = targetVerseIdx
+            } else {
+                targetVerseIdx = confirmedVerseIndex + 1
+                confirmedVerseIndex = targetVerseIdx
+                val v1Pos = windowVerseIndices.indexOf(targetVerseIdx)
+                val v1Start = if (v1Pos >= 0) verseStartInRef[v1Pos] else 0
+                val v1Len = verseCanonicalChars[targetVerseIdx].length
+                offsetInVerse = minOf(v1Len, maxOf(0, bestEndJ - v1Start))
+                totalVerseChars = v1Len
+            }
+        } else if (targetVerseIdx > confirmedVerseIndex) {
+            confirmedVerseIndex = targetVerseIdx
         }
 
         val offsets = if (targetVerseIdx in verseWordCharOffsets.indices) verseWordCharOffsets[targetVerseIdx] else IntArray(0)

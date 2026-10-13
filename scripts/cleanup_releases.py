@@ -16,7 +16,7 @@ import urllib.error
 
 TOKEN = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
 REPO = os.environ.get("GITHUB_REPOSITORY", "kh-saadany/mushaf-qiyam")
-TARGET_ACTIVE_TAG = "v0.7.0.3"
+TARGET_ACTIVE_TAG = "v0.7.0.4"
 
 # Releases using the current FastConformer model that must be HIDDEN (converted to draft)
 FASTCONFORMER_TAGS_TO_HIDE = {
@@ -34,6 +34,7 @@ FASTCONFORMER_TAGS_TO_HIDE = {
     "v0.7.0.0",
     "v0.7.0.1",
     "v0.7.0.2",
+    "v0.7.0.3",
 }
 
 if not TOKEN:

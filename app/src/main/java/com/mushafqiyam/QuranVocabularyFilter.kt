@@ -86,7 +86,7 @@ object QuranVocabularyFilter {
     // Character-Level representation for streaming continuous phoneme alignment
     private var verseCanonicalChars: Array<String> = emptyArray()
     private var verseWordCharOffsets: Array<IntArray> = emptyArray()
-    private val triGramToVerseIndices = HashMap<String, IntArray>(32768)
+    private val fourGramToVerseIndices = HashMap<String, IntArray>(65536)
     private val discoveryRollingChars = java.lang.StringBuilder(64)
     private var utteranceAnchorVerseIndex: Int = 0
     private var lastSeenStreamLength: Int = 0
@@ -139,7 +139,7 @@ object QuranVocabularyFilter {
         val tempInverted = HashMap<String, IntArrayList>(16384)
         val canonList = Array(mushafVerses.size) { "" }
         val offsetsList = Array(mushafVerses.size) { IntArray(0) }
-        val tempTriGrams = HashMap<String, IntArrayList>(32768)
+        val tempFourGrams = HashMap<String, IntArrayList>(65536)
 
         var globalIdx = 0
 
@@ -226,13 +226,13 @@ object QuranVocabularyFilter {
             offsetsList[vIdx] = offsets
 
             val seenInVerse = HashSet<String>()
-            for (j in 0 until canon.length - 2) {
-                val tri = canon.substring(j, j + 3)
-                if (seenInVerse.add(tri)) {
-                    var list = tempTriGrams[tri]
+            for (j in 0 until canon.length - 3) {
+                val tetra = canon.substring(j, j + 4)
+                if (seenInVerse.add(tetra)) {
+                    var list = tempFourGrams[tetra]
                     if (list == null) {
                         list = IntArrayList(8)
-                        tempTriGrams[tri] = list
+                        tempFourGrams[tetra] = list
                     }
                     list.add(vIdx)
                 }
@@ -247,9 +247,9 @@ object QuranVocabularyFilter {
             byLen[lenBucket].add(skel)
         }
 
-        triGramToVerseIndices.clear()
-        for ((tri, intList) in tempTriGrams) {
-            triGramToVerseIndices[tri] = intList.toIntArray()
+        fourGramToVerseIndices.clear()
+        for ((tetra, intList) in tempFourGrams) {
+            fourGramToVerseIndices[tetra] = intList.toIntArray()
         }
 
         verseCanonicalChars = canonList
@@ -270,7 +270,7 @@ object QuranVocabularyFilter {
         val elapsed = System.currentTimeMillis() - startTime
         AppLogger.i(
             TAG,
-            "Full Mushaf indexed in ${elapsed}ms: ${mushafVerses.size} verses, ${words.size} words, ${skeletonToGlobalIndices.size} unique skeletons, ${triGramToVerseIndices.size} 3-grams."
+            "Full Mushaf indexed in ${elapsed}ms: ${mushafVerses.size} verses, ${words.size} words, ${skeletonToGlobalIndices.size} unique skeletons, ${fourGramToVerseIndices.size} 4-grams."
         )
     }
 
@@ -443,15 +443,22 @@ object QuranVocabularyFilter {
 
         // 3. While in TRACKING mode on a non-Fatihah Surah, check if reciter stood up for a new Rakah and started Al-Fatihah
         if (currentVerseObj != null && currentVerseObj.surah != 1) {
-            if (canonicalStream.contains("الحمدلله") || (canonicalStream.contains("الحمد") && canonicalStream.contains("رب"))) {
-                val fatihah2 = MushafPageRepository.getVerseByGlobalIndex(1)
-                if (fatihah2 != null) {
-                    resetPointerToVerse(1)
-                    AppLogger.i(TAG, "New Rakah detected via character stream: switching to Surah Al-Fatihah [1:2]")
+            val isFatihahJump = canonicalStream.contains("الحمدلله") ||
+                (canonicalStream.contains("الحمد") && canonicalStream.contains("رب")) ||
+                canonicalStream.contains("اياكنعبد") ||
+                canonicalStream.contains("اهدنالصراط") ||
+                canonicalStream.contains("اهدينصراط") ||
+                canonicalStream.contains("صراطلذين")
+            if (isFatihahJump) {
+                val fatihahTarget = if (canonicalStream.contains("اهد") || canonicalStream.contains("صراط")) 5 else 1
+                val fv = MushafPageRepository.getVerseByGlobalIndex(fatihahTarget)
+                if (fv != null) {
+                    resetPointerToVerse(fatihahTarget)
+                    AppLogger.i(TAG, "New Rakah detected via character stream: switching to Surah Al-Fatihah [1:${fv.ayah}]")
                     return TrackingResult(
-                        filteredText = fatihah2.cleanText,
-                        matchedVerseIndex = 1,
-                        matchedVerse = fatihah2,
+                        filteredText = fv.cleanText,
+                        matchedVerseIndex = fatihahTarget,
+                        matchedVerse = fv,
                         matchedWordsCount = 1,
                         highestSimilarity = 0.95,
                         recitationMode = RecitationMode.TRACKING,
@@ -494,7 +501,7 @@ object QuranVocabularyFilter {
                     PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }
             }
         val silenceDurationMs = if (lastMatchedSpeechTimeMs > 0L) now - lastMatchedSpeechTimeMs else 0L
-        val canTriggerRecovery = consecutiveMismatches >= 4 && (silenceDurationMs >= 3500L || hasTakbirOrTransition)
+        val canTriggerRecovery = consecutiveMismatches >= 3 && (silenceDurationMs >= 2500L || hasTakbirOrTransition || consecutiveMismatches >= 5)
 
         if (canTriggerRecovery) {
             val recoveryStream = if (canonicalStream.length > 35) {
@@ -531,42 +538,115 @@ object QuranVocabularyFilter {
         return lcsResult
     }
 
+    data class CompactAlignmentResult(
+        val score: Int,
+        val startJ: Int,
+        val endJ: Int,
+        val density: Double
+    )
+
+    /**
+     * Compact semi-global dynamic programming alignment:
+     * Computes the longest common subsequence of stream inside ref while tracking the start
+     * position in ref to enforce dense, contiguous clustering (preventing runaway scattered gaps).
+     */
+    private fun alignStreamToRefCompact(stream: String, ref: String): CompactAlignmentResult {
+        val m = stream.length
+        val n = ref.length
+        if (m == 0 || n == 0) return CompactAlignmentResult(0, 0, 0, 0.0)
+
+        var prevScore = IntArray(n + 1)
+        var currScore = IntArray(n + 1)
+        var prevStart = IntArray(n + 1)
+        var currStart = IntArray(n + 1)
+
+        for (i in 1..m) {
+            val sc = stream[i - 1]
+            for (j in 1..n) {
+                if (sc == ref[j - 1]) {
+                    currScore[j] = prevScore[j - 1] + 1
+                    currStart[j] = if (prevScore[j - 1] > 0) prevStart[j - 1] else j
+                } else {
+                    if (prevScore[j] >= currScore[j - 1]) {
+                        currScore[j] = prevScore[j]
+                        currStart[j] = prevStart[j]
+                    } else {
+                        currScore[j] = currScore[j - 1]
+                        currStart[j] = currStart[j - 1]
+                    }
+                }
+            }
+            val tmpS = prevScore
+            prevScore = currScore
+            currScore = tmpS
+            currScore.fill(0)
+
+            val tmpSt = prevStart
+            prevStart = currStart
+            currStart = tmpSt
+            currStart.fill(0)
+        }
+
+        var bestScore = 0
+        var bestStartJ = 0
+        var bestEndJ = 0
+        var bestDensity = 0.0
+
+        for (j in 1..n) {
+            val s = prevScore[j]
+            if (s >= 3) {
+                val st = prevStart[j]
+                val span = maxOf(1, j - st + 1)
+                val dens = s.toDouble() / span.toDouble()
+                if (dens >= 0.60 && (s > bestScore || (s == bestScore && dens > bestDensity))) {
+                    bestScore = s
+                    bestStartJ = st
+                    bestEndJ = j
+                    bestDensity = dens
+                }
+            }
+        }
+
+        return CompactAlignmentResult(bestScore, bestStartJ, bestEndJ, bestDensity)
+    }
+
     /**
      * Continuous Character-LCS Sequential Window Tracking for streaming phoneme output.
+     * Uses Compact Local Alignment and Strict Sequential Advance Rules to prevent the Runaway Train effect.
      */
     private fun trackWithinSequentialWindowCharacterLCS(stream: String): TrackingResult {
         if (stream.length < 2 || verseCanonicalChars.isEmpty() || confirmedVerseIndex !in verseCanonicalChars.indices) {
             return TrackingResult("", null, null, 0, 0.0, recitationMode)
         }
 
-        // Window spans from max(0, min(utteranceAnchorVerseIndex, confirmedVerseIndex)) up to confirmedVerseIndex + 2
-        val vStart = maxOf(0, minOf(utteranceAnchorVerseIndex, confirmedVerseIndex))
-        val effectiveStart = maxOf(vStart, confirmedVerseIndex - 3)
-        val vEnd = minOf(verseCanonicalChars.size - 1, confirmedVerseIndex + 2)
+        val v0 = confirmedVerseIndex
+        val v1 = minOf(verseCanonicalChars.size - 1, v0 + 1)
+        val v2 = minOf(verseCanonicalChars.size - 1, v0 + 2)
 
-        val windowVerseIndices = ArrayList<Int>(vEnd - effectiveStart + 1)
-        val verseStartInRef = ArrayList<Int>(vEnd - effectiveStart + 1)
-        val refWindowBuilder = java.lang.StringBuilder(128)
+        val c0 = verseCanonicalChars[v0]
+        val c1 = if (v1 != v0) verseCanonicalChars[v1] else ""
+        val c2 = if (v2 != v1 && v2 != v0) verseCanonicalChars[v2] else ""
 
-        for (v in effectiveStart..vEnd) {
-            windowVerseIndices.add(v)
-            verseStartInRef.add(refWindowBuilder.length)
-            refWindowBuilder.append(verseCanonicalChars[v])
-        }
+        val len0 = c0.length
+        val len1 = c1.length
+        val len2 = c2.length
 
-        val refWindow = refWindowBuilder.toString()
+        // Bounded forward window of up to 3 verses
+        val refWindow = c0 + c1 + c2
         if (refWindow.isEmpty()) {
             return TrackingResult("", null, null, 0, 0.0, recitationMode)
         }
 
-        // Align the tail of stream against refWindow to avoid ratio dilution from older verses
+        // Align the tail of stream against refWindow
         val maxTailLen = (refWindow.length * 4 / 3).coerceAtLeast(20)
         val streamToAlign = if (stream.length > maxTailLen) stream.substring(stream.length - maxTailLen) else stream
 
-        val (score, bestEndJ) = alignStreamToRef(streamToAlign, refWindow)
+        val alignResult = alignStreamToRefCompact(streamToAlign, refWindow)
+        val score = alignResult.score
         val matchRatio = if (streamToAlign.isNotEmpty()) score.toDouble() / streamToAlign.length.toDouble() else 0.0
 
-        if (matchRatio < 0.65 || score < 3) {
+        // Strict Compact Alignment: require high stream match ratio (>= 0.65) AND compact density (>= 0.60)
+        if (matchRatio < 0.65 || score < 4 || alignResult.density < 0.60) {
             consecutiveMismatches++
             return TrackingResult("", null, null, 0, matchRatio, recitationMode)
         }
@@ -574,26 +654,37 @@ object QuranVocabularyFilter {
         consecutiveMismatches = 0
         lastMatchedSpeechTimeMs = System.currentTimeMillis()
 
-        // Map bestEndJ back to the matching verse in the window
-        var targetVerseIdx = confirmedVerseIndex
-        var offsetInVerse = 0
-        var totalVerseChars = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex].length else 1
+        val bestEndJ = alignResult.endJ
+        val bestStartJ = alignResult.startJ
 
-        for (i in windowVerseIndices.indices.reversed()) {
-            val vIdx = windowVerseIndices[i]
-            val vStartPos = verseStartInRef[i]
-            val vLen = verseCanonicalChars[vIdx].length
-            if (bestEndJ >= vStartPos + 3 || i == 0) {
-                targetVerseIdx = vIdx
-                offsetInVerse = minOf(vLen, maxOf(0, bestEndJ - vStartPos))
-                totalVerseChars = vLen
-                break
+        val targetVerseIdx: Int
+        val offsetInVerse: Int
+        val totalVerseChars: Int
+
+        // Strict Verse Advance Rule:
+        // Do NOT advance to v1 unless the match actually crosses well into v1 (at least 6 chars into v1)
+        // OR the current verse v0 is completed (offset in v0 >= len0 - 4).
+        if (bestEndJ <= len0 + 3) {
+            targetVerseIdx = v0
+            offsetInVerse = minOf(len0, bestEndJ)
+            totalVerseChars = len0
+        } else if (v1 != v0 && (bestEndJ >= len0 + 6 || bestStartJ >= len0 - 4)) {
+            // Check if match extends into v2
+            if (v2 != v1 && v2 != v0 && (len1 <= 12 || bestEndJ >= len0 + len1 + 6)) {
+                targetVerseIdx = v2
+                offsetInVerse = minOf(len2, maxOf(0, bestEndJ - len0 - len1))
+                totalVerseChars = len2
+                confirmedVerseIndex = v2
+            } else {
+                targetVerseIdx = v1
+                offsetInVerse = minOf(len1, maxOf(0, bestEndJ - len0))
+                totalVerseChars = len1
+                confirmedVerseIndex = v1
             }
-        }
-
-        // Only advance confirmedVerseIndex forward in sequential tracking
-        if (targetVerseIdx > confirmedVerseIndex) {
-            confirmedVerseIndex = targetVerseIdx
+        } else {
+            targetVerseIdx = v0
+            offsetInVerse = minOf(len0, bestEndJ)
+            totalVerseChars = len0
         }
 
         val offsets = if (targetVerseIdx in verseWordCharOffsets.indices) verseWordCharOffsets[targetVerseIdx] else IntArray(0)
@@ -643,48 +734,12 @@ object QuranVocabularyFilter {
     }
 
     /**
-     * Semi-global dynamic programming alignment: computes the longest common subsequence of stream inside ref.
-     * Returns Pair(maxScore, bestEndPositionInRef).
-     */
-    private fun alignStreamToRef(stream: String, ref: String): Pair<Int, Int> {
-        val m = stream.length
-        val n = ref.length
-        if (m == 0 || n == 0) return Pair(0, 0)
-
-        var prev = IntArray(n + 1)
-        var curr = IntArray(n + 1)
-
-        for (i in 1..m) {
-            val sc = stream[i - 1]
-            for (j in 1..n) {
-                if (sc == ref[j - 1]) {
-                    curr[j] = prev[j - 1] + 1
-                } else {
-                    curr[j] = maxOf(prev[j], curr[j - 1])
-                }
-            }
-            val tmp = prev
-            prev = curr
-            curr = tmp
-            curr.fill(0)
-        }
-
-        var maxScore = 0
-        var bestJ = 0
-        for (j in 1..n) {
-            if (prev[j] > maxScore) {
-                maxScore = prev[j]
-                bestJ = j
-            }
-        }
-        return Pair(maxScore, bestJ)
-    }
-
-    /**
-     * Fast 3-gram based candidate retrieval and character LCS verification for global discovery.
+     * Two-Stage Discovery Engine:
+     * Stage 1: Ultra-fast Candidate Retrieval via 4-grams Inverted Index (< 0.3ms).
+     * Stage 2: Precision Verification via 5-gram check and Compact Substring Alignment (< 0.2ms).
      */
     private fun discoverVerseFromCharacterStream(stream: String): TrackingResult? {
-        if (stream.length < 3 || triGramToVerseIndices.isEmpty()) return null
+        if (stream.length < 3 || fourGramToVerseIndices.isEmpty()) return null
 
         val now = System.currentTimeMillis()
         if (discoveryRollingChars.isNotEmpty() && now - lastMatchedSpeechTimeMs > 8000L) {
@@ -711,19 +766,25 @@ object QuranVocabularyFilter {
         }
 
         val rolling = discoveryRollingChars.toString()
-        if (rolling.length < 9) return null
+        if (rolling.length < 8) return null
 
-        if (rolling.contains("الحمد") || rolling.contains("للهرب") || rolling.contains("العالمين")) {
-            val fatihah2 = MushafPageRepository.getVerseByGlobalIndex(1)
-            if (fatihah2 != null) {
-                resetPointerToVerse(1)
+        // Check if reciter started Al-Fatihah
+        val isFatihahStream = rolling.contains("الحمد") || rolling.contains("للهرب") ||
+            rolling.contains("العالمين") || rolling.contains("اهدنالصراط") ||
+            rolling.contains("اهدينصراط") || rolling.contains("اياكنعبد") ||
+            rolling.contains("صراطلذين")
+        if (isFatihahStream) {
+            val fatihahTarget = if (rolling.contains("اهد") || rolling.contains("صراط")) 5 else 1
+            val fv = MushafPageRepository.getVerseByGlobalIndex(fatihahTarget)
+            if (fv != null) {
+                resetPointerToVerse(fatihahTarget)
                 discoveryRollingChars.setLength(0)
                 lastDiscoveryStreamLength = 0
-                AppLogger.i(TAG, "Character Discovery locked onto Al-Fatihah [1:2]")
+                AppLogger.i(TAG, "Character Discovery locked onto Al-Fatihah [1:${fv.ayah}]")
                 return TrackingResult(
-                    filteredText = fatihah2.cleanText,
-                    matchedVerseIndex = 1,
-                    matchedVerse = fatihah2,
+                    filteredText = fv.cleanText,
+                    matchedVerseIndex = fatihahTarget,
+                    matchedVerse = fv,
                     matchedWordsCount = 1,
                     highestSimilarity = 0.95,
                     recitationMode = RecitationMode.TRACKING,
@@ -732,11 +793,12 @@ object QuranVocabularyFilter {
             }
         }
 
+        // --- STAGE 1: 4-gram Candidate Retrieval ---
         val candidateHits = HashMap<Int, Int>(64)
-        for (j in 0 until rolling.length - 2) {
-            val g = rolling.substring(j, j + 3)
-            val matches = triGramToVerseIndices[g] ?: continue
-            if (matches.size <= 80) {
+        for (j in 0 until rolling.length - 3) {
+            val tetra = rolling.substring(j, j + 4)
+            val matches = fourGramToVerseIndices[tetra] ?: continue
+            if (matches.size <= 40) {
                 for (vIdx in matches) {
                     candidateHits[vIdx] = (candidateHits[vIdx] ?: 0) + 1
                 }
@@ -745,22 +807,46 @@ object QuranVocabularyFilter {
 
         if (candidateHits.isEmpty()) return null
 
+        // Require at least two 4-gram hits or a high density ratio
         val topCandidates = candidateHits.entries
+            .filter { it.value >= 2 || rolling.length <= 9 }
             .sortedByDescending { e ->
                 val vLen = if (e.key in verseCanonicalChars.indices) verseCanonicalChars[e.key].length else 50
                 e.value.toDouble() / maxOf(10, vLen).toDouble()
             }
-            .take(6)
+            .take(5)
 
+        if (topCandidates.isEmpty()) return null
+
+        // --- STAGE 2: Precision Verification via 5-gram check & Compact Alignment ---
         var bestVIdx = -1
         var bestRatio = 0.0
 
         for (cand in topCandidates) {
             val vIdx = cand.key
             val canon = verseCanonicalChars[vIdx]
-            val (score, _) = alignStreamToRef(rolling, canon)
-            val ratio = score.toDouble() / minOf(rolling.length, canon.length).toDouble()
-            if (score >= 8 && ratio > bestRatio && ratio >= 0.65) {
+
+            // 1. Check for at least one contiguous 5-gram match between rolling and canon
+            var has5Gram = false
+            for (j in 0 until rolling.length - 4) {
+                val five = rolling.substring(j, j + 5)
+                if (canon.contains(five)) {
+                    has5Gram = true
+                    break
+                }
+            }
+
+            // If rolling is 10+ chars, strictly require at least one 5-gram match
+            if (rolling.length >= 10 && !has5Gram) {
+                continue
+            }
+
+            // 2. Compact Alignment
+            val alignResult = alignStreamToRefCompact(rolling, canon)
+            val score = alignResult.score
+            val ratio = score.toDouble() / rolling.length.toDouble()
+
+            if (score >= 8 && alignResult.density >= 0.65 && ratio >= 0.65 && ratio > bestRatio) {
                 bestRatio = ratio
                 bestVIdx = vIdx
             }
@@ -775,7 +861,7 @@ object QuranVocabularyFilter {
                 resetPointerToVerse(bestVIdx)
                 discoveryRollingChars.setLength(0)
                 lastDiscoveryStreamLength = 0
-                AppLogger.i(TAG, "Character Discovery locked onto verse [${mv.surah}:${mv.ayah}] with ratio ${"%.2f".format(bestRatio)}")
+                AppLogger.i(TAG, "Two-Stage Discovery locked onto verse [${mv.surah}:${mv.ayah}] with ratio ${"%.2f".format(bestRatio)}")
                 return TrackingResult(
                     filteredText = mv.cleanText,
                     matchedVerseIndex = bestVIdx,

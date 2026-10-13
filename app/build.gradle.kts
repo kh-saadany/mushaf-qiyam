@@ -11,8 +11,8 @@ android {
         applicationId = "com.mushafqiyam.zipformer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 71
-        versionName = "0.7.0.1"
+        versionCode = 72
+        versionName = "0.7.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

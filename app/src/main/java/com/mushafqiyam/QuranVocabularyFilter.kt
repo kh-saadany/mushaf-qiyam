@@ -506,6 +506,7 @@ object QuranVocabularyFilter {
             if (recoveredChar != null) {
                 val targetVIdx = recoveredChar.matchedVerseIndex
                 val isSevereBackwardJump = currentVerseObj != null &&
+                    targetVIdx != null &&
                     recoveredChar.matchedVerse?.surah == currentVerseObj.surah &&
                     targetVIdx < confirmedVerseIndex - 2 &&
                     silenceDurationMs < 6000L
@@ -514,7 +515,7 @@ object QuranVocabularyFilter {
                     AppLogger.i(TAG, "Auto-Recovery (Character) discovered [${recoveredChar.matchedVerse?.surah}:${recoveredChar.matchedVerse?.ayah}]")
                     return recoveredChar
                 } else {
-                    AppLogger.w(TAG, "Suppressed false backward Auto-Recovery jump from $confirmedVerseIndex to $targetVIdx in Surah ${currentVerseObj.surah}")
+                    AppLogger.w(TAG, "Suppressed false backward Auto-Recovery jump from $confirmedVerseIndex to $targetVIdx in Surah ${currentVerseObj?.surah}")
                 }
             }
             if (rawWords.isNotEmpty()) {

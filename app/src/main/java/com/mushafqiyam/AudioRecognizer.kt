@@ -47,6 +47,11 @@ class AudioRecognizer(private val context: Context) {
     @Volatile
     private var currentStream: OnlineStream? = null
 
+    private val streamLock = Any()
+    @Volatile
+    private var lastSpeechTimestampMs = System.currentTimeMillis()
+    private var lastAudioLevelPostMs = 0L
+
     // Callbacks for UI updates
     var onAudioLevel: ((Float) -> Unit)? = null
     var onPartialResult: ((String) -> Unit)? = null
@@ -237,6 +242,16 @@ class AudioRecognizer(private val context: Context) {
         }
 
         var result = sb.toString().trim()
+        // Tajweed acoustic normalization: Iqlab (ن before ب -> مب)
+        result = result.replace("نب", "مب").replace("نپ", "مب")
+        // Cross-word Idgham across word boundaries
+        result = result
+            .replace("ن ر", "ر")
+            .replace("ن ل", "ل")
+            .replace("ن م", "م")
+            .replace("ن ي", "ي")
+            .replace("ن و", "و")
+
         // Strip spurious initial acoustic noise prefix before "الحمد" (e.g. "فلحمد" -> "الحمد")
         if (result.startsWith("فلحمد") || result.startsWith("ولحمد")) {
             result = result.substring(1)
@@ -289,6 +304,13 @@ class AudioRecognizer(private val context: Context) {
 
                 while (isRecording.get()) {
                     try {
+                        val now = System.currentTimeMillis()
+                        // Thermal gate: cool down CPU during complete silence (bowing/prostrating)
+                        if (now - lastSpeechTimestampMs > 1500L) {
+                            Thread.sleep(80)
+                            continue
+                        }
+
                         val stream = currentStream
                         val currentRec = recognizer
                         if (stream == null || currentRec == null) {
@@ -296,13 +318,19 @@ class AudioRecognizer(private val context: Context) {
                             continue
                         }
 
-                        while (currentRec.isReady(stream)) {
-                            currentRec.decode(stream)
-                        }
+                        var isEndpoint = false
+                        var rawText = ""
 
-                        val isEndpoint = currentRec.isEndpoint(stream)
-                        val result = currentRec.getResult(stream)
-                        val rawText = result.text.trim()
+                        synchronized(streamLock) {
+                            while (currentRec.isReady(stream)) {
+                                currentRec.decode(stream)
+                            }
+                            isEndpoint = currentRec.isEndpoint(stream)
+                            rawText = currentRec.getResult(stream).text.trim()
+                            if (isEndpoint) {
+                                currentRec.reset(stream)
+                            }
+                        }
 
                         if (rawText.isNotBlank()) {
                             val projected = projectPhonemesToCanonical(rawText)
@@ -314,7 +342,6 @@ class AudioRecognizer(private val context: Context) {
                         }
 
                         if (isEndpoint) {
-                            currentRec.reset(stream)
                             lastEmittedProjected = ""
                         }
 
@@ -333,6 +360,7 @@ class AudioRecognizer(private val context: Context) {
 
             // 2. Dedicated Audio Capture Producer Thread (Never blocks on inference!)
             captureThread = thread(start = true, name = "ZipformerAudioCaptureThread") {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
                 val readChunk = ShortArray(CHUNK_SAMPLES)
                 val floatSamples = FloatArray(CHUNK_SAMPLES)
 
@@ -349,11 +377,21 @@ class AudioRecognizer(private val context: Context) {
                                 sum += (s.toDouble() * s.toDouble())
                             }
                             val rms = sqrt(sum / readSamples).toFloat()
-                            val level = (rms * 5.0f).coerceIn(0.0f, 1.0f)
-                            mainHandler.post { onAudioLevel?.invoke(level) }
+                            val now = System.currentTimeMillis()
+                            if (rms > 0.005f) {
+                                lastSpeechTimestampMs = now
+                            }
 
-                            // Stream samples directly to C++ kaldi-native-fbank and Zipformer buffer
-                            currentStream?.acceptWaveform(floatSamples, SAMPLE_RATE)
+                            if (now - lastAudioLevelPostMs >= 80L) {
+                                lastAudioLevelPostMs = now
+                                val level = (rms * 5.0f).coerceIn(0.0f, 1.0f)
+                                mainHandler.post { onAudioLevel?.invoke(level) }
+                            }
+
+                            // Stream samples directly to C++ kaldi-native-fbank and Zipformer buffer under lock
+                            synchronized(streamLock) {
+                                currentStream?.acceptWaveform(floatSamples, SAMPLE_RATE)
+                            }
                         }
                     } catch (t: Throwable) {
                         AppLogger.e(TAG, "Error in audio capture loop", t)
@@ -387,10 +425,12 @@ class AudioRecognizer(private val context: Context) {
         captureThread = null
         inferenceThread = null
 
-        try {
-            currentStream?.release()
-        } catch (_: Throwable) {}
-        currentStream = null
+        synchronized(streamLock) {
+            try {
+                currentStream?.release()
+            } catch (_: Throwable) {}
+            currentStream = null
+        }
 
         logMemoryUsage("Stop-Listening")
         AppLogger.i(TAG, "Audio recording and inference worker stopped")

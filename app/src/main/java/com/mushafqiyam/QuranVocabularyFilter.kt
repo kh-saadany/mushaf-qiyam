@@ -92,6 +92,22 @@ object QuranVocabularyFilter {
     private var lastSeenStreamLength: Int = 0
     private var lastDiscoveryStreamLength: Int = 0
 
+    // Reusable DP arrays for compact alignment to eliminate garbage collection pressure
+    private var dpPrevScore = IntArray(2048)
+    private var dpCurrScore = IntArray(2048)
+    private var dpPrevStart = IntArray(2048)
+    private var dpCurrStart = IntArray(2048)
+
+    private fun ensureDpCapacity(needed: Int) {
+        if (dpPrevScore.size < needed) {
+            val newCap = maxOf(needed + 256, dpPrevScore.size * 2)
+            dpPrevScore = IntArray(newCap)
+            dpCurrScore = IntArray(newCap)
+            dpPrevStart = IntArray(newCap)
+            dpCurrStart = IntArray(newCap)
+        }
+    }
+
     // Current mode and word pointer in the recitation sequence
     var recitationMode: RecitationMode = RecitationMode.DISCOVERY
         private set
@@ -196,7 +212,49 @@ object QuranVocabularyFilter {
                 val skel = FuzzyMatcher.skeletonWord(norm)
                 val cIdx = globalIdx++
 
-                canonBuilder.append(norm)
+                // 1. Phonetic transformation of word for canonical continuous tracking:
+                // a. Strip silent Jama'ah Alif (e.g. "قالوا" -> "قالو", "امنوا" -> "امنو")
+                var phonWord = if (norm.endsWith("وا") && norm.length >= 4) {
+                    norm.substring(0, norm.length - 1)
+                } else {
+                    norm
+                }
+
+                // b. Remove Shamsi assimilation: drop "ال" when followed by Shamsi consonant
+                // Shamsi consonants: ت ث د ذ ر ز س ش ص ض ط ظ ل ن
+                if (phonWord.startsWith("ال") && phonWord.length >= 3 && phonWord[2] in "تثدذرزسشصضطظلن") {
+                    phonWord = if (canonBuilder.isNotEmpty()) {
+                        phonWord.substring(2) // in connected speech: drop "ال" entirely (e.g. "برب الناس" -> "بربناس")
+                    } else {
+                        "ا" + phonWord.substring(2) // initial: keep wasl hamza representation "ا" + sun letter
+                    }
+                }
+
+                // c. Idgham / Iqlab with previous word's trailing noon
+                if (canonBuilder.isNotEmpty() && canonBuilder[canonBuilder.length - 1] == 'ن') {
+                    val firstChar = if (phonWord.isNotEmpty()) phonWord[0] else ' '
+                    if (firstChar == 'ب') {
+                        // Iqlab: ن followed by ب becomes م (e.g. "من بعد" -> "مبعد")
+                        canonBuilder.setCharAt(canonBuilder.length - 1, 'م')
+                    } else if (firstChar in "رل") {
+                        // Idgham without ghunnah: drop trailing noon (e.g. "من ربهم" -> "مربهم")
+                        canonBuilder.deleteCharAt(canonBuilder.length - 1)
+                    }
+                }
+
+                // d. Append to canonBuilder with run-length deduplication across word boundaries
+                for (ch in phonWord) {
+                    if (canonBuilder.isNotEmpty() && canonBuilder[canonBuilder.length - 1] == ch) {
+                        val isDoubleLamAllah = (ch == 'ل' && (
+                            (canonBuilder.length >= 2 && canonBuilder[canonBuilder.length - 2] == 'ا') ||
+                            norm.contains("الله") || norm.contains("لله")
+                        ))
+                        if (!isDoubleLamAllah) {
+                            continue
+                        }
+                    }
+                    canonBuilder.append(ch)
+                }
                 offsets[wIdx] = canonBuilder.length
 
                 words.add(
@@ -545,20 +603,44 @@ object QuranVocabularyFilter {
         val density: Double
     )
 
+    fun toPhoneticCanonicalStream(stream: String): String {
+        if (stream.isBlank()) return ""
+        val s = stream.replace("نب", "مب").replace("نپ", "مب")
+        val sb = java.lang.StringBuilder(s.length)
+        var lastCh = ' '
+        for (i in s.indices) {
+            val ch = s[i]
+            if (ch == lastCh) {
+                val isDoubleLamAllah = (ch == 'ل' && (sb.length >= 2 && sb[sb.length - 2] == 'ا' || (i + 1 < s.length && s[i + 1] == 'ه')))
+                if (!isDoubleLamAllah) continue
+            }
+            sb.append(ch)
+            lastCh = ch
+        }
+        return sb.toString()
+    }
+
     /**
      * Compact semi-global dynamic programming alignment:
      * Computes the longest common subsequence of stream inside ref while tracking the start
      * position in ref to enforce dense, contiguous clustering (preventing runaway scattered gaps).
+     * Reuses pre-allocated DP buffers to achieve 0 memory allocation per frame.
      */
     private fun alignStreamToRefCompact(stream: String, ref: String): CompactAlignmentResult {
         val m = stream.length
         val n = ref.length
         if (m == 0 || n == 0) return CompactAlignmentResult(0, 0, 0, 0.0)
 
-        var prevScore = IntArray(n + 1)
-        var currScore = IntArray(n + 1)
-        var prevStart = IntArray(n + 1)
-        var currStart = IntArray(n + 1)
+        ensureDpCapacity(n + 2)
+        var prevScore = dpPrevScore
+        var currScore = dpCurrScore
+        var prevStart = dpPrevStart
+        var currStart = dpCurrStart
+
+        java.util.Arrays.fill(prevScore, 0, n + 2, 0)
+        java.util.Arrays.fill(currScore, 0, n + 2, 0)
+        java.util.Arrays.fill(prevStart, 0, n + 2, 0)
+        java.util.Arrays.fill(currStart, 0, n + 2, 0)
 
         for (i in 1..m) {
             val sc = stream[i - 1]
@@ -571,21 +653,39 @@ object QuranVocabularyFilter {
                         currScore[j] = prevScore[j]
                         currStart[j] = prevStart[j]
                     } else {
-                        currScore[j] = currScore[j - 1]
-                        currStart[j] = currStart[j - 1]
+                        val prevS = currScore[j - 1]
+                        val st = currStart[j - 1]
+                        val span = j - st + 1
+                        val localDensity = if (span > 0) prevS.toDouble() / span.toDouble() else 0.0
+                        // Guard against runaway horizontal gaps across verses:
+                        // Only reset if the match has established depth (prevS >= 4, span >= 8)
+                        // and either exceeds double length or density drops below 0.55
+                        if (prevS >= 4 && span >= 8 && (span > 2 * prevS || localDensity < 0.55)) {
+                            currScore[j] = 0
+                            currStart[j] = j
+                        } else {
+                            currScore[j] = prevS
+                            currStart[j] = st
+                        }
                     }
                 }
             }
             val tmpS = prevScore
             prevScore = currScore
             currScore = tmpS
-            currScore.fill(0)
+            java.util.Arrays.fill(currScore, 0, n + 2, 0)
 
             val tmpSt = prevStart
             prevStart = currStart
             currStart = tmpSt
-            currStart.fill(0)
+            java.util.Arrays.fill(currStart, 0, n + 2, 0)
         }
+
+        // Keep internal references updated
+        dpPrevScore = prevScore
+        dpCurrScore = currScore
+        dpPrevStart = prevStart
+        dpCurrStart = currStart
 
         var bestScore = 0
         var bestStartJ = 0
@@ -598,7 +698,7 @@ object QuranVocabularyFilter {
                 val st = prevStart[j]
                 val span = maxOf(1, j - st + 1)
                 val dens = s.toDouble() / span.toDouble()
-                if (dens >= 0.60 && (s > bestScore || (s == bestScore && dens > bestDensity))) {
+                if (dens >= 0.64 && (s > bestScore || (s == bestScore && dens > bestDensity))) {
                     bestScore = s
                     bestStartJ = st
                     bestEndJ = j
@@ -620,8 +720,9 @@ object QuranVocabularyFilter {
         }
 
         // Window spans from utteranceAnchorVerseIndex up to confirmedVerseIndex + 2
+        // Effective start looks back up to 7 verses to prevent erosion during short-verse recitations
         val vStart = maxOf(0, minOf(utteranceAnchorVerseIndex, confirmedVerseIndex))
-        val effectiveStart = maxOf(vStart, confirmedVerseIndex - 4)
+        val effectiveStart = maxOf(vStart, confirmedVerseIndex - 7)
         val vEnd = minOf(verseCanonicalChars.size - 1, confirmedVerseIndex + 2)
 
         val windowVerseIndices = ArrayList<Int>(vEnd - effectiveStart + 1)
@@ -642,13 +743,14 @@ object QuranVocabularyFilter {
         // Align the tail of stream against refWindow
         val maxTailLen = (refWindow.length * 4 / 3).coerceAtLeast(20)
         val streamToAlign = if (stream.length > maxTailLen) stream.substring(stream.length - maxTailLen) else stream
+        val phonStreamToAlign = toPhoneticCanonicalStream(streamToAlign)
 
-        val alignResult = alignStreamToRefCompact(streamToAlign, refWindow)
+        val alignResult = alignStreamToRefCompact(phonStreamToAlign, refWindow)
         val score = alignResult.score
-        val matchRatio = if (streamToAlign.isNotEmpty()) score.toDouble() / streamToAlign.length.toDouble() else 0.0
+        val matchRatio = if (phonStreamToAlign.isNotEmpty()) score.toDouble() / phonStreamToAlign.length.toDouble() else 0.0
 
-        // Strict Compact Alignment: require high stream match ratio (>= 0.65) AND compact density (>= 0.60)
-        if (matchRatio < 0.65 || score < 4 || alignResult.density < 0.60) {
+        // Strict Compact Alignment: require high stream match ratio (>= 0.65) AND compact density (>= 0.64)
+        if (matchRatio < 0.65 || score < 4 || alignResult.density < 0.64) {
             consecutiveMismatches++
             return TrackingResult("", null, null, 0, matchRatio, recitationMode)
         }
@@ -664,11 +766,16 @@ object QuranVocabularyFilter {
         var offsetInVerse = 0
         var totalVerseChars = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex].length else 1
 
+        val currentConfirmedPage = MushafPageRepository.getVerseByGlobalIndex(confirmedVerseIndex)?.page ?: 1
+
         for (i in windowVerseIndices.indices.reversed()) {
             val vIdx = windowVerseIndices[i]
             val vStartPos = verseStartInRef[i]
             val vLen = verseCanonicalChars[vIdx].length
-            if (bestEndJ >= vStartPos + 4 || i == 0) {
+            val candidatePage = MushafPageRepository.getVerseByGlobalIndex(vIdx)?.page ?: currentConfirmedPage
+            val minCharsToEnter = if (candidatePage != currentConfirmedPage) 7 else 4
+
+            if (bestEndJ >= vStartPos + minCharsToEnter || i == 0) {
                 targetVerseIdx = vIdx
                 offsetInVerse = minOf(vLen, maxOf(0, bestEndJ - vStartPos))
                 totalVerseChars = vLen
@@ -685,10 +792,9 @@ object QuranVocabularyFilter {
             } else {
                 targetVerseIdx = confirmedVerseIndex + 1
                 confirmedVerseIndex = targetVerseIdx
-                val v1Pos = windowVerseIndices.indexOf(targetVerseIdx)
-                val v1Start = if (v1Pos >= 0) verseStartInRef[v1Pos] else 0
-                val v1Len = verseCanonicalChars[targetVerseIdx].length
-                offsetInVerse = minOf(v1Len, maxOf(0, bestEndJ - v1Start))
+                val v1Len = if (targetVerseIdx in verseCanonicalChars.indices) verseCanonicalChars[targetVerseIdx].length else 1
+                // Safe offset clamping: clamp to start of intermediate verse (never leap to its end)
+                offsetInVerse = minOf(v1Len / 3, 5)
                 totalVerseChars = v1Len
             }
         } else if (targetVerseIdx > confirmedVerseIndex) {
@@ -850,9 +956,10 @@ object QuranVocabularyFilter {
             }
 
             // 2. Compact Alignment
-            val alignResult = alignStreamToRefCompact(rolling, canon)
+            val phonRolling = toPhoneticCanonicalStream(rolling)
+            val alignResult = alignStreamToRefCompact(phonRolling, canon)
             val score = alignResult.score
-            val ratio = score.toDouble() / rolling.length.toDouble()
+            val ratio = if (phonRolling.isNotEmpty()) score.toDouble() / phonRolling.length.toDouble() else 0.0
 
             if (score >= 8 && alignResult.density >= 0.65 && ratio >= 0.65 && ratio > bestRatio) {
                 bestRatio = ratio

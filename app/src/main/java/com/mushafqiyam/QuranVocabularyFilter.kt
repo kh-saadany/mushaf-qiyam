@@ -501,8 +501,8 @@ object QuranVocabularyFilter {
 
         // 3. While in TRACKING mode on a non-Fatihah Surah, check if reciter stood up for a new Rakah and started Al-Fatihah
         if (currentVerseObj != null && currentVerseObj.surah != 1) {
-            val isFatihahJump = canonicalStream.contains("الحمدلله") ||
-                (canonicalStream.contains("الحمد") && canonicalStream.contains("رب")) ||
+            val isFatihahJump = ((canonicalStream.contains("الحمدلله") || canonicalStream.contains("الحمد")) &&
+                    (canonicalStream.contains("رب") || canonicalStream.contains("عالمين") || canonicalStream.contains("رحمن"))) ||
                 canonicalStream.contains("اياكنعبد") ||
                 canonicalStream.contains("اهدنالصراط") ||
                 canonicalStream.contains("اهدينصراط") ||
@@ -773,7 +773,13 @@ object QuranVocabularyFilter {
             val vStartPos = verseStartInRef[i]
             val vLen = verseCanonicalChars[vIdx].length
             val candidatePage = MushafPageRepository.getVerseByGlobalIndex(vIdx)?.page ?: currentConfirmedPage
-            val minCharsToEnter = if (candidatePage != currentConfirmedPage) 7 else 4
+            val minCharsToEnter = if (candidatePage != currentConfirmedPage) {
+                7
+            } else if (vIdx == confirmedVerseIndex + 1) {
+                2 // Fast seamless transition to immediate next verse on same page
+            } else {
+                4
+            }
 
             if (bestEndJ >= vStartPos + minCharsToEnter || i == 0) {
                 targetVerseIdx = vIdx
@@ -794,7 +800,7 @@ object QuranVocabularyFilter {
                 confirmedVerseIndex = targetVerseIdx
                 val v1Len = if (targetVerseIdx in verseCanonicalChars.indices) verseCanonicalChars[targetVerseIdx].length else 1
                 // Safe offset clamping: clamp to start of intermediate verse (never leap to its end)
-                offsetInVerse = minOf(v1Len / 3, 5)
+                offsetInVerse = minOf(v1Len / 3, 4)
                 totalVerseChars = v1Len
             }
         } else if (targetVerseIdx > confirmedVerseIndex) {
@@ -882,9 +888,10 @@ object QuranVocabularyFilter {
         val rolling = discoveryRollingChars.toString()
         if (rolling.length < 8) return null
 
-        // Check if reciter started Al-Fatihah
-        val isFatihahStream = rolling.contains("الحمد") || rolling.contains("للهرب") ||
-            rolling.contains("العالمين") || rolling.contains("اهدنالصراط") ||
+        // Check if reciter started Al-Fatihah (require رب or عالمين or رحمن to avoid hijacking Al-Kahf and other surahs)
+        val isFatihahStream = ((rolling.contains("الحمد") || rolling.contains("لله")) &&
+                (rolling.contains("رب") || rolling.contains("عالمين") || rolling.contains("رحمن"))) ||
+            rolling.contains("اهدنالصراط") ||
             rolling.contains("اهدينصراط") || rolling.contains("اياكنعبد") ||
             rolling.contains("صراطلذين")
         if (isFatihahStream) {
@@ -907,10 +914,25 @@ object QuranVocabularyFilter {
             }
         }
 
+        // Strip Basmalah prefix from rolling buffer if present to prevent ratio dilution on short surahs
+        var cleanRolling = rolling
+        val basmalahMarkers = listOf("بسمللهرحمنرحيم", "بسمللهالرحمنالرحيم", "بسملله", "بسمالله")
+        for (bm in basmalahMarkers) {
+            val idx = cleanRolling.indexOf(bm)
+            if (idx >= 0) {
+                val after = cleanRolling.substring(idx + bm.length)
+                if (after.length >= 6) {
+                    cleanRolling = after
+                    break
+                }
+            }
+        }
+        if (cleanRolling.length < 8) return null
+
         // --- STAGE 1: 4-gram Candidate Retrieval ---
         val candidateHits = HashMap<Int, Int>(64)
-        for (j in 0 until rolling.length - 3) {
-            val tetra = rolling.substring(j, j + 4)
+        for (j in 0 until cleanRolling.length - 3) {
+            val tetra = cleanRolling.substring(j, j + 4)
             val matches = fourGramToVerseIndices[tetra] ?: continue
             if (matches.size <= 40) {
                 for (vIdx in matches) {
@@ -923,7 +945,7 @@ object QuranVocabularyFilter {
 
         // Require at least two 4-gram hits or a high density ratio
         val topCandidates = candidateHits.entries
-            .filter { it.value >= 2 || rolling.length <= 9 }
+            .filter { it.value >= 2 || cleanRolling.length <= 9 }
             .sortedByDescending { e ->
                 val vLen = if (e.key in verseCanonicalChars.indices) verseCanonicalChars[e.key].length else 50
                 e.value.toDouble() / maxOf(10, vLen).toDouble()
@@ -933,39 +955,80 @@ object QuranVocabularyFilter {
         if (topCandidates.isEmpty()) return null
 
         // --- STAGE 2: Precision Verification via 5-gram check & Compact Alignment ---
-        var bestVIdx = -1
-        var bestRatio = 0.0
+        data class ScoredCandidate(
+            val vIdx: Int,
+            val score: Int,
+            val ratio: Double,
+            val density: Double
+        )
+
+        val scoredCandidates = ArrayList<ScoredCandidate>(5)
 
         for (cand in topCandidates) {
             val vIdx = cand.key
             val canon = verseCanonicalChars[vIdx]
 
-            // 1. Check for at least one contiguous 5-gram match between rolling and canon
+            // If cleanRolling is significantly longer than canon (e.g. reading 2 short verses in a breath),
+            // match against extended reference (canon + nextVerse) or tail of stream
+            val nextCanon = if (vIdx + 1 in verseCanonicalChars.indices &&
+                MushafPageRepository.getVerseByGlobalIndex(vIdx + 1)?.surah == MushafPageRepository.getVerseByGlobalIndex(vIdx)?.surah) {
+                verseCanonicalChars[vIdx + 1]
+            } else ""
+
+            val refToMatch = if (cleanRolling.length > canon.length + 4 && nextCanon.isNotEmpty()) {
+                canon + nextCanon
+            } else {
+                canon
+            }
+
+            // 1. Check for at least one contiguous 5-gram match between cleanRolling and refToMatch
             var has5Gram = false
-            for (j in 0 until rolling.length - 4) {
-                val five = rolling.substring(j, j + 5)
-                if (canon.contains(five)) {
+            for (j in 0 until cleanRolling.length - 4) {
+                val five = cleanRolling.substring(j, j + 5)
+                if (refToMatch.contains(five)) {
                     has5Gram = true
                     break
                 }
             }
 
-            // If rolling is 10+ chars, strictly require at least one 5-gram match
-            if (rolling.length >= 10 && !has5Gram) {
+            // If cleanRolling is 10+ chars, strictly require at least one 5-gram match
+            if (cleanRolling.length >= 10 && !has5Gram) {
                 continue
             }
 
-            // 2. Compact Alignment
-            val phonRolling = toPhoneticCanonicalStream(rolling)
-            val alignResult = alignStreamToRefCompact(phonRolling, canon)
-            val score = alignResult.score
-            val ratio = if (phonRolling.isNotEmpty()) score.toDouble() / phonRolling.length.toDouble() else 0.0
+            val streamForCandidate = if (cleanRolling.length > refToMatch.length + 4) {
+                cleanRolling.substring(cleanRolling.length - (refToMatch.length + 3))
+            } else {
+                cleanRolling
+            }
 
-            if (score >= 8 && alignResult.density >= 0.65 && ratio >= 0.65 && ratio > bestRatio) {
-                bestRatio = ratio
-                bestVIdx = vIdx
+            // 2. Compact Alignment
+            val phonRolling = toPhoneticCanonicalStream(streamForCandidate)
+            val alignResult = alignStreamToRefCompact(phonRolling, refToMatch)
+            val score = alignResult.score
+            val denom = minOf(phonRolling.length, refToMatch.length).coerceAtLeast(8)
+            val ratio = if (denom > 0) score.toDouble() / denom.toDouble() else 0.0
+
+            if (score >= 8 && alignResult.density >= 0.65 && ratio >= 0.65) {
+                scoredCandidates.add(ScoredCandidate(vIdx, score, ratio, alignResult.density))
             }
         }
+
+        if (scoredCandidates.isEmpty()) return null
+
+        scoredCandidates.sortWith(compareByDescending<ScoredCandidate> { it.score }.thenByDescending { it.ratio })
+        val best = scoredCandidates[0]
+        val secondBest = scoredCandidates.getOrNull(1)
+
+        // Generic Ambiguity Gate: If top two candidates are closely contested (score difference < 2)
+        // on a short prefix (< 15 chars), defer lock-on until distinguishing characters arrive!
+        if (secondBest != null && (best.score - secondBest.score) < 2 && secondBest.ratio >= 0.65 && cleanRolling.length < 15) {
+            AppLogger.i(TAG, "Ambiguity Gate: Candidate [${best.vIdx}] (score=${best.score}) is closely contested by [${secondBest.vIdx}] (score=${secondBest.score}) on short stream ($cleanRolling). Deferring lock-on...")
+            return null
+        }
+
+        val bestVIdx = best.vIdx
+        val bestRatio = best.ratio
 
         if (bestVIdx != -1) {
             val mv = MushafPageRepository.getVerseByGlobalIndex(bestVIdx)
@@ -1348,14 +1411,12 @@ object QuranVocabularyFilter {
             }
         }
 
-        // Distinctive Fatihah words that DO NOT exist in the Basmalah ("بسم الله الرحمن الرحيم")
-        val FATIHAH_EXCLUSIVE_SKELETONS = setOf(
-            "الحمد", "العلمين", "ملك", "الدين", "اياك", "نعبد", "نستعين"
-        )
-
         // Require at least 2 ordered words of Al-Fatihah (1:2..1:5) with consecutive proximity
-        // AND at least one exclusive Fatihah word to avoid false jumps on Basmalah between Surahs ("الرحمن الرحيم")
-        val hasExclusiveFatihahWord = matched.any { FATIHAH_EXCLUSIVE_SKELETONS.contains(it.skeletonText) }
+        // AND at least one exclusive Fatihah word. For 1:2 ("الحمد لله رب العالمين"), require either "العلمين" or "رب" or 3+ words to prevent matching "الحمد لله الذي" in Al-Kahf
+        val hasExclusiveFatihahWord = matched.any {
+            it.skeletonText in setOf("العلمين", "ملك", "الدين", "اياك", "نعبد", "نستعين") ||
+            (it.skeletonText == "الحمد" && (matched.any { m -> m.skeletonText in setOf("العلمين", "رب") } || matched.size >= 3))
+        }
         if (matched.size >= 2 && (matched.last().globalIndex - matched.first().globalIndex) <= 4 && hasExclusiveFatihahWord) {
             val targetVIdx = matched.last().verseIndex
             confirmedVerseIndex = targetVIdx

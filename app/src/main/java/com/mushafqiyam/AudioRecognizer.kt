@@ -136,7 +136,7 @@ class AudioRecognizer(private val context: Context) {
                 val endpointConfig = EndpointConfig(
                     rule1 = EndpointRule(mustContainNonSilence = false, minTrailingSilence = 2.4f, minUtteranceLength = 0.0f),
                     rule2 = EndpointRule(mustContainNonSilence = true, minTrailingSilence = 1.2f, minUtteranceLength = 0.0f),
-                    rule3 = EndpointRule(mustContainNonSilence = false, minTrailingSilence = 0.0f, minUtteranceLength = 20.0f)
+                    rule3 = EndpointRule(mustContainNonSilence = true, minTrailingSilence = 0.45f, minUtteranceLength = 25.0f)
                 )
 
                 val recognizerConfig = OnlineRecognizerConfig().apply {

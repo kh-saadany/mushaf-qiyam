@@ -71,7 +71,10 @@ object QuranVocabularyFilter {
         val discoveredNewLocation: Boolean = false,
         val currentWordInAyah: Int = 0,
         val totalWordsInAyah: Int = 1
-    )
+    ) {
+        val mode: RecitationMode get() = recitationMode
+        val confidence: Double get() = highestSimilarity
+    }
 
     private var allWords: List<QuranWord> = emptyList()
     private var verseFirstWordIndex: IntArray = IntArray(0)
@@ -749,9 +752,13 @@ object QuranVocabularyFilter {
         val score = alignResult.score
         val matchRatio = if (phonStreamToAlign.isNotEmpty()) score.toDouble() / phonStreamToAlign.length.toDouble() else 0.0
 
-        // Strict Compact Alignment: require high stream match ratio (>= 0.65) AND compact density (>= 0.64)
-        if (matchRatio < 0.65 || score < 4 || alignResult.density < 0.64) {
+        // Strict Compact Alignment: require high stream match ratio (>= 0.65) AND compact density (>= 0.60)
+        if (matchRatio < 0.65 || score < 4 || alignResult.density < 0.60) {
             consecutiveMismatches++
+            AppLogger.d(
+                TAG,
+                "TrackReject: confirmedIdx=$confirmedVerseIndex | score=$score | ratio=${"%.2f".format(matchRatio)} | dens=${"%.2f".format(alignResult.density)} | mismatches=$consecutiveMismatches"
+            )
             return TrackingResult("", null, null, 0, matchRatio, recitationMode)
         }
 

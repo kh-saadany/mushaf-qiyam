@@ -10,7 +10,7 @@ import java.util.Locale
 
 data class LogEntry(
     val timestamp: String,
-    val level: String, // "INFO", "WARN", "ERROR"
+    val level: String, // "DEBUG", "INFO", "WARN", "ERROR"
     val tag: String,
     val message: String,
     val throwable: Throwable? = null
@@ -42,6 +42,11 @@ object AppLogger {
             currentList.add(entry)
             _logs.value = currentList
         }
+    }
+
+    fun d(tag: String, msg: String) {
+        Log.d(tag, msg)
+        addEntry("DEBUG", tag, msg)
     }
 
     fun i(tag: String, msg: String) {

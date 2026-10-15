@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.0.6"
+        const val APP_VERSION = "0.7.0.7"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -179,15 +179,14 @@ fun MainAppScreen(
             val filteredText = trackingResult.filteredText
             isDiscoveryMode = (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.DISCOVERY)
 
-            if (filteredText.isNotBlank()) {
+            val mv = trackingResult.matchedVerse
+            if (filteredText.isNotBlank() && mv != null) {
                 val fullText = if (recognizedText.isEmpty()) filteredText else "$recognizedText $filteredText"
                 val textWords = fullText.split(" ")
                 recognizedText = if (textWords.size > 25) textWords.takeLast(25).joinToString(" ") else fullText
                 AppLogger.i("ASRFilter", "Filtered Quranic text: $filteredText")
 
-                val mv = trackingResult.matchedVerse
-                if (mv != null) {
-                    graceEmptyFrames = 0
+                graceEmptyFrames = 0
 
                     activeSurah = mv.surah
                     activeAyah = mv.ayah
@@ -311,13 +310,21 @@ fun MainAppScreen(
                     } else {
                         matchSimilarityText = "🎯 ${mv.surahName} — آية ${mv.ayah}"
                     }
-                }
             } else {
                 graceEmptyFrames++
                 if (graceEmptyFrames >= 7) {
                     graceEmptyFrames = 0
                 }
             }
+
+            val status = if (mv != null) "MATCH" else "HOLD(miss=$graceEmptyFrames)"
+            val activeLineNum = if (activeSurah > 0 && activeAyah > 0) {
+                MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
+            } else null
+            AppLogger.i(
+                "UIHighlight",
+                "[$status] Page=$currentPage | UI=[$activeSurah:$activeAyah] | Line=${activeLineNum ?: "-"} | Word=${trackingResult.currentWordInAyah}/${trackingResult.totalWordsInAyah} (${(activeWordProgress * 100).toInt()}%) | Mode=${trackingResult.mode} | Ratio=${"%.2f".format(trackingResult.confidence)}"
+            )
         }
     }
 

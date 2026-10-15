@@ -223,13 +223,33 @@ object QuranVocabularyFilter {
                     norm
                 }
 
-                // b. Remove Shamsi assimilation: drop "ال" when followed by Shamsi consonant
+                // b. Remove Shamsi & Qamari Wasl assimilation in connected speech
                 // Shamsi consonants: ت ث د ذ ر ز س ش ص ض ط ظ ل ن
-                if (phonWord.startsWith("ال") && phonWord.length >= 3 && phonWord[2] in "تثدذرزسشصضطظلن") {
+                val shamsiChars = "تثدذرزسشصضطظلن"
+                if (phonWord.startsWith("ال") && phonWord.length >= 3) {
+                    val isShamsi = phonWord[2] in shamsiChars
+                    // If previous word ended with vowel 'ي' or 'ا' in prepositions/particles (like "في العقد" -> "فلعقد", "ذا الاوتاد" -> "ذلاوتاد"), drop trailing vowel before connected lam
+                    if (canonBuilder.length >= 2 && (canonBuilder.last() == 'ي' || canonBuilder.last() == 'ا')) {
+                        val prevPrev = canonBuilder[canonBuilder.length - 2]
+                        if (prevPrev in "فعلذ") {
+                            canonBuilder.deleteCharAt(canonBuilder.length - 1)
+                            if (wIdx > 0 && offsets[wIdx - 1] > 0) {
+                                offsets[wIdx - 1]--
+                            }
+                        }
+                    }
                     phonWord = if (canonBuilder.isNotEmpty()) {
-                        phonWord.substring(2) // in connected speech: drop "ال" entirely (e.g. "برب الناس" -> "بربناس")
+                        if (isShamsi) phonWord.substring(2) else phonWord.substring(1) // Shamsi: drop "ال", Qamari: drop wasl "ا" and keep "ل"
                     } else {
-                        "ا" + phonWord.substring(2) // initial: keep wasl hamza representation "ا" + sun letter
+                        if (isShamsi) "ا" + phonWord.substring(2) else phonWord
+                    }
+                } else if (phonWord.length >= 4 && (phonWord.startsWith("بال") || phonWord.startsWith("فال") || phonWord.startsWith("وال") || phonWord.startsWith("كال")) && (orig.contains('\u0671') || orig.contains("ٱ"))) {
+                    val prefixChar = phonWord[0]
+                    val isShamsi = phonWord[3] in shamsiChars
+                    phonWord = if (isShamsi) {
+                        "$prefixChar" + phonWord.substring(3) // e.g. "والشمس" -> "وشمس", "بالناس" -> "بناس"
+                    } else {
+                        "${prefixChar}ل" + phonWord.substring(3) // e.g. "بالواد" -> "بلواد", "والفجر" -> "ولفجر"
                     }
                 }
 
@@ -242,6 +262,9 @@ object QuranVocabularyFilter {
                     } else if (firstChar in "رل") {
                         // Idgham without ghunnah: drop trailing noon (e.g. "من ربهم" -> "مربهم")
                         canonBuilder.deleteCharAt(canonBuilder.length - 1)
+                        if (wIdx > 0 && offsets[wIdx - 1] > 0) {
+                            offsets[wIdx - 1]--
+                        }
                     }
                 }
 
@@ -824,7 +847,7 @@ object QuranVocabularyFilter {
             }
         }
 
-        val totalWords = if (targetVerseIdx in verseWordCount.indices) verseWordCount[targetVerseIdx] else maxOf(1, offsets.size)
+        val totalWords = maxOf(1, offsets.size)
         val firstWordGlobal = if (targetVerseIdx in verseFirstWordIndex.indices) verseFirstWordIndex[targetVerseIdx] else 0
         activeWordPointer = minOf(allWords.size - 1, firstWordGlobal + wordInAyah)
 
@@ -921,17 +944,25 @@ object QuranVocabularyFilter {
             }
         }
 
-        // Strip Basmalah prefix from rolling buffer if present to prevent ratio dilution on short surahs
+        // Strip initial Basmalah prefix completely (including connected "بسمللهلرحمنلرحيم")
+        // Only strip when Basmalah starts near the beginning (index 0..4) so Surah An-Naml ("انه من سليمان وانه بسم...") is never stripped!
         var cleanRolling = rolling
-        val basmalahMarkers = listOf("بسمللهرحمنرحيم", "بسمللهالرحمنالرحيم", "بسملله", "بسمالله")
-        for (bm in basmalahMarkers) {
-            val idx = cleanRolling.indexOf(bm)
-            if (idx >= 0) {
-                val after = cleanRolling.substring(idx + bm.length)
-                if (after.length >= 6) {
-                    cleanRolling = after
-                    break
-                }
+        val bsmIdx = cleanRolling.indexOf("بسم")
+        val rahimIdx = cleanRolling.indexOf("رحيم")
+        if (bsmIdx in 0..4 && rahimIdx in 6..24) {
+            val after = cleanRolling.substring(rahimIdx + 4)
+            if (after.length >= 6) {
+                cleanRolling = after
+            } else {
+                return null // Still reciting initial Basmalah or fewer than 6 chars after it
+            }
+        } else if (bsmIdx == -1 && rahimIdx in 0..14 && (cleanRolling.startsWith("رحمن") || cleanRolling.startsWith("لرحمن") || cleanRolling.startsWith("ارحمن"))) {
+            // Handle case where endpoint split right after "بسم الله" leaving only "الرحمن الرحيم" at the start of rolling buffer
+            val after = cleanRolling.substring(rahimIdx + 4)
+            if (after.length >= 6) {
+                cleanRolling = after
+            } else {
+                return null
             }
         }
         if (cleanRolling.length < 8) return null
@@ -950,14 +981,17 @@ object QuranVocabularyFilter {
 
         if (candidateHits.isEmpty()) return null
 
-        // Require at least two 4-gram hits or a high density ratio
+        // Require at least two 4-gram hits or a high density ratio, with prefix-start bonus
+        val prefix4 = cleanRolling.take(4)
         val topCandidates = candidateHits.entries
             .filter { it.value >= 2 || cleanRolling.length <= 9 }
             .sortedByDescending { e ->
-                val vLen = if (e.key in verseCanonicalChars.indices) verseCanonicalChars[e.key].length else 50
-                e.value.toDouble() / maxOf(10, vLen).toDouble()
+                val canon = if (e.key in verseCanonicalChars.indices) verseCanonicalChars[e.key] else ""
+                val vLen = canon.length.coerceAtLeast(10)
+                val startsWithBonus = if (canon.startsWith(prefix4)) 2.5 else 0.0
+                (e.value.toDouble() + startsWithBonus) / vLen.toDouble()
             }
-            .take(5)
+            .take(15)
 
         if (topCandidates.isEmpty()) return null
 
@@ -969,7 +1003,7 @@ object QuranVocabularyFilter {
             val density: Double
         )
 
-        val scoredCandidates = ArrayList<ScoredCandidate>(5)
+        val scoredCandidates = ArrayList<ScoredCandidate>(15)
 
         for (cand in topCandidates) {
             val vIdx = cand.key
@@ -1040,7 +1074,7 @@ object QuranVocabularyFilter {
         if (bestVIdx != -1) {
             val mv = MushafPageRepository.getVerseByGlobalIndex(bestVIdx)
             if (mv != null) {
-                if (mv.surah == 1 && mv.ayah == 1) {
+                if (mv.surah == 1 && (mv.ayah == 1 || mv.ayah == 3)) {
                     return null
                 }
                 resetPointerToVerse(bestVIdx)

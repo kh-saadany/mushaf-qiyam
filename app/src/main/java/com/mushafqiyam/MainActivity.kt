@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.0.8"
+        const val APP_VERSION = "0.7.0.9"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -173,6 +173,9 @@ fun MainAppScreen(
     var lastPageTurnTimeMs by remember { mutableLongStateOf(0L) }
     var earlyTurnTriggeredForPage by remember { mutableIntStateOf(-1) }
 
+    var activeLineNumber by remember { mutableIntStateOf(1) }
+    var activeLinePage by remember { mutableIntStateOf(1) }
+
     val handlePartialResult: (String) -> Unit = { rawText ->
         if (rawText.isNotBlank()) {
             val trackingResult = QuranVocabularyFilter.filterAndTrackFullMushaf(rawText)
@@ -188,13 +191,33 @@ fun MainAppScreen(
 
                 graceEmptyFrames = 0
 
+                val isSameVerse = (mv.surah == activeSurah && mv.ayah == activeAyah)
+                val isNextVerse = (mv.surah == activeSurah && mv.ayah == activeAyah + 1) ||
+                                  (mv.surah == activeSurah + 1 && mv.ayah == 1)
+
+                val newCharProgress = trackingResult.charProgress
+
+                if (isSameVerse && trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.TRACKING) {
+                    // Monotonic progress ratchet inside same verse
+                    activeWordProgress = maxOf(activeWordProgress, newCharProgress)
+                } else {
                     activeSurah = mv.surah
                     activeAyah = mv.ayah
-                    activeWordProgress = if (trackingResult.totalWordsInAyah > 1) {
-                        (trackingResult.currentWordInAyah.toFloat() / trackingResult.totalWordsInAyah.toFloat()).coerceIn(0f, 1f)
+                    activeWordProgress = newCharProgress
+                }
+
+                // Proportional Line Mapping & Monotonic Line Ratchet
+                val candidateLine = MushafPageRepository.findAyahLinesOnPage(mv.page, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
+                if (candidateLine != null) {
+                    if (mv.page != activeLinePage) {
+                        activeLinePage = mv.page
+                        activeLineNumber = candidateLine
+                    } else if (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.TRACKING && (isSameVerse || isNextVerse)) {
+                        activeLineNumber = maxOf(activeLineNumber, candidateLine)
                     } else {
-                        0f
+                        activeLineNumber = candidateLine
                     }
+                }
 
                     // --- Page-Turn FSM & Anti-Jitter Hysteresis ---
                     // 1. Early Bottom-Line Proactive Page Flip
@@ -318,12 +341,15 @@ fun MainAppScreen(
             }
 
             val status = if (mv != null) "MATCH" else "HOLD(miss=$graceEmptyFrames)"
-            val activeLineNum = if (activeSurah > 0 && activeAyah > 0) {
+            val activeLineNum = if (activeLineNumber > 0 && activeLinePage == currentPage) {
+                activeLineNumber
+            } else if (activeSurah > 0 && activeAyah > 0) {
                 MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
             } else null
+            val wordInfo = if (mv != null) "${trackingResult.currentWordInAyah}/${trackingResult.totalWordsInAyah}" else "-/-"
             AppLogger.i(
                 "UIHighlight",
-                "[$status] Page=$currentPage | UI=[$activeSurah:$activeAyah] | Line=${activeLineNum ?: "-"} | Word=${trackingResult.currentWordInAyah}/${trackingResult.totalWordsInAyah} (${(activeWordProgress * 100).toInt()}%) | Mode=${trackingResult.mode} | Ratio=${"%.2f".format(trackingResult.confidence)}"
+                "[$status] Page=$currentPage | UI=[$activeSurah:$activeAyah] | Line=${activeLineNum ?: "-"} | Prog=${(activeWordProgress * 100).toInt()}% (Word=$wordInfo) | Mode=${trackingResult.mode} | Ratio=${"%.2f".format(trackingResult.confidence)}"
             )
         }
     }
@@ -455,6 +481,9 @@ fun MainAppScreen(
                 currentPage = page
                 activeSurah = surah
                 activeAyah = ayah
+                activeWordProgress = 0f
+                activeLineNumber = -1
+                activeLinePage = page
                 QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)
                 isDiscoveryMode = false
                 showJumpDialog = false
@@ -567,6 +596,7 @@ fun MainAppScreen(
                     activeSurah = activeSurah,
                     activeAyah = activeAyah,
                     wordProgress = activeWordProgress,
+                    activeLineNumber = activeLineNumber,
                     isScrollMode = isScrollMode,
                     onPageChanged = { newPage ->
                         currentPage = newPage
@@ -576,6 +606,9 @@ fun MainAppScreen(
                             val first = pageVerses.first()
                             activeSurah = first.surah
                             activeAyah = first.ayah
+                            activeWordProgress = 0f
+                            activeLineNumber = -1
+                            activeLinePage = newPage
                             QuranVocabularyFilter.resetPointerToSurahAyah(first.surah, first.ayah)
                             isDiscoveryMode = false
                         }
@@ -584,6 +617,9 @@ fun MainAppScreen(
                         currentPage = page
                         activeSurah = surah
                         activeAyah = ayah
+                        activeWordProgress = 0f
+                        activeLineNumber = -1
+                        activeLinePage = page
                         QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)
                         isDiscoveryMode = false
                     },

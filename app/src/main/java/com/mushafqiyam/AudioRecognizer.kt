@@ -205,6 +205,8 @@ class AudioRecognizer(private val context: Context) {
         val preprocessed = rawPhonemes
             .replace("لللاه", "لله")
             .replace("لِللَااهِ", "لله")
+            .replace("للَااه", "لله")
+            .replace("للَاه", "لله")
 
         for (i in 0 until preprocessed.length) {
             val ch = preprocessed[i]

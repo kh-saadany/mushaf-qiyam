@@ -22,3 +22,11 @@
 - **Objectivity & Professionalism:** Be strictly objective and professional. Do not use exaggerated praise, flattery, or excessive compliments (e.g., avoid words like عبقري, مبهر, رائع).
 - **Critical Thinking:** Prioritize identifying flaws, edge cases, and architectural mistakes in the user's suggestions over blindly agreeing or expressing admiration.
 - **Directness:** Keep responses concise, direct, and focused purely on engineering facts and actionable steps. No unnecessary emojis.
+
+## أمر تحديث معلومات آرجون ("تحديث معلومات آرجون")
+- يتم استدعاء هذا الإجراء **يدوياً فقط** عندما يكتب المستخدم عبارة **"تحديث معلومات آرجون"** (وليس بشكل تلقائي):
+  1. تجميع محتويات ملفات `.kt` في `app/src/main/java` مع `git status` داخل ملف Markdown موحد باسم `argon_snapshot.md` عبر:
+     `python scripts/generate_argon_snapshot.py`
+  2. نسخ الملف النصي إلى حافظة نظام ويندوز (Windows Clipboard كـ File Drop List) عبر:
+     `Set-Clipboard -Path (Resolve-Path "argon_snapshot.md").Path`
+  3. إظهار رسالة تأكيد مختصرة تفيد بأن ملف `argon_snapshot.md` أصبح في الحافظة وجاهز للصق المباشر (`Ctrl + V`) في المتصفح دون الحاجة لتصفح المجلدات.

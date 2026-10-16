@@ -356,11 +356,37 @@ object MushafPageRepository {
         }
         if (matchingIndices.isEmpty()) return Pair(null, null)
 
-        // Select the active line within the Ayah's lines based on word progress
-        val lineOffset = ((matchingIndices.size * wordProgress.coerceIn(0f, 0.999f)).toInt()).coerceIn(0, matchingIndices.size - 1)
-        val activeLineIdx = matchingIndices[lineOffset]
-        val currentLine = lines[activeLineIdx]
-        val nextLine = lines.getOrNull(activeLineIdx + 1)
+        if (matchingIndices.size == 1) {
+            val activeLineIdx = matchingIndices[0]
+            return Pair(lines[activeLineIdx], lines.getOrNull(activeLineIdx + 1))
+        }
+
+        // Proportional Box-Width Line Mapping:
+        // Calculate the total horizontal width of this Ayah's boxes on each line
+        val lineWidths = matchingIndices.map { idx ->
+            val line = lines[idx]
+            line.boxes.filter { it.surah == surah && it.ayah == ayah }
+                .sumOf { (it.normRight - it.normLeft).toDouble() }
+                .toFloat()
+        }
+
+        val totalAyahWidth = lineWidths.sum().coerceAtLeast(0.001f)
+        val clampedProgress = wordProgress.coerceIn(0f, 0.999f)
+
+        // Find active line based on cumulative horizontal width ratio
+        var cumulativeWidth = 0f
+        var chosenIndex = matchingIndices.last()
+        for (i in matchingIndices.indices) {
+            cumulativeWidth += lineWidths[i]
+            val cumulativeFraction = cumulativeWidth / totalAyahWidth
+            if (clampedProgress < cumulativeFraction || i == matchingIndices.size - 1) {
+                chosenIndex = matchingIndices[i]
+                break
+            }
+        }
+
+        val currentLine = lines[chosenIndex]
+        val nextLine = lines.getOrNull(chosenIndex + 1)
         return Pair(currentLine, nextLine)
     }
 

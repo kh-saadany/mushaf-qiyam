@@ -39,3 +39,7 @@ scratch/node_modules/
 scratch/package-lock.json
 node_modules/
 !app/src/main/res/raw/silero_vad.onnx
+
+# Temporary clipboard snapshots
+java_latest.zip
+argon_snapshot.md

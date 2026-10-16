@@ -52,6 +52,7 @@ fun MushafPageViewer(
     onAyahTapped: (page: Int, surah: Int, ayah: Int) -> Unit,
     onFiveTap: () -> Unit,
     wordProgress: Float = 0f,
+    activeLineNumber: Int = -1,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -60,9 +61,20 @@ fun MushafPageViewer(
             var viewportHeight by remember { mutableIntStateOf(0) }
             var itemHeight by remember { mutableIntStateOf(0) }
 
-            LaunchedEffect(currentPage, activeSurah, activeAyah, (wordProgress * 10).toInt()) {
+            LaunchedEffect(currentPage, activeSurah, activeAyah, activeLineNumber, (wordProgress * 100).toInt()) {
                 if (itemHeight > 0 && viewportHeight > 0) {
-                    val (currentLine, _) = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, wordProgress)
+                    val (currentLine, _) = if (activeLineNumber > 0) {
+                        val lines = MushafPageRepository.getPageLines(currentPage)
+                        val line = lines.firstOrNull { it.lineNumber == activeLineNumber && it.boxes.any { b -> b.surah == activeSurah && b.ayah == activeAyah } }
+                        if (line != null) {
+                            val nextL = lines.firstOrNull { it.lineNumber == line.lineNumber + 1 }
+                            Pair(line, nextL)
+                        } else {
+                            MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, wordProgress)
+                        }
+                    } else {
+                        MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, wordProgress)
+                    }
                     val targetNormTop = currentLine?.normTop 
                         ?: MushafPageRepository.getAyahBoxesOnPage(currentPage, activeSurah, activeAyah).firstOrNull()?.normTop
                     if (targetNormTop != null) {
@@ -95,6 +107,7 @@ fun MushafPageViewer(
                                     activeSurah = activeSurah,
                                     activeAyah = activeAyah,
                                     wordProgress = wordProgress,
+                                    activeLineNumber = activeLineNumber,
                                     onTapAyah = { s, a -> onAyahTapped(pageNum, s, a) },
                                     onFiveTap = onFiveTap
                                 )
@@ -136,6 +149,7 @@ fun MushafPageViewer(
                             activeSurah = activeSurah,
                             activeAyah = activeAyah,
                             wordProgress = wordProgress,
+                            activeLineNumber = activeLineNumber,
                             onTapAyah = { s, a -> onAyahTapped(pageNumber, s, a) },
                             onFiveTap = onFiveTap
                         )
@@ -195,6 +209,7 @@ private fun MushafSinglePageCanvas(
     activeSurah: Int,
     activeAyah: Int,
     wordProgress: Float = 0f,
+    activeLineNumber: Int = -1,
     onTapAyah: (surah: Int, ayah: Int) -> Unit,
     onFiveTap: () -> Unit
 ) {
@@ -210,9 +225,20 @@ private fun MushafSinglePageCanvas(
         isLoading = false
     }
 
-    val (currentLine, nextLine) = remember(pageNumber, activeSurah, activeAyah, (wordProgress * 10).toInt(), MushafPageRepository.isInitialized) {
+    val (currentLine, nextLine) = remember(pageNumber, activeSurah, activeAyah, activeLineNumber, (wordProgress * 100).toInt(), MushafPageRepository.isInitialized) {
         if (MushafPageRepository.isInitialized) {
-            MushafPageRepository.findAyahLinesOnPage(pageNumber, activeSurah, activeAyah, wordProgress)
+            val pageLines = MushafPageRepository.getPageLines(pageNumber)
+            if (activeLineNumber > 0) {
+                val line = pageLines.firstOrNull { it.lineNumber == activeLineNumber && it.boxes.any { b -> b.surah == activeSurah && b.ayah == activeAyah } }
+                if (line != null) {
+                    val nextL = pageLines.firstOrNull { it.lineNumber == line.lineNumber + 1 }
+                    Pair(line, nextL)
+                } else {
+                    MushafPageRepository.findAyahLinesOnPage(pageNumber, activeSurah, activeAyah, wordProgress)
+                }
+            } else {
+                MushafPageRepository.findAyahLinesOnPage(pageNumber, activeSurah, activeAyah, wordProgress)
+            }
         } else {
             Pair(null, null)
         }

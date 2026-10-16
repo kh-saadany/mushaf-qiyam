@@ -70,7 +70,8 @@ object QuranVocabularyFilter {
         val fatihahCompletedNow: Boolean = false,
         val discoveredNewLocation: Boolean = false,
         val currentWordInAyah: Int = 0,
-        val totalWordsInAyah: Int = 1
+        val totalWordsInAyah: Int = 1,
+        val charProgress: Float = 0f
     ) {
         val mode: RecitationMode get() = recitationMode
         val confidence: Double get() = highestSimilarity
@@ -100,6 +101,8 @@ object QuranVocabularyFilter {
     private var dpCurrScore = IntArray(2048)
     private var dpPrevStart = IntArray(2048)
     private var dpCurrStart = IntArray(2048)
+    private var dpPrevGap = IntArray(2048)
+    private var dpCurrGap = IntArray(2048)
 
     private fun ensureDpCapacity(needed: Int) {
         if (dpPrevScore.size < needed) {
@@ -108,6 +111,8 @@ object QuranVocabularyFilter {
             dpCurrScore = IntArray(newCap)
             dpPrevStart = IntArray(newCap)
             dpCurrStart = IntArray(newCap)
+            dpPrevGap = IntArray(newCap)
+            dpCurrGap = IntArray(newCap)
         }
     }
 
@@ -662,36 +667,55 @@ object QuranVocabularyFilter {
         var currScore = dpCurrScore
         var prevStart = dpPrevStart
         var currStart = dpCurrStart
+        var prevGap = dpPrevGap
+        var currGap = dpCurrGap
 
         java.util.Arrays.fill(prevScore, 0, n + 2, 0)
         java.util.Arrays.fill(currScore, 0, n + 2, 0)
         java.util.Arrays.fill(prevStart, 0, n + 2, 0)
         java.util.Arrays.fill(currStart, 0, n + 2, 0)
+        java.util.Arrays.fill(prevGap, 0, n + 2, 0)
+        java.util.Arrays.fill(currGap, 0, n + 2, 0)
+
+        val maxWeakGap = 3
 
         for (i in 1..m) {
             val sc = stream[i - 1]
             for (j in 1..n) {
                 if (sc == ref[j - 1]) {
-                    currScore[j] = prevScore[j - 1] + 1
-                    currStart[j] = if (prevScore[j - 1] > 0) prevStart[j - 1] else j
+                    // Can extend previous match if established (>= 4) or gap is within limit
+                    if (prevScore[j - 1] > 0 && (prevScore[j - 1] >= 4 || prevGap[j - 1] <= maxWeakGap)) {
+                        currScore[j] = prevScore[j - 1] + 1
+                        currStart[j] = if (prevStart[j - 1] > 0) prevStart[j - 1] else j
+                        currGap[j] = 0
+                    } else {
+                        // Fresh Start!
+                        currScore[j] = 1
+                        currStart[j] = j
+                        currGap[j] = 0
+                    }
                 } else {
                     if (prevScore[j] >= currScore[j - 1]) {
                         currScore[j] = prevScore[j]
                         currStart[j] = prevStart[j]
+                        currGap[j] = prevGap[j]
                     } else {
                         val prevS = currScore[j - 1]
                         val st = currStart[j - 1]
                         val span = j - st + 1
                         val localDensity = if (span > 0) prevS.toDouble() / span.toDouble() else 0.0
+                        val gap = currGap[j - 1] + 1
                         // Guard against runaway horizontal gaps across verses:
-                        // Only reset if the match has established depth (prevS >= 4, span >= 8)
-                        // and either exceeds double length or density drops below 0.55
-                        if (prevS >= 4 && span >= 8 && (span > 2 * prevS || localDensity < 0.55)) {
+                        // Discard weak matches (<= 3) when gap exceeds maxWeakGap to allow clean local restarts.
+                        // For deeper matches (>= 4), reset if span exceeds twice the score or density drops below 0.55.
+                        if ((prevS <= 3 && gap > maxWeakGap) || (prevS >= 4 && span >= 8 && (span > 2 * prevS || localDensity < 0.55))) {
                             currScore[j] = 0
                             currStart[j] = j
+                            currGap[j] = 0
                         } else {
                             currScore[j] = prevS
                             currStart[j] = st
+                            currGap[j] = gap
                         }
                     }
                 }
@@ -705,6 +729,11 @@ object QuranVocabularyFilter {
             prevStart = currStart
             currStart = tmpSt
             java.util.Arrays.fill(currStart, 0, n + 2, 0)
+
+            val tmpG = prevGap
+            prevGap = currGap
+            currGap = tmpG
+            java.util.Arrays.fill(currGap, 0, n + 2, 0)
         }
 
         // Keep internal references updated
@@ -712,6 +741,8 @@ object QuranVocabularyFilter {
         dpCurrScore = currScore
         dpPrevStart = prevStart
         dpCurrStart = currStart
+        dpPrevGap = prevGap
+        dpCurrGap = currGap
 
         var bestScore = 0
         var bestStartJ = 0
@@ -724,7 +755,7 @@ object QuranVocabularyFilter {
                 val st = prevStart[j]
                 val span = maxOf(1, j - st + 1)
                 val dens = s.toDouble() / span.toDouble()
-                if (dens >= 0.64 && (s > bestScore || (s == bestScore && dens > bestDensity))) {
+                if (dens >= 0.60 && (s > bestScore || (s == bestScore && dens > bestDensity))) {
                     bestScore = s
                     bestStartJ = st
                     bestEndJ = j
@@ -775,21 +806,53 @@ object QuranVocabularyFilter {
         val score = alignResult.score
         val matchRatio = if (phonStreamToAlign.isNotEmpty()) score.toDouble() / phonStreamToAlign.length.toDouble() else 0.0
 
-        // Strict Compact Alignment: require high stream match ratio (>= 0.65) AND compact density (>= 0.60)
-        if (matchRatio < 0.65 || score < 4 || alignResult.density < 0.60) {
-            consecutiveMismatches++
-            AppLogger.d(
-                TAG,
-                "TrackReject: confirmedIdx=$confirmedVerseIndex | score=$score | ratio=${"%.2f".format(matchRatio)} | dens=${"%.2f".format(alignResult.density)} | mismatches=$consecutiveMismatches"
-            )
-            return TrackingResult("", null, null, 0, matchRatio, recitationMode)
+        val hasUltraShortInWindow = windowVerseIndices.any { vIdx ->
+            vIdx in verseCanonicalChars.indices && verseCanonicalChars[vIdx].length <= 8
+        }
+        val isUltraShortValid = (score >= 3 && matchRatio >= 0.75 && alignResult.density >= 0.75 && hasUltraShortInWindow)
+        val isStandardValid = (score >= 4 && matchRatio >= 0.65 && alignResult.density >= 0.60)
+
+        var effectiveAlignResult = alignResult
+        var effectiveScore = score
+        var effectiveRatio = matchRatio
+
+        if (!isUltraShortValid && !isStandardValid) {
+            // Tail Sub-Stream Fallback: If initial breath/words diluted ratio, test sub-stream tail
+            var recoveredByTail = false
+            if (phonStreamToAlign.length >= 8) {
+                for (tailSkip in listOf(2, 4, phonStreamToAlign.length / 2)) {
+                    if (phonStreamToAlign.length - tailSkip >= 4) {
+                        val tailStream = phonStreamToAlign.substring(tailSkip)
+                        val tailRes = alignStreamToRefCompact(tailStream, refWindow)
+                        val tailRatio = if (tailStream.isNotEmpty()) tailRes.score.toDouble() / tailStream.length.toDouble() else 0.0
+                        val isTailValid = (tailRes.score >= 4 && tailRatio >= 0.70 && tailRes.density >= 0.65) ||
+                                          (tailRes.score >= 3 && tailRatio >= 0.75 && tailRes.density >= 0.75 && hasUltraShortInWindow)
+                        if (isTailValid) {
+                            effectiveAlignResult = tailRes
+                            effectiveScore = tailRes.score
+                            effectiveRatio = tailRatio
+                            recoveredByTail = true
+                            break
+                        }
+                    }
+                }
+            }
+
+            if (!recoveredByTail) {
+                consecutiveMismatches++
+                AppLogger.d(
+                    TAG,
+                    "TrackReject: confirmedIdx=$confirmedVerseIndex | score=$score | ratio=${"%.2f".format(matchRatio)} | dens=${"%.2f".format(alignResult.density)} | mismatches=$consecutiveMismatches"
+                )
+                return TrackingResult("", null, null, 0, matchRatio, recitationMode)
+            }
         }
 
         consecutiveMismatches = 0
         lastMatchedSpeechTimeMs = System.currentTimeMillis()
 
-        val bestEndJ = alignResult.endJ
-        val bestStartJ = alignResult.startJ
+        val bestEndJ = effectiveAlignResult.endJ
+        val bestStartJ = effectiveAlignResult.startJ
 
         // Map bestEndJ to the matching verse in the window
         var targetVerseIdx = confirmedVerseIndex
@@ -798,25 +861,41 @@ object QuranVocabularyFilter {
 
         val currentConfirmedPage = MushafPageRepository.getVerseByGlobalIndex(confirmedVerseIndex)?.page ?: 1
 
+        var isPendingAdvance = false
         for (i in windowVerseIndices.indices.reversed()) {
             val vIdx = windowVerseIndices[i]
             val vStartPos = verseStartInRef[i]
             val vLen = verseCanonicalChars[vIdx].length
             val candidatePage = MushafPageRepository.getVerseByGlobalIndex(vIdx)?.page ?: currentConfirmedPage
             val minCharsToEnter = if (candidatePage != currentConfirmedPage) {
-                7
+                minOf(7, maxOf(3, vLen / 2))
             } else if (vIdx == confirmedVerseIndex + 1) {
                 2 // Fast seamless transition to immediate next verse on same page
             } else {
                 4
             }
 
-            if (bestEndJ >= vStartPos + minCharsToEnter || i == 0) {
+            if (bestEndJ >= vStartPos + minCharsToEnter) {
+                targetVerseIdx = vIdx
+                offsetInVerse = minOf(vLen, maxOf(0, bestEndJ - vStartPos))
+                totalVerseChars = vLen
+                break
+            } else if (vIdx > confirmedVerseIndex && bestEndJ > vStartPos) {
+                // Hold On Pending: The reciter has entered the next verse, but hasn't reached minCharsToEnter yet.
+                // Do NOT fall back to i == 0 to falsely claim a match on the old verse!
+                isPendingAdvance = true
+                break
+            } else if (i == 0) {
                 targetVerseIdx = vIdx
                 offsetInVerse = minOf(vLen, maxOf(0, bestEndJ - vStartPos))
                 totalVerseChars = vLen
                 break
             }
+        }
+
+        if (isPendingAdvance) {
+            // Stay in HOLD state waiting for next characters
+            return TrackingResult("", null, null, 0, effectiveRatio, recitationMode)
         }
 
         // Strict advance guards: never skip more than 1 verse in a single step unless confirmed
@@ -856,6 +935,8 @@ object QuranVocabularyFilter {
             lastNonFatihahVerseIndex = targetVerseIdx
         }
 
+        val charProgress = (offsetInVerse.toFloat() / maxOf(1, totalVerseChars).toFloat()).coerceIn(0f, 1f)
+
         if (mv != null && mv.surah == 1 && mv.ayah == 7 && (offsetInVerse >= totalVerseChars - 4 || wordInAyah >= totalWords - 1)) {
             enterDiscoveryMode("Completed Al-Fatihah 1:7 (ولا الضالين)")
             return TrackingResult(
@@ -863,11 +944,12 @@ object QuranVocabularyFilter {
                 matchedVerseIndex = targetVerseIdx,
                 matchedVerse = mv,
                 matchedWordsCount = wordInAyah + 1,
-                highestSimilarity = matchRatio,
+                highestSimilarity = effectiveRatio,
                 recitationMode = RecitationMode.DISCOVERY,
                 fatihahCompletedNow = true,
                 currentWordInAyah = wordInAyah,
-                totalWordsInAyah = maxOf(1, totalWords)
+                totalWordsInAyah = maxOf(1, totalWords),
+                charProgress = 1.0f
             )
         }
 
@@ -876,10 +958,11 @@ object QuranVocabularyFilter {
             matchedVerseIndex = targetVerseIdx,
             matchedVerse = mv,
             matchedWordsCount = wordInAyah + 1,
-            highestSimilarity = matchRatio,
+            highestSimilarity = effectiveRatio,
             recitationMode = recitationMode,
             currentWordInAyah = wordInAyah,
-            totalWordsInAyah = maxOf(1, totalWords)
+            totalWordsInAyah = maxOf(1, totalWords),
+            charProgress = charProgress
         )
     }
 
@@ -1000,7 +1083,8 @@ object QuranVocabularyFilter {
             val vIdx: Int,
             val score: Int,
             val ratio: Double,
-            val density: Double
+            val density: Double,
+            val endJ: Int
         )
 
         val scoredCandidates = ArrayList<ScoredCandidate>(15)
@@ -1051,7 +1135,7 @@ object QuranVocabularyFilter {
             val ratio = if (denom > 0) score.toDouble() / denom.toDouble() else 0.0
 
             if (score >= 8 && alignResult.density >= 0.65 && ratio >= 0.65) {
-                scoredCandidates.add(ScoredCandidate(vIdx, score, ratio, alignResult.density))
+                scoredCandidates.add(ScoredCandidate(vIdx, score, ratio, alignResult.density, alignResult.endJ))
             }
         }
 
@@ -1072,23 +1156,44 @@ object QuranVocabularyFilter {
         val bestRatio = best.ratio
 
         if (bestVIdx != -1) {
-            val mv = MushafPageRepository.getVerseByGlobalIndex(bestVIdx)
+            val baseCanon = if (bestVIdx in verseCanonicalChars.indices) verseCanonicalChars[bestVIdx] else ""
+            val nextCanon = if (bestVIdx + 1 in verseCanonicalChars.indices &&
+                MushafPageRepository.getVerseByGlobalIndex(bestVIdx + 1)?.surah == MushafPageRepository.getVerseByGlobalIndex(bestVIdx)?.surah) {
+                verseCanonicalChars[bestVIdx + 1]
+            } else ""
+
+            var lockVIdx = bestVIdx
+            var offsetInVerse = 0
+            var targetCanonLen = baseCanon.length
+
+            // If the reciter finished the short first verse and entered the next verse in the same breath:
+            if (baseCanon.isNotEmpty() && best.endJ > baseCanon.length + 3 && nextCanon.isNotEmpty()) {
+                lockVIdx = bestVIdx + 1
+                offsetInVerse = best.endJ - baseCanon.length
+                targetCanonLen = nextCanon.length
+            } else {
+                offsetInVerse = minOf(baseCanon.length, best.endJ)
+            }
+
+            val mv = MushafPageRepository.getVerseByGlobalIndex(lockVIdx)
             if (mv != null) {
                 if (mv.surah == 1 && (mv.ayah == 1 || mv.ayah == 3)) {
                     return null
                 }
-                resetPointerToVerse(bestVIdx)
+                resetPointerToVerse(lockVIdx)
                 discoveryRollingChars.setLength(0)
                 lastDiscoveryStreamLength = 0
-                AppLogger.i(TAG, "Two-Stage Discovery locked onto verse [${mv.surah}:${mv.ayah}] with ratio ${"%.2f".format(bestRatio)}")
+                val discoveredCharProgress = (offsetInVerse.toFloat() / maxOf(1, targetCanonLen).toFloat()).coerceIn(0f, 1f)
+                AppLogger.i(TAG, "Two-Stage Discovery locked onto verse [${mv.surah}:${mv.ayah}] (progress=${(discoveredCharProgress * 100).toInt()}%) with ratio ${"%.2f".format(bestRatio)}")
                 return TrackingResult(
                     filteredText = mv.cleanText,
-                    matchedVerseIndex = bestVIdx,
+                    matchedVerseIndex = lockVIdx,
                     matchedVerse = mv,
                     matchedWordsCount = 1,
                     highestSimilarity = bestRatio,
                     recitationMode = RecitationMode.TRACKING,
-                    discoveredNewLocation = true
+                    discoveredNewLocation = true,
+                    charProgress = discoveredCharProgress
                 )
             }
         }
@@ -1370,6 +1475,7 @@ object QuranVocabularyFilter {
         val lastWord = matchedWords.lastOrNull()
         val wordInAyah = lastWord?.wordIndexInVerse ?: 0
         val totalWords = if (verseIdx in verseWordCount.indices) verseWordCount[verseIdx] else 1
+        val computedCharProgress = ((wordInAyah + 1).toFloat() / maxOf(1, totalWords).toFloat()).coerceIn(0f, 1f)
 
         if (mv != null && mv.surah == 1 && mv.ayah == 7) {
             val fatihahEndWordIdx = verseFirstWordIndex[6] + verseWordCount[6] - 1 // "الضالين"
@@ -1387,7 +1493,8 @@ object QuranVocabularyFilter {
                     recitationMode = RecitationMode.DISCOVERY,
                     fatihahCompletedNow = true,
                     currentWordInAyah = wordInAyah,
-                    totalWordsInAyah = maxOf(1, totalWords)
+                    totalWordsInAyah = maxOf(1, totalWords),
+                    charProgress = 1.0f
                 )
             }
         }
@@ -1400,7 +1507,8 @@ object QuranVocabularyFilter {
             highestSimilarity = highestSim,
             recitationMode = recitationMode,
             currentWordInAyah = wordInAyah,
-            totalWordsInAyah = maxOf(1, totalWords)
+            totalWordsInAyah = maxOf(1, totalWords),
+            charProgress = computedCharProgress
         )
     }
 

@@ -45,23 +45,38 @@
 ---
 
 ### الركن الثاني: إسقاط الفونيمات إلى النص الكنسي (`Phoneme-to-Canonical Projection`)
+<<<<<<< HEAD
 ملف الرموز الفونيمية (`tokens.txt`) يحتوي على قرابة 250 رمزاً فونيمياً تجويدياً خاصاً بالرسم واللفظ القرآني. يقوم تابع `projectPhonemesToCanonical` في `AudioRecognizer.kt` بالمعالجة التالية:
 1. **دمج التكرار الصوتي:** تقليص التكرارات الزائدة للحروف المشددة الناتجة عن مخرجات الـ CTC المتتابعة.
 2. **استيعاب الإقلاب الفونيمي:** تحويل النون والتنوين قبل الباء إلى ميم (`نب` -> `مب`).
 3. **توحيد لفظ الجلالة الممدود:** تسوية التنويعات الصوتية الممدودة للفظ الجلالة (`للَااه` و `للَاه` -> `لله`).
+=======
+ملف الرموز الفونيمية (`tokens.txt`) يحتوي على قرابة 250 رمزاً فونيمياً تجويدياً خاصاً بالرسم واللفظ القرآني. يقوم تابع `projectPhonemesToCanonical` في [AudioRecognizer.kt](app/src/main/java/com/mushafqiyam/AudioRecognizer.kt) بالمعالجة التالية:
+1. **دمج التكرار الصوتي:** تقليص التكرارات الزائدة للحروف المشددة الناتجة عن مخرجات الـ CTC المتتابعة.
+2. **استيعاب الإقلاب الفونيمي:** تحويل النون والتنوين قبل الباء إلى ميم (`نب` $\to$ `مب`).
+3. **توحيد لفظ الجلالة الممدود:** تسوية التنويعات الصوتية الممدودة للفظ الجلالة (`للَااه` و `للَاه` $\to$ `لله`).
+>>>>>>> c8e1ef8 ([full] V0.7.1.0: Full standalone release with bundled Zipformer2-CTC model, 604 Mushaf pages, and architectural documentation)
 4. **تسوية همزة الوصل والأحرف الشمسية والقمرية:** معالجة تمايزات الوصل الصوتي في الرسم العثماني (`\u0671`) لضمان تطابق تيار الفونيمات المنطوقة مع مصفوفة الأحرف المرجعية.
 
 ---
 
 ### الركن الثالث: المحاذاة الحرفية المدمجة (`Compact Character-LCS`)
+<<<<<<< HEAD
 خوارزمية المحاذاة في `QuranVocabularyFilter.kt`:
+=======
+خوارزمية المحاذاة في [QuranVocabularyFilter.kt](app/src/main/java/com/mushafqiyam/QuranVocabularyFilter.kt):
+>>>>>>> c8e1ef8 ([full] V0.7.1.0: Full standalone release with bundled Zipformer2-CTC model, 604 Mushaf pages, and architectural documentation)
 - **حساب البرمجة الديناميكية بصفر تخصيصات (Zero Allocation DP):**
   - استخدام مصفوفات أحادية الأبعاد مسبقة التخصيص وقابلة لإعادة الاستخدام في الذاكرة (`dpPrevScore`, `dpCurrScore`, `dpPrevStart`, `dpCurrStart`, `dpPrevGap`, `dpCurrGap`).
 - **تقييد الفجوات الأفقية (`Bounded DP Gaps`):**
   - وضع حد أقصى للفجوات الصوتية الضعيفة (`maxWeakGap = 3`) لمنع التمدد الخاطئ للآية عبر آيات أخرى.
 - **عتبات القبول:**
   - اشتراط كثافة تطابق لا تقل عن 60% (`density >= 0.60`)، ونسبة تشابه لا تقل عن 65% (`matchRatio >= 0.65`).
+<<<<<<< HEAD
   - استثناء الآيات شديدة القصر (أقل من أو يساوي 8 أحرف مثل «مدهامتان») بقواعد عتبات تكيفية محكمة.
+=======
+  - استثناء الآيات شديدة القصر ($\le 8$ أحرف مثل «مدهامتان») بقواعد عتبات تكيفية محكمة.
+>>>>>>> c8e1ef8 ([full] V0.7.1.0: Full standalone release with bundled Zipformer2-CTC model, 604 Mushaf pages, and architectural documentation)
 
 ---
 
@@ -74,9 +89,16 @@
 ---
 
 ### الركن الخامس: التظليل البصري التناسبي للسطور (`Proportional Box-Width Line Mapping`)
+<<<<<<< HEAD
 حل معضلة انتقال التظليل بين الأسطر في الآيات المشتركة والطويلة في `MushafPageRepository.kt` و `MushafPageViewer.kt`:
 1. **الربط بين التقدم الحرفي وعرض السطور:**
    - استخراج نسبة التقدم الحرفي اللحظي للقارئ داخل الآية (`charProgress`).
+=======
+حل معضلة انتقال التظليل بين الأسطر في الآيات المشتركة والطويلة في [MushafPageRepository.kt](app/src/main/java/com/mushafqiyam/MushafPageRepository.kt) و [MushafPageViewer.kt](app/src/main/java/com/mushafqiyam/MushafPageViewer.kt):
+1. **الربط بين التقدم الحرفي وعرض السطور:**
+   - استخراج نسبة التقدم الحرفي اللحظي للقارئ داخل الآية:
+     $$\text{charProgress} = \frac{\text{offsetInVerse}}{\text{totalVerseChars}}$$
+>>>>>>> c8e1ef8 ([full] V0.7.1.0: Full standalone release with bundled Zipformer2-CTC model, 604 Mushaf pages, and architectural documentation)
    - حساب العرض الأفقي لصناديق الآية على كل سطر من أسطر الصفحة (`normRight - normLeft`).
    - تحديد السطر المستهدف بدقة بناءً على موقع التقدم التراكمي ضمن العرض الكلي للآية.
 2. **الصعود الرتيب غير المرتد (Monotonic Ratchets):**

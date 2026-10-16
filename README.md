@@ -17,13 +17,13 @@
 > نظراً لأن التطبيق قيد التجربة، فقد تظهر أخطاء في التتبع أو قفزات غير متوقعة للمؤشر، ونحن نعمل باستمرار على تحليل سجلات الأخطاء ومحاولة معالجتها.
 
 ## نسبة الفضل لأهله (Credits)
-لم يكن هذا العمل ليصل إلى هذه المرحلة لولا فضل الله، ثم جهود مجتمع المصادر المفتوحة. نتوجه بخالص الشكر لأصحاب المشاريع التالية:
-* **نموذج (FastConformer Quran):** للباحث Mohammed 
-  [HuggingFace Repository](https://huggingface.co/mohammed/fastconformer-quran-ar-onnx-int8)
-* **بيانات وإحداثيات المصحف الشريف:** الموارد والبيانات المفتوحة المعتمدة على مصحف المدينة النبوية (مجمع الملك فهد لطباعة المصحف الشريف)، والمصادر المفتوحة مثل مشروع Quran.com 
-  [Quran.com GitHub](https://github.com/quran)
-* **محرك التشغيل (ONNX Runtime):** مكتبة التشغيل مفتوحة المصدر من Microsoft 
-  [ONNX Runtime](https://onnxruntime.ai/)
-
+لم يكن هذا العمل ليصل إلى هذه المرحلة لولا فضل الله وتوفيقه، ثم جهود مجتمع المصادر المفتوحة. نتوجه بخالص الشكر والتقدير لأصحاب المشاريع والجهود التالية:
+* **نموذج التلاوة والفونيمات التجويدية (Zipformer2-CTC Quran Phonemes):** للمطور **Muno459** ومبادرة **Quran-Lab**، نموذج تدفقي متقدم مبني على معمارية Zipformer2 ومخصص لإخراج الفونيمات القرآنية وأحكام التجويد مباشرة بدون نموذج لغة (LM-Free Streaming CTC).
+  - [Muno459/zipformer_p-quran على HuggingFace](https://huggingface.co/Muno459/zipformer_p-quran)
+  - [Quran-Lab/zipformer_p-arabic-v3 على HuggingFace](https://huggingface.co/Quran-Lab/zipformer_p-arabic-v3)
+* **محرك الاستدلال الصوتي المدمج (Sherpa-ONNX Engine):** مكتبة الجيل القادم المفتوحة المصدر للاستدلال الصوتي المضمن من منظومة **k2-fsa / Next-gen Kaldi** بقيادة د. دان بوفي (Daniel Povey) ومجتمع المطورين الدولي.
+  - [Sherpa-ONNX GitHub Repository](https://github.com/k2-fsa/sherpa-onnx)
+* **بيانات وإحداثيات المصحف الشريف:** الموارد والبيانات المفتوحة المعتمدة على مصحف المدينة النبوية (مجمع الملك فهد لطباعة المصحف الشريف بالمدينة المنورة)، والمصادر المفتوحة مثل مشروع Quran.com.
+  - [Quran.com GitHub](https://github.com/quran)
 ## 📖 التوثيق المعماري للمطورين
 للاطلاع على تفاصيل المعمارية الهندسية، خوارزميات محرك التتبع الصوتي، والتجارب السابقة للمشروع، يرجى مراجعة [الدليل المعماري الشامل (ARCHITECTURE.md)](ARCHITECTURE.md).

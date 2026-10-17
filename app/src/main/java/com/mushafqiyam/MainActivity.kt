@@ -191,38 +191,41 @@ fun MainAppScreen(
 
                 graceEmptyFrames = 0
 
-                val isSameVerse = (mv.surah == activeSurah && mv.ayah == activeAyah)
-                val isNextVerse = (mv.surah == activeSurah && mv.ayah == activeAyah + 1) ||
-                                  (mv.surah == activeSurah + 1 && mv.ayah == 1)
+                val nowMs = System.currentTimeMillis()
+                val isTrackingMode = (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.TRACKING)
+                val newCharProgress = trackingResult.charProgress.coerceIn(0f, 1f)
 
-                val newCharProgress = trackingResult.charProgress
+                if (mv.page == currentPage) {
+                    // --- Case 1: Match on current displayed page ---
+                    val isSameVerse = (mv.surah == activeSurah && mv.ayah == activeAyah)
+                    val isNextVerse = (mv.surah == activeSurah && mv.ayah == activeAyah + 1) ||
+                                      (mv.surah == activeSurah + 1 && mv.ayah == 1)
 
-                if (isSameVerse && trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.TRACKING) {
-                    // Monotonic progress ratchet inside same verse
-                    activeWordProgress = maxOf(activeWordProgress, newCharProgress)
-                } else {
-                    activeSurah = mv.surah
-                    activeAyah = mv.ayah
-                    activeWordProgress = newCharProgress
-                }
-
-                // Proportional Line Mapping & Monotonic Line Ratchet
-                val candidateLine = MushafPageRepository.findAyahLinesOnPage(mv.page, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
-                if (candidateLine != null) {
-                    if (mv.page != activeLinePage) {
-                        activeLinePage = mv.page
-                        activeLineNumber = candidateLine
-                    } else if (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.TRACKING && (isSameVerse || isNextVerse)) {
-                        activeLineNumber = maxOf(activeLineNumber, candidateLine)
+                    if (isSameVerse && isTrackingMode) {
+                        // Monotonic progress ratchet inside same verse
+                        activeWordProgress = maxOf(activeWordProgress, newCharProgress)
                     } else {
-                        activeLineNumber = candidateLine
+                        activeSurah = mv.surah
+                        activeAyah = mv.ayah
+                        activeWordProgress = newCharProgress
                     }
-                }
 
-                    // --- Page-Turn FSM & Anti-Jitter Hysteresis ---
-                    // 1. Early Bottom-Line Proactive Page Flip
-                    val isLastVerseOnPage = (mv.page in 1..604) && run {
-                        val pageVerses = MushafPageRepository.getPageVerses(mv.page)
+                    // Proportional Line Mapping & Monotonic Line Ratchet on currentPage
+                    val candidateLine = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
+                    if (candidateLine != null) {
+                        if (activeLinePage != currentPage) {
+                            activeLinePage = currentPage
+                            activeLineNumber = candidateLine
+                        } else if (isTrackingMode && (isSameVerse || isNextVerse)) {
+                            activeLineNumber = maxOf(activeLineNumber, candidateLine)
+                        } else {
+                            activeLineNumber = candidateLine
+                        }
+                    }
+
+                    // Early Bottom-Line Proactive Page Flip
+                    val isLastVerseOnPage = run {
+                        val pageVerses = MushafPageRepository.getPageVerses(currentPage)
                         pageVerses.isNotEmpty() && pageVerses.last().let { it.surah == mv.surah && it.ayah == mv.ayah }
                     }
                     val linesPair = MushafPageRepository.findAyahLinesOnPage(currentPage, mv.surah, mv.ayah, activeWordProgress)
@@ -231,8 +234,7 @@ fun MainAppScreen(
                     val isNearEndOfPage = (isLastVerseOnPage || isBottomLine) &&
                         trackingResult.totalWordsInAyah >= 3 &&
                         activeWordProgress >= 0.85f &&
-                        currentPage < 604 &&
-                        mv.page == currentPage
+                        currentPage < 604
 
                     if (isNearEndOfPage && earlyTurnTriggeredForPage != currentPage) {
                         if (pendingTargetPage == currentPage + 1) {
@@ -245,20 +247,48 @@ fun MainAppScreen(
                             val prevP = currentPage
                             currentPage = currentPage + 1
                             earlyTurnTriggeredForPage = prevP
-                            lastPageTurnTimeMs = System.currentTimeMillis()
+                            lastPageTurnTimeMs = nowMs
                             pendingTargetPage = -1
                             pendingPageConfirmCount = 0
                             AppLogger.i("PageTurn", "Proactive early flip from $prevP to $currentPage (progress=$activeWordProgress)")
                         }
-                    } else if (mv.page != currentPage) {
-                        val nowMs = System.currentTimeMillis()
-                        val isBackward = (mv.page < currentPage)
-                        val isSinglePageForward = (mv.page == currentPage + 1)
-                        val isTrackingMode = (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.TRACKING)
+                    } else {
+                        // Reset pending counters when settled on currentPage
+                        if (pendingTargetPage != currentPage + 1 || activeWordProgress < 0.70f) {
+                            pendingTargetPage = -1
+                            pendingPageConfirmCount = 0
+                        }
+                    }
+                } else {
+                    // --- Case 2: Match on a different page (mv.page != currentPage) ---
+                    // Resolve Page-Turn FSM decision FIRST before touching activeSurah/activeAyah
+                    val isBackward = (mv.page < currentPage)
+                    val isSinglePageForward = (mv.page == currentPage + 1)
+                    var didFlip = false
 
-                        if (isBackward) {
+                    if (isBackward) {
+                        // Issue 2 Guard: Prevent spurious backward page flip caused by reciter finishing last verse of previous page
+                        val isPrevPageTail = (mv.page == currentPage - 1) && run {
+                            val prevPageVerses = MushafPageRepository.getPageVerses(mv.page)
+                            if (prevPageVerses.isEmpty()) false
+                            else {
+                                val lastV = prevPageVerses.last()
+                                val isLast = (lastV.surah == mv.surah && lastV.ayah == mv.ayah)
+                                val isSecondLast = if (prevPageVerses.size >= 2) {
+                                    val sl = prevPageVerses[prevPageVerses.size - 2]
+                                    sl.surah == mv.surah && sl.ayah == mv.ayah
+                                } else false
+                                isLast || isSecondLast
+                            }
+                        }
+
+                        val timeSinceLastFlip = nowMs - lastPageTurnTimeMs
+                        if (isPrevPageTail && isTrackingMode && timeSinceLastFlip < 15000L && !trackingResult.discoveredNewLocation) {
+                            AppLogger.w("PageTurn", "Suppressed spurious backward flip to prev page tail [${mv.surah}:${mv.ayah}] on page ${mv.page} (current=$currentPage, elapsed=${timeSinceLastFlip}ms)")
+                            pendingTargetPage = -1
+                            pendingPageConfirmCount = 0
+                        } else {
                             // Backward Lock: Reject spurious backward flips during continuous TRACKING unless explicitly discovered after silence
-                            val timeSinceLastFlip = nowMs - lastPageTurnTimeMs
                             val isSafeBackward = trackingResult.discoveredNewLocation || timeSinceLastFlip >= 5000L
                             if (isSafeBackward && (!isTrackingMode || timeSinceLastFlip >= 5000L)) {
                                 if (pendingTargetPage == mv.page) {
@@ -273,58 +303,77 @@ fun MainAppScreen(
                                     lastPageTurnTimeMs = nowMs
                                     pendingTargetPage = -1
                                     pendingPageConfirmCount = 0
+                                    didFlip = true
                                     AppLogger.i("PageTurn", "Confirmed backward page turn from $prevP to ${mv.page}")
                                 }
                             } else {
                                 AppLogger.w("PageTurn", "Suppressed backward jitter flip to page ${mv.page} (current=$currentPage, elapsed=${timeSinceLastFlip}ms)")
                             }
-                        } else if (isSinglePageForward) {
-                            // Forward Debounce: Require 2 consecutive frames or immediate flip if previous page was completed
-                            val wasPrevPageFinished = (earlyTurnTriggeredForPage == currentPage - 1 || activeWordProgress >= 0.70f)
-                            if (wasPrevPageFinished) {
-                                val prevP = currentPage
-                                currentPage = mv.page
-                                lastPageTurnTimeMs = nowMs
-                                pendingTargetPage = -1
-                                pendingPageConfirmCount = 0
-                                AppLogger.i("PageTurn", "Immediate forward flip to page ${mv.page} after completed previous page")
-                            } else {
-                                if (pendingTargetPage == mv.page) {
-                                    pendingPageConfirmCount++
-                                } else {
-                                    pendingTargetPage = mv.page
-                                    pendingPageConfirmCount = 1
-                                }
-                                if (pendingPageConfirmCount >= 2) {
-                                    val prevP = currentPage
-                                    currentPage = mv.page
-                                    lastPageTurnTimeMs = nowMs
-                                    pendingTargetPage = -1
-                                    pendingPageConfirmCount = 0
-                                    AppLogger.i("PageTurn", "Debounced forward flip from $prevP to ${mv.page}")
-                                }
-                            }
+                        }
+                    } else if (isSinglePageForward) {
+                        // Forward Debounce: Require 2 consecutive frames or immediate flip if previous page was completed
+                        val wasPrevPageFinished = (earlyTurnTriggeredForPage == currentPage || activeWordProgress >= 0.70f)
+                        if (wasPrevPageFinished) {
+                            val prevP = currentPage
+                            currentPage = mv.page
+                            lastPageTurnTimeMs = nowMs
+                            pendingTargetPage = -1
+                            pendingPageConfirmCount = 0
+                            didFlip = true
+                            AppLogger.i("PageTurn", "Immediate forward flip to page ${mv.page} after completed previous page")
                         } else {
-                            // Multi-page forward jump (e.g. discovery)
-                            if (trackingResult.discoveredNewLocation || pendingTargetPage == mv.page) {
-                                val prevP = currentPage
-                                currentPage = mv.page
-                                lastPageTurnTimeMs = nowMs
-                                pendingTargetPage = -1
-                                pendingPageConfirmCount = 0
-                                AppLogger.i("PageTurn", "Jumped to discovered page ${mv.page} from $prevP")
+                            if (pendingTargetPage == mv.page) {
+                                pendingPageConfirmCount++
                             } else {
                                 pendingTargetPage = mv.page
                                 pendingPageConfirmCount = 1
                             }
+                            if (pendingPageConfirmCount >= 2) {
+                                val prevP = currentPage
+                                currentPage = mv.page
+                                lastPageTurnTimeMs = nowMs
+                                pendingTargetPage = -1
+                                pendingPageConfirmCount = 0
+                                didFlip = true
+                                AppLogger.i("PageTurn", "Debounced forward flip from $prevP to ${mv.page}")
+                            }
                         }
                     } else {
-                        // Reset pending counters when settled on currentPage
-                        if (pendingTargetPage != currentPage + 1 || activeWordProgress < 0.70f) {
+                        // Multi-page forward jump (e.g. discovery)
+                        if (trackingResult.discoveredNewLocation || pendingTargetPage == mv.page) {
+                            val prevP = currentPage
+                            currentPage = mv.page
+                            lastPageTurnTimeMs = nowMs
                             pendingTargetPage = -1
                             pendingPageConfirmCount = 0
+                            didFlip = true
+                            AppLogger.i("PageTurn", "Jumped to discovered page ${mv.page} from $prevP")
+                        } else {
+                            pendingTargetPage = mv.page
+                            pendingPageConfirmCount = 1
                         }
                     }
+
+                    // Issue 1 Resolution: Synchronize activeSurah/activeAyah and line calculation with page turn decision
+                    if (didFlip) {
+                        // Flip executed to mv.page: now update activeSurah, activeAyah, and compute line on new page
+                        activeSurah = mv.surah
+                        activeAyah = mv.ayah
+                        activeWordProgress = newCharProgress
+                        val candidateLine = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
+                        activeLinePage = currentPage
+                        activeLineNumber = candidateLine ?: 1
+                        earlyTurnTriggeredForPage = -1
+                    } else {
+                        // Flip deferred (waiting for debounce or suppressed):
+                        // Keep highlight steady and continuous on currentPage!
+                        if (mv.page > currentPage) {
+                            // Forward pending: keep progress at 100% of current page tail
+                            activeWordProgress = 1.0f
+                        }
+                        // Do NOT touch activeSurah, activeAyah, or activeLineNumber. They remain on currentPage!
+                    }
+                }
 
                     if (trackingResult.fatihahCompletedNow) {
                         matchSimilarityText = "🔍 اكتملت الفاتحة — بانتظار اكتشاف السورة/الآية التالية..."

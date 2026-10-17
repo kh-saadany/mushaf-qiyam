@@ -562,6 +562,54 @@ object QuranVocabularyFilter {
             }
         }
 
+        // 3.5. Prayer Dhikr & Tasleem Isolation Gate:
+        // Exclude explicit non-Quranic prayer transitions, tasmee', takbeer, tasbeeh, and tasleem from sequential tracking
+        val streamTail20 = if (canonicalStream.length > 20) canonicalStream.substring(canonicalStream.length - 20) else canonicalStream
+
+        // 1. Tasleem: strictly requires pairing of Salam with Rahmah (e.g. سلام عليكم ورحمة الله / السلام عليك ورحمة الله)
+        // because "سلام عليكم" alone is genuine Quran (e.g. 13:24, 6:54), but "ورحمة الله" paired with it is NOT in the Quran.
+        val isExplicitTasleem = (canonicalStream.contains("سليكمورحم") ||
+                ((canonicalStream.contains("سلامعلي") || canonicalStream.contains("لسلامعلي") || canonicalStream.contains("سلامعليك") || canonicalStream.contains("لسلامعليك")) &&
+                 (canonicalStream.contains("رحمت") || canonicalStream.contains("رحمه")))) ||
+                (streamTail20.contains("سليكمورحم") ||
+                ((streamTail20.contains("سلامعلي") || streamTail20.contains("لسلامعلي") || streamTail20.contains("سلامعليك") || streamTail20.contains("لسلامعليك")) &&
+                 (streamTail20.contains("رحمت") || streamTail20.contains("رحمه"))))
+
+        // 2. Tasmee' & Tahmeed: "سمع الله لمن حمده" / "ربنا ولك الحمد"
+        // strictly requires the non-Quranic compound containing "لمن حمده" or "ولك الحمد"
+        // Never isolate "سمع الله" alone because it is genuine Quran (Al-Mujadila 58:1, Al-Imran 3:181).
+        val isExplicitTasmeeOrTahmeed = canonicalStream.contains("سمعاللهلمن") || canonicalStream.contains("لمنحمده") || canonicalStream.contains("لمنحمد") ||
+                canonicalStream.contains("ربنولكلحمد") || canonicalStream.contains("ربنالكلحمد") || canonicalStream.contains("ولكلحمد") ||
+                streamTail20.contains("سمعاللهلمن") || streamTail20.contains("لمنحمده") || streamTail20.contains("لمنحمد") ||
+                streamTail20.contains("ربنولكلحمد") || streamTail20.contains("ربنالكلحمد") || streamTail20.contains("ولكلحمد")
+
+        // 3. Takbeer: "الله أكبر" (non-Quranic compound, guarding against 29:45 "ولذكر الله أكبر")
+        val isExplicitTakbeer = (canonicalStream.contains("اللهكبر") || canonicalStream.contains("اللهواكبر") ||
+                streamTail20.contains("اللهكبر") || streamTail20.contains("اللهواكبر")) &&
+                !canonicalStream.contains("ولذكراللهكبر")
+
+        // 4. Tasbeeh: "سبحان ربي العظيم" / "سبحان ربي الأعلى"
+        val isExplicitTasbeeh = canonicalStream.contains("سبحانربيلعظيم") || canonicalStream.contains("سبحانربيلعلى") ||
+                canonicalStream.contains("سبحانربيلعظم") ||
+                streamTail20.contains("سبحانربيلعظيم") || streamTail20.contains("سبحانربيلعلى") ||
+                streamTail20.contains("سبحانربيلعظم")
+
+        val isExplicitPrayerDhikr = isExplicitTasmeeOrTahmeed || isExplicitTakbeer || isExplicitTasbeeh
+
+        if (isExplicitTasleem || isExplicitPrayerDhikr) {
+            val currCanonical = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex] else ""
+            val nextCanonical = if (confirmedVerseIndex + 1 in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex + 1] else ""
+            val next2Canonical = if (confirmedVerseIndex + 2 in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex + 2] else ""
+            val isGenuineQuranicVerse = (isExplicitTasleem && (currCanonical.contains("سلامعليك") || nextCanonical.contains("سلامعليك") || next2Canonical.contains("سلامعليك"))) ||
+                    (isExplicitTakbeer && (currCanonical.contains("اللهكبر") || nextCanonical.contains("اللهكبر") || next2Canonical.contains("اللهكبر"))) ||
+                    (isExplicitTasbeeh && (currCanonical.contains("سبحانربي") || nextCanonical.contains("سبحانربي") || next2Canonical.contains("سبحانربي")))
+
+            if (!isGenuineQuranicVerse) {
+                AppLogger.d(TAG, "Prayer Dhikr/Tasleem isolated: stream='$canonicalStream'")
+                return TrackingResult("", null, null, 0, 0.0, recitationMode)
+            }
+        }
+
         // 4. Primary: Character-LCS Sequential Window Tracking
         val lcsResult = trackWithinSequentialWindowCharacterLCS(canonicalStream)
         val now = System.currentTimeMillis()
@@ -584,7 +632,8 @@ object QuranVocabularyFilter {
         }
 
         // 5. Smart Auto-Recovery
-        val hasTakbirOrTransition = canonicalStream.contains("اللهكبر") || canonicalStream.contains("سمعالله") ||
+        val hasTakbirOrTransition = (canonicalStream.contains("اللهكبر") && !canonicalStream.contains("ولذكر")) ||
+            canonicalStream.contains("سمعاللهلمن") || canonicalStream.contains("لمنحمده") || canonicalStream.contains("ربنولكلحمد") ||
             rawWords.any { rw ->
                 TRANSITION_WORDS.any { tw -> FuzzyMatcher.wordSimilarity(rw, tw) >= 0.78 } ||
                     PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }
@@ -809,8 +858,15 @@ object QuranVocabularyFilter {
         val hasUltraShortInWindow = windowVerseIndices.any { vIdx ->
             vIdx in verseCanonicalChars.indices && verseCanonicalChars[vIdx].length <= 8
         }
+        val targetVerseLen = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex].length else refWindow.length
+        val isLongVerse = (targetVerseLen > 50)
+
         val isUltraShortValid = (score >= 3 && matchRatio >= 0.75 && alignResult.density >= 0.75 && hasUltraShortInWindow)
-        val isStandardValid = (score >= 4 && matchRatio >= 0.65 && alignResult.density >= 0.60)
+        val isStandardValid = if (isLongVerse && phonStreamToAlign.length <= 6) {
+            (score >= 5 && matchRatio >= 0.80 && alignResult.density >= 0.70)
+        } else {
+            (score >= 4 && matchRatio >= 0.65 && alignResult.density >= 0.60)
+        }
 
         var effectiveAlignResult = alignResult
         var effectiveScore = score
@@ -825,8 +881,12 @@ object QuranVocabularyFilter {
                         val tailStream = phonStreamToAlign.substring(tailSkip)
                         val tailRes = alignStreamToRefCompact(tailStream, refWindow)
                         val tailRatio = if (tailStream.isNotEmpty()) tailRes.score.toDouble() / tailStream.length.toDouble() else 0.0
-                        val isTailValid = (tailRes.score >= 4 && tailRatio >= 0.70 && tailRes.density >= 0.65) ||
-                                          (tailRes.score >= 3 && tailRatio >= 0.75 && tailRes.density >= 0.75 && hasUltraShortInWindow)
+                        val isTailValid = if (isLongVerse) {
+                            (tailRes.score >= 5 && tailRatio >= 0.75 && tailRes.density >= 0.75)
+                        } else {
+                            (tailRes.score >= 4 && tailRatio >= 0.70 && tailRes.density >= 0.65) ||
+                            (tailRes.score >= 3 && tailRatio >= 0.75 && tailRes.density >= 0.75 && hasUltraShortInWindow)
+                        }
                         if (isTailValid) {
                             effectiveAlignResult = tailRes
                             effectiveScore = tailRes.score

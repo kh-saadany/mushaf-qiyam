@@ -11,7 +11,7 @@ android {
         applicationId = "com.mushafqiyam.zipformer"
         minSdk = 24
         targetSdk = 34
-        versionCode = 80
+        versionCode = 81
         versionName = "0.7.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

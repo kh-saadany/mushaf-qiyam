@@ -46,26 +46,7 @@ jobs:
 
     - name: Post Compilation Errors to Commit Comment
       if: failure()
-      run: |
-        python3 -c "
-        import os, urllib.request, json
-        token = os.environ.get('GH_TOKEN', '')
-        sha = os.environ.get('GITHUB_SHA', '')
-        repo = os.environ.get('GITHUB_REPOSITORY', '')
-        if not token or not sha:
-            print('Missing token or sha')
-            exit(0)
-        with open('compilation_log.txt', 'r', errors='ignore') as f:
-            text = f.read()
-        body = f'### Build Log Tail for commit {sha[:7]} (length {len(text)}):\n```text\n{text[-3000:]}\n```'
-        url = f'https://api.github.com/repos/{repo}/commits/{sha}/comments'
-        req = urllib.request.Request(url, data=json.dumps({'body': body}).encode(), headers={'Authorization': 'Bearer ' + token, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'})
-        try:
-            urllib.request.urlopen(req)
-            print('Posted error comment to commit!')
-        except Exception as e:
-            print('Failed to post comment:', e)
-        "
+      run: python3 scripts/post_failure_comment.py
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

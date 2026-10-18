@@ -40,7 +40,17 @@ jobs:
         curl -L --retry 5 -o app/libs/sherpa-onnx-1.13.4.aar "https://huggingface.co/csukuangfj2/sherpa-onnx-libs/resolve/main/android/aar/sherpa-onnx-1.13.4.aar?download=true"
 
     - name: Run Kotlin Compilation Verification
-      run: ./gradlew compileReleaseKotlin
+      run: |
+        set -o pipefail
+        ./gradlew compileReleaseKotlin 2>&1 | tee compilation_log.txt
+
+    - name: Output Errors on Failure
+      if: failure()
+      run: |
+        echo "### Kotlin Compilation Errors" >> $GITHUB_STEP_SUMMARY
+        echo '```text' >> $GITHUB_STEP_SUMMARY
+        grep -E '(e: |error:|FAILED|unresolved|cannot find)' compilation_log.txt | head -n 40 >> $GITHUB_STEP_SUMMARY || tail -n 40 compilation_log.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
 
   build:
     name: Build, Package & Publish Release

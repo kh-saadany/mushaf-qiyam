@@ -44,13 +44,30 @@ jobs:
         set -o pipefail
         ./gradlew compileReleaseKotlin 2>&1 | tee compilation_log.txt
 
-    - name: Output Errors on Failure
+    - name: Post Compilation Errors to Commit Comment
       if: failure()
       run: |
-        echo "### Kotlin Compilation Errors" >> $GITHUB_STEP_SUMMARY
-        echo '```text' >> $GITHUB_STEP_SUMMARY
-        grep -E '(e: |error:|FAILED|unresolved|cannot find)' compilation_log.txt | head -n 40 >> $GITHUB_STEP_SUMMARY || tail -n 40 compilation_log.txt >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        python3 -c "
+        import os, urllib.request, json
+        token = os.environ.get('GH_TOKEN', '')
+        sha = os.environ.get('GITHUB_SHA', '')
+        repo = os.environ.get('GITHUB_REPOSITORY', '')
+        if not token or not sha:
+            print('Missing token or sha')
+            exit(0)
+        with open('compilation_log.txt', 'r', errors='ignore') as f:
+            lines = [l for l in f if any(k in l.lower() for k in ['e: ', 'error:', 'failed', 'unresolved', 'cannot find', 'exception', 'caused by'])]
+        body = '### Compilation Errors for commit ' + sha[:7] + ':\n```text\n' + ''.join(lines[:60]) + '\n```'
+        url = f'https://api.github.com/repos/{repo}/commits/{sha}/comments'
+        req = urllib.request.Request(url, data=json.dumps({'body': body}).encode(), headers={'Authorization': 'Bearer ' + token, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'})
+        try:
+            urllib.request.urlopen(req)
+            print('Posted error comment to commit!')
+        except Exception as e:
+            print('Failed to post comment:', e)
+        "
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     name: Build, Package & Publish Release

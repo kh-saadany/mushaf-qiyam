@@ -71,7 +71,9 @@ object QuranVocabularyFilter {
         val discoveredNewLocation: Boolean = false,
         val currentWordInAyah: Int = 0,
         val totalWordsInAyah: Int = 1,
-        val charProgress: Float = 0f
+        val charProgress: Float = 0f,
+        val isPrayerTransition: Boolean = false,
+        val isTasleem: Boolean = false
     ) {
         val mode: RecitationMode get() = recitationMode
         val confidence: Double get() = highestSimilarity
@@ -445,6 +447,14 @@ object QuranVocabularyFilter {
         AppLogger.i(TAG, "Tracking pointer locked to Surah $surah Ayah $ayah (GlobalVerse=$globalVerseIdx, WordPtr=$activeWordPointer)")
     }
 
+    @Synchronized
+    fun setLastNonFatihahVerseIndex(verseIndex: Int) {
+        if (verseIndex in 0 until 6236) {
+            lastNonFatihahVerseIndex = verseIndex
+            AppLogger.i(TAG, "Explicitly set lastNonFatihahVerseIndex = $verseIndex")
+        }
+    }
+
     /**
      * Retrieves the current narrow window of allowed words around activeWordPointer.
      */
@@ -606,7 +616,16 @@ object QuranVocabularyFilter {
 
             if (!isGenuineQuranicVerse) {
                 AppLogger.d(TAG, "Prayer Dhikr/Tasleem isolated: stream='$canonicalStream'")
-                return TrackingResult("", null, null, 0, 0.0, recitationMode)
+                return TrackingResult(
+                    filteredText = "",
+                    matchedVerseIndex = null,
+                    matchedVerse = null,
+                    matchedWordsCount = 0,
+                    highestSimilarity = 0.0,
+                    recitationMode = recitationMode,
+                    isPrayerTransition = isExplicitPrayerDhikr,
+                    isTasleem = isExplicitTasleem
+                )
             }
         }
 
@@ -1110,6 +1129,36 @@ object QuranVocabularyFilter {
         }
         if (cleanRolling.length < 8) return null
 
+        // --- Continuity Priority: Check lastNonFatihahVerseIndex and its next verse first! ---
+        if (lastNonFatihahVerseIndex in verseCanonicalChars.indices) {
+            val candidateIndices = listOf(lastNonFatihahVerseIndex, lastNonFatihahVerseIndex + 1)
+            for (cIdx in candidateIndices) {
+                if (cIdx in verseCanonicalChars.indices) {
+                    val ref = verseCanonicalChars[cIdx]
+                    val align = alignStreamToRefCompact(cleanRolling, ref)
+                    val ratio = align.score.toDouble() / cleanRolling.length
+                    if (align.score >= 5 && ratio >= 0.70 && align.density >= 0.65) {
+                        val mv = MushafPageRepository.getVerseByGlobalIndex(cIdx)
+                        if (mv != null) {
+                            resetPointerToVerse(cIdx)
+                            discoveryRollingChars.setLength(0)
+                            lastDiscoveryStreamLength = 0
+                            AppLogger.i(TAG, "Continuity Discovery locked onto [${mv.surah}:${mv.ayah}] (Page ${mv.page})")
+                            return TrackingResult(
+                                filteredText = mv.cleanText,
+                                matchedVerseIndex = cIdx,
+                                matchedVerse = mv,
+                                matchedWordsCount = 1,
+                                highestSimilarity = ratio,
+                                recitationMode = RecitationMode.TRACKING,
+                                discoveredNewLocation = true
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // --- STAGE 1: 4-gram Candidate Retrieval ---
         val candidateHits = HashMap<Int, Int>(64)
         for (j in 0 until cleanRolling.length - 3) {
@@ -1119,6 +1168,13 @@ object QuranVocabularyFilter {
                 for (vIdx in matches) {
                     candidateHits[vIdx] = (candidateHits[vIdx] ?: 0) + 1
                 }
+            }
+        }
+
+        if (lastNonFatihahVerseIndex in verseCanonicalChars.indices) {
+            candidateHits[lastNonFatihahVerseIndex] = (candidateHits[lastNonFatihahVerseIndex] ?: 0) + 3
+            if (lastNonFatihahVerseIndex + 1 in verseCanonicalChars.indices) {
+                candidateHits[lastNonFatihahVerseIndex + 1] = (candidateHits[lastNonFatihahVerseIndex + 1] ?: 0) + 3
             }
         }
 

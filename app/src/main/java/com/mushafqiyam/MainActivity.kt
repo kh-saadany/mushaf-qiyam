@@ -16,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -27,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Bookmarks
@@ -53,13 +55,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.1.0"
+        const val APP_VERSION = "0.7.2.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -100,18 +103,47 @@ fun MainAppScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? ComponentActivity
+    val prefs = remember { context.getSharedPreferences("mushaf_prefs", Context.MODE_PRIVATE) }
+
+    // Persistent Recitation Bookmark: load from SharedPreferences
+    var savedBookmark by remember {
+        val p = prefs.getInt("last_saved_page", 1)
+        val s = prefs.getInt("last_saved_surah", 1)
+        val a = prefs.getInt("last_saved_ayah", 1)
+        mutableStateOf(Triple(p, s, a))
+    }
+
+    val saveBookmark: (Int, Int, Int) -> Unit = { p, s, a ->
+        val gIdx = MushafPageRepository.getGlobalVerseIndex(s, a)
+        prefs.edit()
+            .putInt("last_saved_page", p)
+            .putInt("last_saved_surah", s)
+            .putInt("last_saved_ayah", a)
+            .putInt("last_saved_global_verse", gIdx)
+            .apply()
+        savedBookmark = Triple(p, s, a)
+        AppLogger.i("Bookmark", "Saved persistent bookmark: [Surah $s: Ayah $a, Page $p, GlobalVerse=$gIdx]")
+    }
+
     var isListening by remember { mutableStateOf(false) }
     var engineStatus by remember { mutableStateOf("⏳ جاري تهيئة المصحف والمحرك...") }
     var recognizedText by remember { mutableStateOf("") }
     var audioLevel by remember { mutableFloatStateOf(0f) }
 
-    // Mushaf Viewer & Full-Mushaf Tracking State
-    var currentPage by remember { mutableIntStateOf(1) }
-    var activeSurah by remember { mutableIntStateOf(1) }
-    var activeAyah by remember { mutableIntStateOf(1) }
+    // Mushaf Viewer & Full-Mushaf Tracking State initialized from saved bookmark
+    var currentPage by remember { mutableIntStateOf(savedBookmark.first) }
+    var activeSurah by remember { mutableIntStateOf(savedBookmark.second) }
+    var activeAyah by remember { mutableIntStateOf(savedBookmark.third) }
     var activeWordProgress by remember { mutableFloatStateOf(0f) }
     var isDiscoveryMode by remember { mutableStateOf(true) }
     var isScrollMode by remember { mutableStateOf(true) }
+
+    // Smart Prayer Session Manager State
+    val prayerManager = remember { PrayerSessionManager() }
+    var prayerBannerText by remember { mutableStateOf<String?>(null) }
+    var showSplashDialog by remember { mutableStateOf(true) }
+    var showPrayerSetupDialog by remember { mutableStateOf(false) }
+    var lastMatchedSpeechTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(isScrollMode) {
         if (isScrollMode) {
@@ -148,6 +180,13 @@ fun MainAppScreen(
             }
             engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
             QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
+
+            // Set saved bookmark for continuity priority in DISCOVERY mode
+            val savedGIdx = MushafPageRepository.getGlobalVerseIndex(savedBookmark.second, savedBookmark.third)
+            if (savedGIdx > 0) {
+                QuranVocabularyFilter.setLastNonFatihahVerseIndex(savedGIdx)
+            }
+
             QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
             isDiscoveryMode = true
 
@@ -159,6 +198,48 @@ fun MainAppScreen(
             } else {
                 "⚠️ المحرك بوضع الحماية | الصفحات المحفوظة: $pageCount / 604"
             }
+        }
+    }
+
+    val executePrayerAction: (PrayerAction) -> Unit = { action ->
+        when (action) {
+            is PrayerAction.JumpToVerse -> {
+                currentPage = action.page
+                activeSurah = action.surah
+                activeAyah = action.ayah
+                activeWordProgress = 0f
+                val candidateLine = MushafPageRepository.findAyahLinesOnPage(action.page, action.surah, action.ayah, 0f).first?.lineNumber
+                activeLinePage = action.page
+                activeLineNumber = candidateLine ?: 1
+                if (action.resetTracking) {
+                    QuranVocabularyFilter.resetPointerToSurahAyah(action.surah, action.ayah)
+                    isDiscoveryMode = false
+                }
+                matchSimilarityText = "🎯 ${MushafPageRepository.getSurahName(action.surah)} — آية ${action.ayah}"
+                prayerBannerText = prayerManager.topBannerText
+            }
+            is PrayerAction.EnterDiscovery -> {
+                QuranVocabularyFilter.enterDiscoveryMode("Prayer plan auto discovery")
+                isDiscoveryMode = true
+                matchSimilarityText = "🔍 وضع الاكتشاف الشامل"
+                prayerBannerText = prayerManager.topBannerText
+            }
+            is PrayerAction.StopListening -> {
+                audioRecognizer?.stopListening()
+                isListening = false
+                prayerBannerText = prayerManager.topBannerText
+            }
+            is PrayerAction.NoAction -> {
+                prayerBannerText = prayerManager.topBannerText
+            }
+        }
+    }
+
+    LaunchedEffect(isListening, prayerManager.appMode) {
+        while (isListening && prayerManager.appMode == AppMode.PRAYER) {
+            delay(1000L)
+            val action = prayerManager.checkSilenceRuku(lastMatchedSpeechTimeMs, saveBookmark)
+            executePrayerAction(action)
         }
     }
 
@@ -178,12 +259,55 @@ fun MainAppScreen(
 
     val handlePartialResult: (String) -> Unit = { rawText ->
         if (rawText.isNotBlank()) {
+            // 1. Prayer Standby Wakeup Check
+            if (prayerManager.appMode == AppMode.PRAYER && prayerManager.currentPhase == PrayerPhase.FATIHAH_STANDBY) {
+                if (!prayerManager.checkStandbyWakeup(rawText)) {
+                    // Reciter in standby; highlight remains on 1:1, ignore non-Fatihah sounds
+                    prayerBannerText = prayerManager.topBannerText
+                    return@handlePartialResult
+                } else {
+                    // Woke up on Fatihah opening/verse!
+                    prayerBannerText = prayerManager.topBannerText
+                    QuranVocabularyFilter.resetPointerToSurahAyah(1, 1)
+                    currentPage = 1
+                    activeSurah = 1
+                    activeAyah = 1
+                    activeWordProgress = 0f
+                    activeLineNumber = 1
+                    activeLinePage = 1
+                    isDiscoveryMode = false
+                }
+            }
+
             val trackingResult = QuranVocabularyFilter.filterAndTrackFullMushaf(rawText)
+
+            // 2. Prayer Dhikr & Tasleem Isolation Hooks
+            if (prayerManager.appMode == AppMode.PRAYER) {
+                if (trackingResult.isTasleem) {
+                    val action = prayerManager.onTasleem(saveBookmark)
+                    executePrayerAction(action)
+                    return@handlePartialResult
+                }
+                if (trackingResult.isPrayerTransition) {
+                    val action = prayerManager.onTakbeerOrTasmee(saveBookmark)
+                    executePrayerAction(action)
+                    return@handlePartialResult
+                }
+            }
+
             val filteredText = trackingResult.filteredText
             isDiscoveryMode = (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.DISCOVERY)
 
             val mv = trackingResult.matchedVerse
             if (filteredText.isNotBlank() && mv != null) {
+                val nowMs = System.currentTimeMillis()
+                lastMatchedSpeechTimeMs = nowMs
+
+                if (prayerManager.appMode == AppMode.PRAYER) {
+                    prayerManager.onVerseTracked(mv.surah, mv.ayah, mv.page)
+                    prayerBannerText = prayerManager.topBannerText
+                }
+
                 val fullText = if (recognizedText.isEmpty()) filteredText else "$recognizedText $filteredText"
                 val textWords = fullText.split(" ")
                 recognizedText = if (textWords.size > 25) textWords.takeLast(25).joinToString(" ") else fullText
@@ -191,7 +315,6 @@ fun MainAppScreen(
 
                 graceEmptyFrames = 0
 
-                val nowMs = System.currentTimeMillis()
                 val isTrackingMode = (trackingResult.recitationMode == QuranVocabularyFilter.RecitationMode.TRACKING)
                 val newCharProgress = trackingResult.charProgress.coerceIn(0f, 1f)
 
@@ -376,7 +499,12 @@ fun MainAppScreen(
                 }
 
                     if (trackingResult.fatihahCompletedNow) {
-                        matchSimilarityText = "🔍 اكتملت الفاتحة — بانتظار اكتشاف السورة/الآية التالية..."
+                        if (prayerManager.appMode == AppMode.PRAYER) {
+                            val action = prayerManager.onFatihahCompleted(savedBookmark)
+                            executePrayerAction(action)
+                        } else {
+                            matchSimilarityText = "🔍 اكتملت الفاتحة — بانتظار اكتشاف السورة/الآية التالية..."
+                        }
                     } else if (trackingResult.discoveredNewLocation) {
                         matchSimilarityText = "🧭 تم اكتشاف: ${mv.surahName} — آية ${mv.ayah}"
                     } else {
@@ -386,6 +514,21 @@ fun MainAppScreen(
                 graceEmptyFrames++
                 if (graceEmptyFrames >= 7) {
                     graceEmptyFrames = 0
+                }
+
+                val isIntroductoryOrDhikr = rawText.contains("بسم") ||
+                    rawText.contains("رحمن") ||
+                    rawText.contains("رحيم") ||
+                    rawText.contains("اعوذ") ||
+                    rawText.contains("أعوذ") ||
+                    rawText.contains("شيطان") ||
+                    rawText.contains("امين") ||
+                    rawText.contains("آمين") ||
+                    rawText.contains("ءامين")
+
+                if (!isIntroductoryOrDhikr && prayerManager.appMode == AppMode.PRAYER && prayerManager.currentPhase == PrayerPhase.SURAH_RECITATION) {
+                    val action = prayerManager.recordMismatchInTarget()
+                    executePrayerAction(action)
                 }
             }
 
@@ -417,10 +560,6 @@ fun MainAppScreen(
     var showLogs by remember { mutableStateOf(false) }
     val logs by AppLogger.logs.collectAsState()
     var showJumpDialog by remember { mutableStateOf(false) }
-    val prefs = remember { context.getSharedPreferences("mushaf_prefs", Context.MODE_PRIVATE) }
-    var showSplashDialog by remember {
-        mutableStateOf(prefs.getBoolean("show_splash_dialog", true))
-    }
 
     if (showDiagnosticsPanel) {
         AlertDialog(
@@ -536,13 +675,38 @@ fun MainAppScreen(
                 QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)
                 isDiscoveryMode = false
                 showJumpDialog = false
+                saveBookmark(page, surah, ayah)
             }
         )
     }
 
     if (showSplashDialog) {
         SplashScreenDialog(
-            onDismiss = { showSplashDialog = false }
+            onOpenPrayerSetup = {
+                showSplashDialog = false
+                showPrayerSetupDialog = true
+            },
+            onStartFreeReading = {
+                showSplashDialog = false
+                prayerManager.exitPrayerMode()
+                prayerBannerText = null
+            }
+        )
+    }
+
+    if (showPrayerSetupDialog) {
+        PrayerSetupDialog(
+            savedBookmark = savedBookmark,
+            onDismiss = { showPrayerSetupDialog = false },
+            onStartPrayer = { config ->
+                showPrayerSetupDialog = false
+                val action = prayerManager.startPrayerSession(config, savedBookmark)
+                executePrayerAction(action)
+                if (!isListening && hasMicPermission) {
+                    val started = audioRecognizer?.startListening() == true
+                    isListening = started
+                }
+            }
         )
     }
 
@@ -562,7 +726,12 @@ fun MainAppScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        IconButton(onClick = { performCompleteExit(activity, audioRecognizer) }) {
+                        IconButton(onClick = {
+                            if (prayerManager.appMode == AppMode.FREE_READING) {
+                                saveBookmark(currentPage, activeSurah, activeAyah)
+                            }
+                            performCompleteExit(activity, audioRecognizer)
+                        }) {
                             Icon(Icons.Outlined.PowerSettingsNew, "خروج", tint = Color.White)
                         }
 
@@ -638,6 +807,49 @@ fun MainAppScreen(
                 }
             }
 
+            // Prayer Session Top Announcement Banner
+            if (prayerManager.appMode == AppMode.PRAYER && !prayerBannerText.isNullOrBlank()) {
+                Surface(
+                    color = Color(0xFFE8F5E9),
+                    border = BorderStroke(1.dp, Color(0xFF81C784)),
+                    shape = RoundedCornerShape(0.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = prayerBannerText ?: "",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF1B5E20),
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center
+                            )
+                            IconButton(
+                                onClick = {
+                                    prayerManager.exitPrayerMode()
+                                    prayerBannerText = null
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "إنهاء وضع الصلاة",
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Main Interactive Mushaf Page Viewer
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 MushafPageViewer(
@@ -691,7 +903,12 @@ fun MainAppScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            IconButton(onClick = { performCompleteExit(activity, audioRecognizer) }) {
+                            IconButton(onClick = {
+                                if (prayerManager.appMode == AppMode.FREE_READING) {
+                                    saveBookmark(currentPage, activeSurah, activeAyah)
+                                }
+                                performCompleteExit(activity, audioRecognizer)
+                            }) {
                                 Icon(Icons.Outlined.PowerSettingsNew, "خروج", tint = Color.White)
                             }
 
@@ -763,19 +980,11 @@ private fun performCompleteExit(activity: ComponentActivity?, audioRecognizer: A
 
 @Composable
 fun SplashScreenDialog(
-    onDismiss: () -> Unit
+    onOpenPrayerSetup: () -> Unit,
+    onStartFreeReading: () -> Unit
 ) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("mushaf_prefs", Context.MODE_PRIVATE) }
-    var doNotShowAgain by remember { mutableStateOf(false) }
-
     Dialog(
-        onDismissRequest = {
-            if (doNotShowAgain) {
-                prefs.edit().putBoolean("show_splash_dialog", false).commit()
-            }
-            onDismiss()
-        },
+        onDismissRequest = onStartFreeReading,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
@@ -822,7 +1031,7 @@ fun SplashScreenDialog(
                     Text(
                         text = "كيف تستخدم التطبيق؟\n" +
                                 "موضع الجهاز: ضع هاتفك أو جهازك اللوحي (التابلت) على حاملٍ في مستوى نظرك وقريباً من موضع صلاتك.\n" +
-                                "بدء القراءة: اختر السورة أو الصفحة التي تريد أن تبدأ منها، ثم اضغط زر الاستماع.\n" +
+                                "إعدادات الصلاة: اضبط عدد الركعات وخطة القراءة المسبقة، وسيتولى التطبيق إدارة الركعات والانتقال بين السور تلقائياً.\n" +
                                 "أثناء الصلاة: اقرأ بتمهلٍ واطمئنان؛ سيتولى التطبيق تحريك الآيات وصفحات المصحف تباعاً مع جريان صوتك.",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Normal,
@@ -844,54 +1053,45 @@ fun SplashScreenDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
 
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { doNotShowAgain = !doNotShowAgain }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Checkbox(
-                            checked = doNotShowAgain,
-                            onCheckedChange = { doNotShowAgain = it },
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = Color(0xFF1B5E20)
+                        Button(
+                            onClick = onOpenPrayerSetup,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1B5E20)
                             )
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "عدم إظهار هذه الشاشة في المستقبل",
-                            fontSize = 13.sp,
-                            color = Color(0xFF455A64)
-                        )
-                    }
+                        ) {
+                            Text(
+                                text = "🕌 إعدادات الصلاة",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = {
-                            if (doNotShowAgain) {
-                                prefs.edit().putBoolean("show_splash_dialog", false).commit()
-                            }
-                            onDismiss()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF1B5E20)
-                        )
-                    ) {
-                        Text(
-                            text = "بدء التشغيل",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                        OutlinedButton(
+                            onClick = onStartFreeReading,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.5.dp, Color(0xFF1B5E20))
+                        ) {
+                            Text(
+                                text = "📖 ابدأ التلاوة",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1B5E20)
+                            )
+                        }
                     }
                 }
             }

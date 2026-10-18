@@ -257,7 +257,7 @@ fun MainAppScreen(
         }
     }
 
-    val handlePartialResult: (String) -> Unit = { rawText ->
+    val handlePartialResult: (String) -> Unit = handlePartialResult@{ rawText ->
         if (rawText.isNotBlank()) {
             // 1. Prayer Standby Wakeup Check
             if (prayerManager.appMode == AppMode.PRAYER && prayerManager.currentPhase == PrayerPhase.FATIHAH_STANDBY) {

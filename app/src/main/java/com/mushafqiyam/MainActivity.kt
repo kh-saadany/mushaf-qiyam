@@ -201,6 +201,20 @@ fun MainAppScreen(
         }
     }
 
+    var matchSimilarityText by remember {
+        mutableStateOf("🔍 وضع الاكتشاف الشامل")
+    }
+    var graceEmptyFrames by remember { mutableIntStateOf(0) }
+
+    // Page-Turn FSM and Anti-Jitter Hysteresis State
+    var pendingTargetPage by remember { mutableIntStateOf(-1) }
+    var pendingPageConfirmCount by remember { mutableIntStateOf(0) }
+    var lastPageTurnTimeMs by remember { mutableLongStateOf(0L) }
+    var earlyTurnTriggeredForPage by remember { mutableIntStateOf(-1) }
+
+    var activeLineNumber by remember { mutableIntStateOf(1) }
+    var activeLinePage by remember { mutableIntStateOf(1) }
+
     val executePrayerAction: (PrayerAction) -> Unit = { action ->
         when (action) {
             is PrayerAction.JumpToVerse -> {
@@ -242,20 +256,6 @@ fun MainAppScreen(
             executePrayerAction(action)
         }
     }
-
-    var matchSimilarityText by remember {
-        mutableStateOf("🔍 وضع الاكتشاف الشامل")
-    }
-    var graceEmptyFrames by remember { mutableIntStateOf(0) }
-
-    // Page-Turn FSM and Anti-Jitter Hysteresis State
-    var pendingTargetPage by remember { mutableIntStateOf(-1) }
-    var pendingPageConfirmCount by remember { mutableIntStateOf(0) }
-    var lastPageTurnTimeMs by remember { mutableLongStateOf(0L) }
-    var earlyTurnTriggeredForPage by remember { mutableIntStateOf(-1) }
-
-    var activeLineNumber by remember { mutableIntStateOf(1) }
-    var activeLinePage by remember { mutableIntStateOf(1) }
 
     val handlePartialResult: (String) -> Unit = { rawText ->
         if (rawText.isNotBlank()) {

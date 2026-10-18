@@ -248,7 +248,6 @@ fun PrayerSetupDialog(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RakahPlanCard(
     rakahIndex: Int,
@@ -262,11 +261,12 @@ private fun RakahPlanCard(
     savedBookmark: Triple<Int, Int, Int>?,
     allSurahs: List<MushafPageRepository.SurahInfo>
 ) {
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F8E9)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        color = Color(0xFFF1F8E9),
+        tonalElevation = 1.dp,
+        shadowElevation = 1.dp
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
@@ -337,17 +337,18 @@ private fun RakahPlanCard(
                     val currentSurahInfo = allSurahs.firstOrNull { it.number == surahNumber } ?: allSurahs.firstOrNull()
 
                     Box(modifier = Modifier.weight(1.5f)) {
-                        OutlinedCard(
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(46.dp)
-                                .clickable { surahExpanded = true },
-                            shape = RoundedCornerShape(8.dp)
+                                .border(1.dp, Color(0xFFBDBDBD), RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { surahExpanded = true }
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
                         ) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 10.dp),
+                                modifier = Modifier.fillMaxSize(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -363,7 +364,9 @@ private fun RakahPlanCard(
                         DropdownMenu(
                             expanded = surahExpanded,
                             onDismissRequest = { surahExpanded = false },
-                            modifier = Modifier.heightIn(max = 250.dp)
+                            modifier = Modifier
+                                .heightIn(max = 260.dp)
+                                .verticalScroll(rememberScrollState())
                         ) {
                             allSurahs.forEach { sInfo ->
                                 DropdownMenuItem(

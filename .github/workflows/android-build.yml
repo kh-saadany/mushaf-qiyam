@@ -56,8 +56,8 @@ jobs:
             print('Missing token or sha')
             exit(0)
         with open('compilation_log.txt', 'r', errors='ignore') as f:
-            lines = [l for l in f if any(k in l.lower() for k in ['e: ', 'error:', 'failed', 'unresolved', 'cannot find', 'exception', 'caused by'])]
-        body = '### Compilation Errors for commit ' + sha[:7] + ':\n```text\n' + ''.join(lines[:60]) + '\n```'
+            text = f.read()
+        body = f'### Build Log Tail for commit {sha[:7]} (length {len(text)}):\n```text\n{text[-3000:]}\n```'
         url = f'https://api.github.com/repos/{repo}/commits/{sha}/comments'
         req = urllib.request.Request(url, data=json.dumps({'body': body}).encode(), headers={'Authorization': 'Bearer ' + token, 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/json'})
         try:

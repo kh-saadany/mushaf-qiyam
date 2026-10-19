@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.2.0"
+        const val APP_VERSION = "0.7.2.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -144,6 +144,7 @@ fun MainAppScreen(
     var showSplashDialog by remember { mutableStateOf(true) }
     var showPrayerSetupDialog by remember { mutableStateOf(false) }
     var lastMatchedSpeechTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var lastActiveRecitationStreamTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(isScrollMode) {
         if (isScrollMode) {
@@ -201,6 +202,10 @@ fun MainAppScreen(
         }
     }
 
+    LaunchedEffect(currentPage) {
+        QuranVocabularyFilter.currentDisplayedPage = currentPage
+    }
+
     var matchSimilarityText by remember {
         mutableStateOf("🔍 وضع الاكتشاف الشامل")
     }
@@ -252,7 +257,11 @@ fun MainAppScreen(
     LaunchedEffect(isListening, prayerManager.appMode) {
         while (isListening && prayerManager.appMode == AppMode.PRAYER) {
             delay(1000L)
-            val action = prayerManager.checkSilenceRuku(lastMatchedSpeechTimeMs, saveBookmark)
+            val action = prayerManager.checkSilenceRuku(
+                lastMatchedSpeechTimeMs = lastMatchedSpeechTimeMs,
+                lastActiveRecitationStreamTimeMs = lastActiveRecitationStreamTimeMs,
+                onSaveBookmark = saveBookmark
+            )
             executePrayerAction(action)
         }
     }
@@ -280,6 +289,12 @@ fun MainAppScreen(
             }
 
             val trackingResult = QuranVocabularyFilter.filterAndTrackFullMushaf(rawText)
+
+            val cleanStream = rawText.replace(" ", "")
+            val isNotDhikrOrTakbeer = !trackingResult.isPrayerTransition && !trackingResult.isTasleem
+            if (cleanStream.length >= 4 && isNotDhikrOrTakbeer) {
+                lastActiveRecitationStreamTimeMs = System.currentTimeMillis()
+            }
 
             // 2. Prayer Dhikr & Tasleem Isolation Hooks
             if (prayerManager.appMode == AppMode.PRAYER) {
@@ -499,6 +514,8 @@ fun MainAppScreen(
                 }
 
                     if (trackingResult.fatihahCompletedNow) {
+                        QuranVocabularyFilter.onFatihahCompleted()
+                        audioRecognizer?.resetStream()
                         if (prayerManager.appMode == AppMode.PRAYER) {
                             val action = prayerManager.onFatihahCompleted(savedBookmark)
                             executePrayerAction(action)

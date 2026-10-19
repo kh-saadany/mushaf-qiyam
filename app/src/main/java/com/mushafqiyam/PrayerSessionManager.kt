@@ -76,6 +76,8 @@ class PrayerSessionManager {
 
     // For 4 consecutive mismatches fallback
     private var consecutiveQuranMismatchesInTarget: Int = 0
+    var isInFallbackDiscovery = false
+        private set
 
     // Top banner announcement text
     var topBannerText: String? = null
@@ -89,6 +91,7 @@ class PrayerSessionManager {
         currentPhase = PrayerPhase.FATIHAH
         rakahVersesReadCount = 0
         consecutiveQuranMismatchesInTarget = 0
+        isInFallbackDiscovery = false
 
         if (savedBookmark != null) {
             lastReadPage = savedBookmark.first
@@ -105,6 +108,7 @@ class PrayerSessionManager {
         appMode = AppMode.FREE_READING
         currentPhase = PrayerPhase.FATIHAH
         topBannerText = null
+        isInFallbackDiscovery = false
         AppLogger.i(TAG, "Exited Prayer Session back to FREE_READING mode.")
     }
 
@@ -124,6 +128,7 @@ class PrayerSessionManager {
                 lastReadAyah = ayah
                 lastReadPage = page
                 consecutiveQuranMismatchesInTarget = 0
+                isInFallbackDiscovery = false
                 updateBanner()
             }
         }
@@ -136,6 +141,7 @@ class PrayerSessionManager {
         currentPhase = PrayerPhase.SURAH_RECITATION
         rakahVersesReadCount = 0
         consecutiveQuranMismatchesInTarget = 0
+        isInFallbackDiscovery = false
 
         val currentPlan = plans.getOrNull(currentRakah - 1) ?: RakahPlan(RakahPlanType.CONTINUE_PREVIOUS)
         AppLogger.i(TAG, "Al-Fatihah completed for Rak'ah $currentRakah. Executing plan: ${currentPlan.planType}")
@@ -216,10 +222,12 @@ class PrayerSessionManager {
      */
     fun recordMismatchInTarget(): PrayerAction {
         if (appMode != AppMode.PRAYER || currentPhase != PrayerPhase.SURAH_RECITATION) return PrayerAction.NoAction
+        if (isInFallbackDiscovery) return PrayerAction.NoAction
 
         consecutiveQuranMismatchesInTarget++
         if (consecutiveQuranMismatchesInTarget >= 4) {
             consecutiveQuranMismatchesInTarget = 0
+            isInFallbackDiscovery = true
             AppLogger.w(TAG, "4 consecutive mismatches in planned target. Falling back to general DISCOVERY.")
             updateBanner()
             return PrayerAction.EnterDiscovery
@@ -241,15 +249,20 @@ class PrayerSessionManager {
     }
 
     /**
-     * Checks if 14 seconds have elapsed since last matched recitation while in SURAH_RECITATION.
+     * Checks if 14 seconds have elapsed since last matched recitation or active recitation stream while in SURAH_RECITATION.
      */
-    fun checkSilenceRuku(lastMatchedSpeechTimeMs: Long, onSaveBookmark: (page: Int, surah: Int, ayah: Int) -> Unit): PrayerAction {
+    fun checkSilenceRuku(
+        lastMatchedSpeechTimeMs: Long,
+        lastActiveRecitationStreamTimeMs: Long = 0L,
+        onSaveBookmark: (page: Int, surah: Int, ayah: Int) -> Unit
+    ): PrayerAction {
         if (appMode != AppMode.PRAYER || currentPhase != PrayerPhase.SURAH_RECITATION) return PrayerAction.NoAction
         if (rakahVersesReadCount < 1) return PrayerAction.NoAction
 
         val now = System.currentTimeMillis()
-        if (lastMatchedSpeechTimeMs > 0L && (now - lastMatchedSpeechTimeMs) >= RUKU_SILENCE_THRESHOLD_MS) {
-            AppLogger.i(TAG, "14s silence detected in SURAH_RECITATION. Triggering Ruku transition.")
+        val effectiveLastSpeechMs = maxOf(lastMatchedSpeechTimeMs, lastActiveRecitationStreamTimeMs)
+        if (effectiveLastSpeechMs > 0L && (now - effectiveLastSpeechMs) >= RUKU_SILENCE_THRESHOLD_MS) {
+            AppLogger.i(TAG, "14s silence detected in SURAH_RECITATION (matchedSpeech=${now - lastMatchedSpeechTimeMs}ms, recitationStream=${now - lastActiveRecitationStreamTimeMs}ms). Triggering Ruku transition.")
             return triggerRukuTransition(onSaveBookmark)
         }
         return PrayerAction.NoAction
@@ -258,6 +271,7 @@ class PrayerSessionManager {
     private fun triggerRukuTransition(onSaveBookmark: (page: Int, surah: Int, ayah: Int) -> Unit): PrayerAction {
         // Requirement: Save reading end position at the end of each Rak'ah
         onSaveBookmark(lastReadPage, lastReadSurah, lastReadAyah)
+        isInFallbackDiscovery = false
         AppLogger.i(TAG, "Saved Rak'ah $currentRakah bookmark at [Surah $lastReadSurah: Ayah $lastReadAyah, Page $lastReadPage]")
 
         if (currentRakah < totalRakahs) {

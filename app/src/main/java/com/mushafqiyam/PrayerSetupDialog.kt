@@ -4,11 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -332,52 +335,43 @@ private fun RakahPlanCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Surah Picker Dropdown
-                    var surahExpanded by remember { mutableStateOf(false) }
+                    // Surah Picker Trigger Box
+                    var showSurahPicker by remember { mutableStateOf(false) }
                     val currentSurahInfo = allSurahs.firstOrNull { it.number == surahNumber } ?: allSurahs.firstOrNull()
 
-                    Box(modifier = Modifier.weight(1.5f)) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .border(1.dp, Color(0xFFBDBDBD), RoundedCornerShape(8.dp))
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { surahExpanded = true }
-                                .padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.CenterStart
+                    Box(
+                        modifier = Modifier
+                            .weight(1.5f)
+                            .height(46.dp)
+                            .border(1.dp, Color(0xFFBDBDBD), RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showSurahPicker = true }
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = currentSurahInfo?.name ?: "سورة $surahNumber",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                            }
+                            Text(
+                                text = currentSurahInfo?.name ?: "سورة $surahNumber",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                         }
+                    }
 
-                        DropdownMenu(
-                            expanded = surahExpanded,
-                            onDismissRequest = { surahExpanded = false },
-                            modifier = Modifier
-                                .heightIn(max = 260.dp)
-                                .verticalScroll(rememberScrollState())
-                        ) {
-                            allSurahs.forEach { sInfo ->
-                                DropdownMenuItem(
-                                    text = { Text("${sInfo.number}. ${sInfo.name}", fontSize = 13.sp) },
-                                    onClick = {
-                                        onSurahChange(sInfo.number)
-                                        surahExpanded = false
-                                    }
-                                )
+                    if (showSurahPicker) {
+                        SurahSelectionDialog(
+                            allSurahs = allSurahs,
+                            onDismiss = { showSurahPicker = false },
+                            onSelectSurah = { sNum ->
+                                onSurahChange(sNum)
+                                showSurahPicker = false
                             }
-                        }
+                        )
                     }
 
                     // Ayah Number Stepper
@@ -444,5 +438,114 @@ private fun PlanOptionRow(
             color = if (selected) Color(0xFF1B5E20) else Color(0xFF37474F),
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
         )
+    }
+}
+
+@Composable
+private fun SurahSelectionDialog(
+    allSurahs: List<MushafPageRepository.SurahInfo>,
+    onDismiss: () -> Unit,
+    onSelectSurah: (Int) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredSurahs = remember(searchQuery, allSurahs) {
+        if (searchQuery.isBlank()) {
+            allSurahs
+        } else {
+            val cleanQ = FuzzyMatcher.normalizeArabic(searchQuery)
+            allSurahs.filter { s ->
+                FuzzyMatcher.normalizeArabic(s.name).contains(cleanQ) ||
+                    s.number.toString() == searchQuery.trim()
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.90f)
+                .height(480.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFFFCFDF9),
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp
+        ) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "📖 اختر السورة",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1B5E20)
+                        )
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = Color.Gray)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("ابحث باسم السورة أو رقمها...", fontSize = 13.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(filteredSurahs, key = { it.number }) { surah ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onSelectSurah(surah.number) },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F8E9))
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${surah.number}. ${surah.name}",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF1B5E20)
+                                    )
+                                    Text(
+                                        text = "${surah.verseCount} آية (ص ${surah.startPage})",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF558B2F)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

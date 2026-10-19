@@ -138,6 +138,9 @@ object QuranVocabularyFilter {
     var lastNonFatihahVerseIndex: Int = -1
         private set
 
+    @Volatile
+    var currentDisplayedPage: Int = 1
+
     private var lastFatihahCompletedTimeMs: Long = 0L
     private var lastMatchedSpeechTimeMs: Long = System.currentTimeMillis()
 
@@ -403,8 +406,23 @@ object QuranVocabularyFilter {
         lastDiscoveryStreamLength = 0
         if (reason.contains("Fatihah") || reason.contains("Ameen")) {
             lastFatihahCompletedTimeMs = System.currentTimeMillis()
+            discoveryRollingChars.setLength(0)
+            discoveryRollingWords.clear()
+            lastDiscoveryStreamLength = 0
         }
         AppLogger.i(TAG, "Entered DISCOVERY mode ($reason). Last non-Fatihah verse index: $lastNonFatihahVerseIndex")
+    }
+
+    /**
+     * Explicitly clears discovery rolling buffers and sets Fatihah completion cooldown timestamp.
+     */
+    @Synchronized
+    fun onFatihahCompleted() {
+        lastFatihahCompletedTimeMs = System.currentTimeMillis()
+        discoveryRollingChars.setLength(0)
+        discoveryRollingWords.clear()
+        lastDiscoveryStreamLength = 0
+        AppLogger.i(TAG, "Explicitly cleared discovery buffers after Al-Fatihah completion")
     }
 
     /**
@@ -542,14 +560,15 @@ object QuranVocabularyFilter {
 
         // 3. While in TRACKING mode on a non-Fatihah Surah, check if reciter stood up for a new Rakah and started Al-Fatihah
         if (currentVerseObj != null && currentVerseObj.surah != 1) {
-            val isFatihahJump = ((canonicalStream.contains("الحمدلله") || canonicalStream.contains("الحمد")) &&
+            val isFatihahCooldown = (System.currentTimeMillis() - lastFatihahCompletedTimeMs < 8000L)
+            val isFatihahJump = !isFatihahCooldown && (((canonicalStream.contains("الحمدلله") || canonicalStream.contains("الحمد")) &&
                     (canonicalStream.contains("رب") || canonicalStream.contains("عالمين") || canonicalStream.contains("رحمن"))) ||
                 canonicalStream.contains("اياكنعبد") ||
                 canonicalStream.contains("اهدنالصراط") ||
                 canonicalStream.contains("اهدينصراط") ||
-                canonicalStream.contains("صراطلذين")
+                canonicalStream.contains("صراطلذين"))
             if (isFatihahJump) {
-                val fatihahTarget = if (canonicalStream.contains("اهد") || canonicalStream.contains("صراط")) 5 else 1
+                val fatihahTarget = if (canonicalStream.contains("صراطلذين")) 6 else if (canonicalStream.contains("اهد")) 5 else 1
                 val fv = MushafPageRepository.getVerseByGlobalIndex(fatihahTarget)
                 if (fv != null) {
                     resetPointerToVerse(fatihahTarget)
@@ -844,10 +863,11 @@ object QuranVocabularyFilter {
             return TrackingResult("", null, null, 0, 0.0, recitationMode)
         }
 
-        // Window spans from utteranceAnchorVerseIndex up to confirmedVerseIndex + 2
-        // Effective start looks back up to 7 verses to prevent erosion during short-verse recitations
-        val vStart = maxOf(0, minOf(utteranceAnchorVerseIndex, confirmedVerseIndex))
-        val effectiveStart = maxOf(vStart, confirmedVerseIndex - 7)
+        // Window spans from effectiveStart up to confirmedVerseIndex + 2
+        // Effective start looks back up to 7 verses, and always allows looking back at least 1 verse (confirmedVerseIndex - 1)
+        // even while anchor is locked, to catch repeated verses
+        val vStart = maxOf(0, minOf(utteranceAnchorVerseIndex, confirmedVerseIndex - 1))
+        val effectiveStart = maxOf(0, maxOf(vStart, confirmedVerseIndex - 7))
         val vEnd = minOf(verseCanonicalChars.size - 1, confirmedVerseIndex + 2)
 
         val windowVerseIndices = ArrayList<Int>(vEnd - effectiveStart + 1)
@@ -1018,6 +1038,10 @@ object QuranVocabularyFilter {
 
         if (mv != null && mv.surah == 1 && mv.ayah == 7 && (offsetInVerse >= totalVerseChars - 4 || wordInAyah >= totalWords - 1)) {
             enterDiscoveryMode("Completed Al-Fatihah 1:7 (ولا الضالين)")
+            discoveryRollingChars.setLength(0)
+            discoveryRollingWords.clear()
+            lastDiscoveryStreamLength = 0
+            lastFatihahCompletedTimeMs = System.currentTimeMillis()
             return TrackingResult(
                 filteredText = mv.cleanText,
                 matchedVerseIndex = targetVerseIdx,
@@ -1081,13 +1105,14 @@ object QuranVocabularyFilter {
         if (rolling.length < 8) return null
 
         // Check if reciter started Al-Fatihah (require رب or عالمين or رحمن to avoid hijacking Al-Kahf and other surahs)
-        val isFatihahStream = ((rolling.contains("الحمد") || rolling.contains("لله")) &&
+        val isFatihahCooldown = (now - lastFatihahCompletedTimeMs < 8000L)
+        val isFatihahStream = !isFatihahCooldown && (((rolling.contains("الحمد") || rolling.contains("لله")) &&
                 (rolling.contains("رب") || rolling.contains("عالمين") || rolling.contains("رحمن"))) ||
             rolling.contains("اهدنالصراط") ||
             rolling.contains("اهدينصراط") || rolling.contains("اياكنعبد") ||
-            rolling.contains("صراطلذين")
+            rolling.contains("صراطلذين"))
         if (isFatihahStream) {
-            val fatihahTarget = if (rolling.contains("اهد") || rolling.contains("صراط")) 5 else 1
+            val fatihahTarget = if (rolling.contains("صراطلذين")) 6 else if (rolling.contains("اهد")) 5 else 1
             val fv = MushafPageRepository.getVerseByGlobalIndex(fatihahTarget)
             if (fv != null) {
                 resetPointerToVerse(fatihahTarget)
@@ -1180,7 +1205,10 @@ object QuranVocabularyFilter {
 
         if (candidateHits.isEmpty()) return null
 
-        // Require at least two 4-gram hits or a high density ratio, with prefix-start bonus
+        val basePage = if (currentDisplayedPage in 1..604) currentDisplayedPage else (MushafPageRepository.getVerseByGlobalIndex(confirmedVerseIndex)?.page ?: 1)
+        val currentSurah = MushafPageRepository.getVerseByGlobalIndex(confirmedVerseIndex)?.surah ?: -1
+
+        // Require at least two 4-gram hits or a high density ratio, with prefix-start bonus and Locality Bias
         val prefix4 = cleanRolling.take(4)
         val topCandidates = candidateHits.entries
             .filter { it.value >= 2 || cleanRolling.length <= 9 }
@@ -1188,7 +1216,17 @@ object QuranVocabularyFilter {
                 val canon = if (e.key in verseCanonicalChars.indices) verseCanonicalChars[e.key] else ""
                 val vLen = canon.length.coerceAtLeast(10)
                 val startsWithBonus = if (canon.startsWith(prefix4)) 2.5 else 0.0
-                (e.value.toDouble() + startsWithBonus) / vLen.toDouble()
+                val candVerse = MushafPageRepository.getVerseByGlobalIndex(e.key)
+                val pageDist = if (candVerse != null) kotlin.math.abs(candVerse.page - basePage) else 999
+                val isSameSurah = (candVerse != null && currentSurah > 0 && candVerse.surah == currentSurah)
+                val localityBonus = when {
+                    pageDist == 0 -> 4.0
+                    pageDist <= 1 -> 2.5
+                    pageDist <= 2 -> 1.5
+                    isSameSurah -> 2.0
+                    else -> 0.0
+                }
+                (e.value.toDouble() + startsWithBonus + localityBonus) / vLen.toDouble()
             }
             .take(15)
 
@@ -1200,7 +1238,8 @@ object QuranVocabularyFilter {
             val score: Int,
             val ratio: Double,
             val density: Double,
-            val endJ: Int
+            val endJ: Int,
+            val effectiveScore: Double
         )
 
         val scoredCandidates = ArrayList<ScoredCandidate>(15)
@@ -1250,20 +1289,32 @@ object QuranVocabularyFilter {
             val denom = minOf(phonRolling.length, refToMatch.length).coerceAtLeast(8)
             val ratio = if (denom > 0) score.toDouble() / denom.toDouble() else 0.0
 
+            val candVerse = MushafPageRepository.getVerseByGlobalIndex(vIdx)
+            val pageDist = if (candVerse != null) kotlin.math.abs(candVerse.page - basePage) else 999
+            val isSameSurah = (candVerse != null && currentSurah > 0 && candVerse.surah == currentSurah)
+            val localityMultiplier = when {
+                pageDist == 0 -> 1.30 // +30% on current displayed page
+                pageDist <= 1 -> 1.20 // +20% on adjacent page
+                pageDist <= 2 -> 1.10 // +10% within 2 pages
+                isSameSurah -> 1.15   // +15% within same Surah
+                else -> 1.00
+            }
+            val effectiveScore = score.toDouble() * ratio * alignResult.density * localityMultiplier
+
             if (score >= 8 && alignResult.density >= 0.65 && ratio >= 0.65) {
-                scoredCandidates.add(ScoredCandidate(vIdx, score, ratio, alignResult.density, alignResult.endJ))
+                scoredCandidates.add(ScoredCandidate(vIdx, score, ratio, alignResult.density, alignResult.endJ, effectiveScore))
             }
         }
 
         if (scoredCandidates.isEmpty()) return null
 
-        scoredCandidates.sortWith(compareByDescending<ScoredCandidate> { it.score }.thenByDescending { it.ratio })
+        scoredCandidates.sortWith(compareByDescending<ScoredCandidate> { it.effectiveScore }.thenByDescending { it.score })
         val best = scoredCandidates[0]
         val secondBest = scoredCandidates.getOrNull(1)
 
         // Generic Ambiguity Gate: If top two candidates are closely contested (score difference < 2)
         // on a short prefix (< 15 chars), defer lock-on until distinguishing characters arrive!
-        if (secondBest != null && (best.score - secondBest.score) < 2 && secondBest.ratio >= 0.65 && cleanRolling.length < 15) {
+        if (secondBest != null && kotlin.math.abs(best.score - secondBest.score) < 2 && secondBest.ratio >= 0.65 && cleanRolling.length < 15) {
             AppLogger.i(TAG, "Ambiguity Gate: Candidate [${best.vIdx}] (score=${best.score}) is closely contested by [${secondBest.vIdx}] (score=${secondBest.score}) on short stream ($cleanRolling). Deferring lock-on...")
             return null
         }
@@ -1649,6 +1700,7 @@ object QuranVocabularyFilter {
      * while the app was previously tracking another Surah.
      */
     private fun detectAlFatihahStart(rawWords: List<String>): TrackingResult? {
+        if (System.currentTimeMillis() - lastFatihahCompletedTimeMs < 8000L) return null
         if (verseFirstWordIndex.size < 7) return null
         val fatihahStartWord = verseFirstWordIndex[1] // start of 1:2 (الحمد لله رب العالمين)
         val fatihahEndWord = verseFirstWordIndex[5] - 1 // end of 1:5 (إياك نعبد وإياك نستعين)
@@ -1801,7 +1853,7 @@ object QuranVocabularyFilter {
         )
 
         val allHits = ArrayList<GlobalHit>(256)
-        val inPostFatihahCooldown = (now - lastFatihahCompletedTimeMs) < 4500L
+        val inPostFatihahCooldown = (now - lastFatihahCompletedTimeMs) < 8000L
 
         for ((rIdx, rw) in discoveryRollingWords.withIndex()) {
             if (rw.normWord.length <= 2 && SHORT_PARTICLES.contains(rw.normWord)) continue
@@ -1846,7 +1898,7 @@ object QuranVocabularyFilter {
                     else -> 0.85
                 }
                 for (gPos in positions) {
-                    if (inPostFatihahCooldown && allWords[gPos].verseIndex == 6) continue
+                    if (inPostFatihahCooldown && allWords[gPos].verseIndex <= 6) continue
                     val exactSim = FuzzyMatcher.wordSimilarity(rw.normWord, allWords[gPos].normalizedText)
                     val finalSim = maxOf(baseSim, exactSim)
                     if (finalSim >= 0.76) {

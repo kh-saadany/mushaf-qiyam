@@ -51,6 +51,8 @@ class AudioRecognizer(private val context: Context) {
     @Volatile
     private var lastSpeechTimestampMs = System.currentTimeMillis()
     private var lastAudioLevelPostMs = 0L
+    @Volatile
+    private var lastEmittedProjected: String = ""
 
     // Callbacks for UI updates
     var onAudioLevel: ((Float) -> Unit)? = null
@@ -301,7 +303,7 @@ class AudioRecognizer(private val context: Context) {
             // 1. Dedicated Inference Consumer Worker Thread
             inferenceThread = thread(start = true, name = "ZipformerInferenceThread") {
                 AppLogger.i(TAG, "Zipformer2-CTC Inference Consumer thread started")
-                var lastEmittedProjected = ""
+                lastEmittedProjected = ""
                 var inferenceCounter = 0
 
                 while (isRecording.get()) {
@@ -406,6 +408,22 @@ class AudioRecognizer(private val context: Context) {
             AppLogger.e(TAG, "Error starting audio recording", t)
             mainHandler.post { onError?.invoke("خطأ: ${t.localizedMessage}") }
             false
+        }
+    }
+
+    fun resetStream() {
+        val rec = recognizer
+        val stream = currentStream
+        if (rec != null && stream != null) {
+            synchronized(streamLock) {
+                try {
+                    rec.reset(stream)
+                    lastEmittedProjected = ""
+                    AppLogger.i(TAG, "Audio stream explicitly reset")
+                } catch (t: Throwable) {
+                    AppLogger.w(TAG, "Error resetting audio stream: ${t.message}")
+                }
+            }
         }
     }
 

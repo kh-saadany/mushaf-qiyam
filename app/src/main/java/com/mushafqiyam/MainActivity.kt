@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.2.1"
+        const val APP_VERSION = "0.7.2.2"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -291,8 +291,14 @@ fun MainAppScreen(
             val trackingResult = QuranVocabularyFilter.filterAndTrackFullMushaf(rawText)
 
             val cleanStream = rawText.replace(" ", "")
-            val isNotDhikrOrTakbeer = !trackingResult.isPrayerTransition && !trackingResult.isTasleem
-            if (cleanStream.length >= 4 && isNotDhikrOrTakbeer) {
+            val isDhikrPrefixOrTransition = trackingResult.isPrayerTransition || trackingResult.isTasleem ||
+                cleanStream.startsWith("الله") || cleanStream.startsWith("لله") ||
+                cleanStream.startsWith("سمع") || cleanStream.startsWith("سبحان") ||
+                cleanStream.startsWith("ربنا") || cleanStream.startsWith("ربنو") ||
+                cleanStream.startsWith("سليكم") || cleanStream.startsWith("سلام") ||
+                cleanStream.contains("اللهاكبر") || cleanStream.contains("اللهكبر") ||
+                cleanStream.contains("سمعلله") || cleanStream.contains("سمعالله")
+            if (cleanStream.length >= 4 && !isDhikrPrefixOrTransition) {
                 lastActiveRecitationStreamTimeMs = System.currentTimeMillis()
             }
 
@@ -541,9 +547,22 @@ fun MainAppScreen(
                     rawText.contains("شيطان") ||
                     rawText.contains("امين") ||
                     rawText.contains("آمين") ||
-                    rawText.contains("ءامين")
+                    rawText.contains("ءامين") ||
+                    cleanStream.length < 4 ||
+                    cleanStream.startsWith("الله") ||
+                    cleanStream.startsWith("لله") ||
+                    cleanStream.startsWith("سمع") ||
+                    cleanStream.startsWith("سبحان") ||
+                    cleanStream.startsWith("ربنا") ||
+                    cleanStream.startsWith("سليكم") ||
+                    cleanStream.startsWith("سلام") ||
+                    cleanStream.contains("اللهاكبر") ||
+                    cleanStream.contains("اللهكبر") ||
+                    cleanStream.contains("سمعلله") ||
+                    cleanStream.contains("سمعالله")
 
-                if (!isIntroductoryOrDhikr && prayerManager.appMode == AppMode.PRAYER && prayerManager.currentPhase == PrayerPhase.SURAH_RECITATION) {
+                if (!isIntroductoryOrDhikr && !trackingResult.isPrayerTransition && !trackingResult.isTasleem &&
+                    prayerManager.appMode == AppMode.PRAYER && prayerManager.currentPhase == PrayerPhase.SURAH_RECITATION) {
                     val action = prayerManager.recordMismatchInTarget()
                     executePrayerAction(action)
                 }

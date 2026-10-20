@@ -218,17 +218,20 @@ class PrayerSessionManager {
     }
 
     /**
-     * Fallback to general DISCOVERY if 4 consecutive mismatches of valid Quran words occur in target surah.
+     * Fallback to general DISCOVERY if 4 consecutive mismatches of valid Quran words occur in target surah before reading any verse.
      */
     fun recordMismatchInTarget(): PrayerAction {
         if (appMode != AppMode.PRAYER || currentPhase != PrayerPhase.SURAH_RECITATION) return PrayerAction.NoAction
         if (isInFallbackDiscovery) return PrayerAction.NoAction
+        // If the reciter has already read at least 1 verse in the target Surah, do NOT fall back to discovery;
+        // mismatches at this point are end-of-Surah silence, transition, or Takbeer!
+        if (rakahVersesReadCount >= 1) return PrayerAction.NoAction
 
         consecutiveQuranMismatchesInTarget++
         if (consecutiveQuranMismatchesInTarget >= 4) {
             consecutiveQuranMismatchesInTarget = 0
             isInFallbackDiscovery = true
-            AppLogger.w(TAG, "4 consecutive mismatches in planned target. Falling back to general DISCOVERY.")
+            AppLogger.w(TAG, "4 consecutive mismatches in planned target before reading any verse. Falling back to general DISCOVERY.")
             updateBanner()
             return PrayerAction.EnterDiscovery
         }

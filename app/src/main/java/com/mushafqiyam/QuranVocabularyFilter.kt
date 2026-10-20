@@ -543,6 +543,90 @@ object QuranVocabularyFilter {
             }
         }
 
+        // 1.5. Prayer Dhikr & Tasleem Isolation Gate:
+        // Exclude explicit non-Quranic prayer transitions, tasmee', takbeer, tasbeeh, and tasleem
+        // Evaluated BEFORE DISCOVERY mode so Takbeer/Tasmee'/Tasleem are always captured regardless of mode!
+        val streamTail20 = if (canonicalStream.length > 20) canonicalStream.substring(canonicalStream.length - 20) else canonicalStream
+
+        // 1. Tasleem: strictly requires pairing of Salam with Rahmah (e.g. سلام عليكم ورحمة الله / السلام عليك ورحمة الله)
+        // because "سلام عليكم" alone is genuine Quran (e.g. 13:24, 6:54), but "ورحمة الله" paired with it is NOT in the Quran.
+        val isExplicitTasleem = (canonicalStream.contains("سليكمورحم") ||
+                ((canonicalStream.contains("سلامعلي") || canonicalStream.contains("لسلامعلي") || canonicalStream.contains("سلامعليك") || canonicalStream.contains("لسلامعليك")) &&
+                 (canonicalStream.contains("رحمت") || canonicalStream.contains("رحمه")))) ||
+                (streamTail20.contains("سليكمورحم") ||
+                ((streamTail20.contains("سلامعلي") || streamTail20.contains("لسلامعلي") || streamTail20.contains("سلامعليك") || streamTail20.contains("لسلامعليك")) &&
+                 (streamTail20.contains("رحمت") || streamTail20.contains("رحمه"))))
+
+        // 2. Tasmee' & Tahmeed: "سمع الله لمن حمده" / "ربنا ولك الحمد"
+        // strictly requires the non-Quranic compound containing "لمن حمده" or "ولك الحمد"
+        // Never isolate "سمع الله" alone because it is genuine Quran (Al-Mujadila 58:1, Al-Imran 3:181).
+        val hasTasmee = (canonicalStream.contains("سمعالله") || canonicalStream.contains("سمعلله") || canonicalStream.contains("تسمع") ||
+                streamTail20.contains("سمعالله") || streamTail20.contains("سمعلله") || streamTail20.contains("تسمع")) &&
+                (canonicalStream.contains("لمن") || canonicalStream.contains("حمد") || canonicalStream.contains("حمل") ||
+                 streamTail20.contains("لمن") || streamTail20.contains("حمد") || streamTail20.contains("حمل"))
+
+        val hasTahmeed = canonicalStream.contains("ولكالحمد") || canonicalStream.contains("ولكلحمد") ||
+                canonicalStream.contains("ربناولكلحمد") || canonicalStream.contains("ربنالكلحمد") ||
+                canonicalStream.contains("ربناولكالحمد") || canonicalStream.contains("ربنالكالحمد") ||
+                canonicalStream.contains("ربناولك") || canonicalStream.contains("ربنولك") || canonicalStream.contains("ربنالك") ||
+                streamTail20.contains("ولكالحمد") || streamTail20.contains("ولكلحمد") ||
+                streamTail20.contains("ربناولكلحمد") || streamTail20.contains("ربنالكلحمد") ||
+                streamTail20.contains("ربناولكالحمد") || streamTail20.contains("ربنالكالحمد") ||
+                streamTail20.contains("ربناولك") || streamTail20.contains("ربنولك") || streamTail20.contains("ربنالك")
+
+        val isExplicitTasmeeOrTahmeed = hasTasmee || hasTahmeed
+
+        // 3. Takbeer: "الله أكبر" (non-Quranic compound, guarding against 29:45 "ولذكر الله أكبر", 9:72 "ورضوان من الله أكبر", 40:10 "لمقت الله أكبر")
+        val hasTakbeerPattern = canonicalStream.contains("اللهاكبر") || canonicalStream.contains("اللهكبر") ||
+                canonicalStream.contains("للهاكبر") || canonicalStream.contains("للهكبر") ||
+                canonicalStream.contains("اللهواكبر") || canonicalStream.contains("واللهاكبر") ||
+                canonicalStream.contains("واللهكبر") ||
+                streamTail20.contains("اللهاكبر") || streamTail20.contains("اللهكبر") ||
+                streamTail20.contains("للهاكبر") || streamTail20.contains("للهكبر") ||
+                streamTail20.contains("اللهواكبر") || streamTail20.contains("واللهاكبر") ||
+                streamTail20.contains("واللهكبر") ||
+                ((canonicalStream.contains("الله") || canonicalStream.contains("لله")) && canonicalStream.contains("اكبر")) ||
+                ((streamTail20.contains("الله") || streamTail20.contains("لله")) && streamTail20.contains("اكبر"))
+
+        val isExplicitTakbeer = hasTakbeerPattern &&
+                !canonicalStream.contains("ولذكر") && !streamTail20.contains("ولذكر") &&
+                !canonicalStream.contains("رضوان") && !canonicalStream.contains("رضون") &&
+                !canonicalStream.contains("لمقت")
+
+        // 4. Tasbeeh: "سبحان ربي العظيم" / "سبحان ربي الأعلى"
+        val isExplicitTasbeeh = canonicalStream.contains("سبحانربيلعظيم") || canonicalStream.contains("سبحانربيالعظيم") ||
+                canonicalStream.contains("سبحانربيلعلى") || canonicalStream.contains("سبحانربيالعلى") ||
+                canonicalStream.contains("سبحانربيلعظم") || canonicalStream.contains("سبحانربيالعظم") ||
+                streamTail20.contains("سبحانربيلعظيم") || streamTail20.contains("سبحانربيالعظيم") ||
+                streamTail20.contains("سبحانربيلعلى") || streamTail20.contains("سبحانربيالعلى") ||
+                streamTail20.contains("سبحانربيلعظم") || streamTail20.contains("سبحانربيالعظم")
+
+        val isExplicitPrayerDhikr = isExplicitTasmeeOrTahmeed || isExplicitTakbeer || isExplicitTasbeeh
+
+        if (isExplicitTasleem || isExplicitPrayerDhikr) {
+            val currCanonical = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex] else ""
+            val nextCanonical = if (confirmedVerseIndex + 1 in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex + 1] else ""
+            val next2Canonical = if (confirmedVerseIndex + 2 in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex + 2] else ""
+            val isGenuineQuranicVerse = (isExplicitTasleem && (currCanonical.contains("سلامعليك") || nextCanonical.contains("سلامعليك") || next2Canonical.contains("سلامعليك"))) ||
+                    (isExplicitTakbeer && (currCanonical.contains("اللهكبر") || nextCanonical.contains("اللهكبر") || next2Canonical.contains("اللهكبر") ||
+                                           currCanonical.contains("اللهاكبر") || nextCanonical.contains("اللهاكبر") || next2Canonical.contains("اللهاكبر"))) ||
+                    (isExplicitTasbeeh && (currCanonical.contains("سبحانربي") || nextCanonical.contains("سبحانربي") || next2Canonical.contains("سبحانربي")))
+
+            if (!isGenuineQuranicVerse) {
+                AppLogger.d(TAG, "Prayer Dhikr/Tasleem isolated: stream='$canonicalStream'")
+                return TrackingResult(
+                    filteredText = "",
+                    matchedVerseIndex = null,
+                    matchedVerse = null,
+                    matchedWordsCount = 0,
+                    highestSimilarity = 0.0,
+                    recitationMode = recitationMode,
+                    isPrayerTransition = isExplicitPrayerDhikr,
+                    isTasleem = isExplicitTasleem
+                )
+            }
+        }
+
         // 2. If in DISCOVERY mode, run character-based and rolling discovery
         if (recitationMode == RecitationMode.DISCOVERY) {
             val charDiscovered = discoverVerseFromCharacterStream(canonicalStream)
@@ -591,63 +675,6 @@ object QuranVocabularyFilter {
             }
         }
 
-        // 3.5. Prayer Dhikr & Tasleem Isolation Gate:
-        // Exclude explicit non-Quranic prayer transitions, tasmee', takbeer, tasbeeh, and tasleem from sequential tracking
-        val streamTail20 = if (canonicalStream.length > 20) canonicalStream.substring(canonicalStream.length - 20) else canonicalStream
-
-        // 1. Tasleem: strictly requires pairing of Salam with Rahmah (e.g. سلام عليكم ورحمة الله / السلام عليك ورحمة الله)
-        // because "سلام عليكم" alone is genuine Quran (e.g. 13:24, 6:54), but "ورحمة الله" paired with it is NOT in the Quran.
-        val isExplicitTasleem = (canonicalStream.contains("سليكمورحم") ||
-                ((canonicalStream.contains("سلامعلي") || canonicalStream.contains("لسلامعلي") || canonicalStream.contains("سلامعليك") || canonicalStream.contains("لسلامعليك")) &&
-                 (canonicalStream.contains("رحمت") || canonicalStream.contains("رحمه")))) ||
-                (streamTail20.contains("سليكمورحم") ||
-                ((streamTail20.contains("سلامعلي") || streamTail20.contains("لسلامعلي") || streamTail20.contains("سلامعليك") || streamTail20.contains("لسلامعليك")) &&
-                 (streamTail20.contains("رحمت") || streamTail20.contains("رحمه"))))
-
-        // 2. Tasmee' & Tahmeed: "سمع الله لمن حمده" / "ربنا ولك الحمد"
-        // strictly requires the non-Quranic compound containing "لمن حمده" or "ولك الحمد"
-        // Never isolate "سمع الله" alone because it is genuine Quran (Al-Mujadila 58:1, Al-Imran 3:181).
-        val isExplicitTasmeeOrTahmeed = canonicalStream.contains("سمعاللهلمن") || canonicalStream.contains("لمنحمده") || canonicalStream.contains("لمنحمد") ||
-                canonicalStream.contains("ربنولكلحمد") || canonicalStream.contains("ربنالكلحمد") || canonicalStream.contains("ولكلحمد") ||
-                streamTail20.contains("سمعاللهلمن") || streamTail20.contains("لمنحمده") || streamTail20.contains("لمنحمد") ||
-                streamTail20.contains("ربنولكلحمد") || streamTail20.contains("ربنالكلحمد") || streamTail20.contains("ولكلحمد")
-
-        // 3. Takbeer: "الله أكبر" (non-Quranic compound, guarding against 29:45 "ولذكر الله أكبر")
-        val isExplicitTakbeer = (canonicalStream.contains("اللهكبر") || canonicalStream.contains("اللهواكبر") ||
-                streamTail20.contains("اللهكبر") || streamTail20.contains("اللهواكبر")) &&
-                !canonicalStream.contains("ولذكراللهكبر")
-
-        // 4. Tasbeeh: "سبحان ربي العظيم" / "سبحان ربي الأعلى"
-        val isExplicitTasbeeh = canonicalStream.contains("سبحانربيلعظيم") || canonicalStream.contains("سبحانربيلعلى") ||
-                canonicalStream.contains("سبحانربيلعظم") ||
-                streamTail20.contains("سبحانربيلعظيم") || streamTail20.contains("سبحانربيلعلى") ||
-                streamTail20.contains("سبحانربيلعظم")
-
-        val isExplicitPrayerDhikr = isExplicitTasmeeOrTahmeed || isExplicitTakbeer || isExplicitTasbeeh
-
-        if (isExplicitTasleem || isExplicitPrayerDhikr) {
-            val currCanonical = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex] else ""
-            val nextCanonical = if (confirmedVerseIndex + 1 in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex + 1] else ""
-            val next2Canonical = if (confirmedVerseIndex + 2 in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex + 2] else ""
-            val isGenuineQuranicVerse = (isExplicitTasleem && (currCanonical.contains("سلامعليك") || nextCanonical.contains("سلامعليك") || next2Canonical.contains("سلامعليك"))) ||
-                    (isExplicitTakbeer && (currCanonical.contains("اللهكبر") || nextCanonical.contains("اللهكبر") || next2Canonical.contains("اللهكبر"))) ||
-                    (isExplicitTasbeeh && (currCanonical.contains("سبحانربي") || nextCanonical.contains("سبحانربي") || next2Canonical.contains("سبحانربي")))
-
-            if (!isGenuineQuranicVerse) {
-                AppLogger.d(TAG, "Prayer Dhikr/Tasleem isolated: stream='$canonicalStream'")
-                return TrackingResult(
-                    filteredText = "",
-                    matchedVerseIndex = null,
-                    matchedVerse = null,
-                    matchedWordsCount = 0,
-                    highestSimilarity = 0.0,
-                    recitationMode = recitationMode,
-                    isPrayerTransition = isExplicitPrayerDhikr,
-                    isTasleem = isExplicitTasleem
-                )
-            }
-        }
-
         // 4. Primary: Character-LCS Sequential Window Tracking
         val lcsResult = trackWithinSequentialWindowCharacterLCS(canonicalStream)
         val now = System.currentTimeMillis()
@@ -670,8 +697,7 @@ object QuranVocabularyFilter {
         }
 
         // 5. Smart Auto-Recovery
-        val hasTakbirOrTransition = (canonicalStream.contains("اللهكبر") && !canonicalStream.contains("ولذكر")) ||
-            canonicalStream.contains("سمعاللهلمن") || canonicalStream.contains("لمنحمده") || canonicalStream.contains("ربنولكلحمد") ||
+        val hasTakbirOrTransition = isExplicitPrayerDhikr ||
             rawWords.any { rw ->
                 TRANSITION_WORDS.any { tw -> FuzzyMatcher.wordSimilarity(rw, tw) >= 0.78 } ||
                     PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }

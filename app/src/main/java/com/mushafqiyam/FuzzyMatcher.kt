@@ -9,41 +9,51 @@ object FuzzyMatcher {
     private val NON_ARABIC_REGEX = Regex("[^\\u0621-\\u064A\\s]")
     private val MULTI_SPACE_REGEX = Regex("\\s+")
 
-    data class MatchResult(
-        val verseIndex: Int,
-        val verseText: String,
-        val similarity: Double,
-        val matchedSegment: String
+    private val MUQATTAAT_MAP = mapOf(
+        "الم" to "الف لام ميم",
+        "المص" to "الف لام ميم صاد",
+        "الر" to "الف لام را",
+        "المر" to "الف لام ميم را",
+        "كهيعص" to "كاف ها يا عين صاد",
+        "طه" to "طا ها",
+        "طسم" to "طا سين ميم",
+        "طس" to "طا سين",
+        "يس" to "يا سين",
+        "ص" to "صاد",
+        "حم" to "حا ميم",
+        "عسق" to "عين سين قاف",
+        "ق" to "قاف",
+        "ن" to "نون"
     )
 
     /**
      * Expands Quranic disjointed letters (الحروف المقطعة) into their spoken phonetic word forms.
      * e.g., "الم" -> "الف لام ميم", "الر" -> "الف لام را", "حم" -> "حا ميم"
-     * Uses regex-free string splitting for 100% compatibility with Android ICU engine.
+     * Zero-allocation fast path when text does not contain any Muqattaat.
      */
     fun expandMuqattaat(text: String): String {
         if (text.isBlank()) return text
-        val words = text.split(" ")
-        val expandedWords = words.map { w ->
-            when (w.trim()) {
-                "الم" -> "الف لام ميم"
-                "المص" -> "الف لام ميم صاد"
-                "الر" -> "الف لام را"
-                "المر" -> "الف لام ميم را"
-                "كهيعص" -> "كاف ها يا عين صاد"
-                "طه" -> "طا ها"
-                "طسم" -> "طا سين ميم"
-                "طس" -> "طا سين"
-                "يس" -> "يا سين"
-                "ص" -> "صاد"
-                "حم" -> "حا ميم"
-                "عسق" -> "عين سين قاف"
-                "ق" -> "قاف"
-                "ن" -> "نون"
-                else -> w
+        var hasMuqattaat = false
+        for (k in MUQATTAAT_MAP.keys) {
+            if (text.contains(k)) {
+                hasMuqattaat = true
+                break
             }
         }
-        return expandedWords.joinToString(" ")
+        if (!hasMuqattaat) return text
+
+        val words = text.split(" ")
+        var modified = false
+        val expandedWords = words.map { w ->
+            val exp = MUQATTAAT_MAP[w.trim()]
+            if (exp != null) {
+                modified = true
+                exp
+            } else {
+                w
+            }
+        }
+        return if (modified) expandedWords.joinToString(" ") else text
     }
 
     /**
@@ -102,88 +112,6 @@ object FuzzyMatcher {
         return if (sb.length >= 2) sb.toString() else w
     }
 
-    fun matchVerse(
-        recognizedText: String,
-        candidateVerses: List<String>,
-        currentIndex: Int = -1
-    ): MatchResult? {
-        val cleanRec = normalizeArabic(recognizedText)
-        if (cleanRec.length < 3) return null
-
-        var bestMatch: MatchResult? = null
-        var maxSim = 0.0
-
-        val startIndex = if (currentIndex >= 0) maxOf(0, currentIndex - 1) else 0
-        val endIndex = if (currentIndex >= 0) minOf(candidateVerses.size - 1, currentIndex + 3) else minOf(candidateVerses.size - 1, 3)
-        val baseIndex = if (currentIndex >= 0) currentIndex else 0
-
-        for (index in startIndex..endIndex) {
-            val verse = candidateVerses[index]
-            val cleanVerse = normalizeArabic(verse)
-            if (cleanVerse.isNotBlank()) {
-                val recWords = cleanRec.split(" ").filter { it.isNotBlank() }
-                val verseWords = cleanVerse.split(" ").filter { it.isNotBlank() }
-
-                val sharedWordsCount = recWords.count { rw ->
-                    verseWords.any { vw -> wordSimilarity(rw, vw) >= 0.70 }
-                }
-                val isWordCountValid = if (verseWords.size <= 1) {
-                    sharedWordsCount >= 1
-                } else {
-                    sharedWordsCount >= 2 || (recWords.size >= 2 && sharedWordsCount >= 1)
-                }
-
-                if (isWordCountValid) {
-                    val baseSim = calculateSimilarity(cleanRec, cleanVerse)
-                    val effectiveSim = if (index > baseIndex) baseSim + 0.12 else baseSim
-
-                    val requiredThreshold = when (index - baseIndex) {
-                        -1 -> 0.60
-                        0 -> 0.45
-                        1 -> 0.45
-                        2 -> 0.55
-                        3 -> 0.60
-                        else -> 0.60
-                    }
-
-                    if (effectiveSim > maxSim && baseSim >= (requiredThreshold - 0.05)) {
-                        maxSim = effectiveSim
-                        bestMatch = MatchResult(
-                            verseIndex = index,
-                            verseText = verse,
-                            similarity = baseSim,
-                            matchedSegment = cleanRec
-                        )
-                    }
-                }
-            }
-        }
-
-        return bestMatch
-    }
-
-    private fun calculateSimilarity(recognized: String, verse: String): Double {
-        val fullSim = normalizedLevenshtein(recognized, verse)
-        val recTokens = recognized.split(" ")
-        val verseTokens = verse.split(" ")
-
-        if (recTokens.size <= verseTokens.size && recTokens.isNotEmpty()) {
-            val windowSize = recTokens.size
-            var maxWindowSim = 0.0
-
-            for (i in 0..(verseTokens.size - windowSize)) {
-                val subVerse = verseTokens.subList(i, i + windowSize).joinToString(" ")
-                val windowSim = normalizedLevenshtein(recognized, subVerse)
-                if (windowSim > maxWindowSim) {
-                    maxWindowSim = windowSim
-                }
-            }
-
-            return maxOf(fullSim, maxWindowSim)
-        }
-
-        return fullSim
-    }
 
     /**
      * Compares two normalized Arabic words, accounting for both exact Levenshtein similarity

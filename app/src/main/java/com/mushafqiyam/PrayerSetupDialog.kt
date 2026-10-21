@@ -95,64 +95,94 @@ fun PrayerSetupDialog(
                     Spacer(modifier = Modifier.height(18.dp))
 
                     // 1. Selector for Prayer Mode & Number of Rak'ahs
-                    Text(
-                        text = "نوع الصلاة وعدد الركعات:",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF263238),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Prominent option for صلاة القيام
-                    Box(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (isQiyamMode) Color(0xFF1B5E20) else Color(0xFFE8F5E9))
-                            .clickable {
-                                isQiyamMode = true
-                                totalRakahs = 2
-                            }
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.Center
+                            .height(88.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text(
-                            text = "🕌 صلاة القيام (شفع تلو شفع بتتابع مستمر)",
-                            fontSize = 14.sp,
-                            fontWeight = if (isQiyamMode) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isQiyamMode) Color.White else Color(0xFF1B5E20)
-                        )
-                    }
+                        // صندوق "عدد الركعات" (weight 1.3f)
+                        Column(
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.5.dp, Color(0xFF1B5E20), RoundedCornerShape(8.dp))
+                                .background(Color.White)
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "عدد الركعات",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black,
+                                textAlign = TextAlign.Center
+                            )
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf(1, 2, 3, 4).forEach { count ->
-                            val isSelected = (!isQiyamMode && totalRakahs == count)
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(40.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) Color(0xFF1B5E20) else Color(0xFFF1F8E9))
-                                    .clickable {
-                                        isQiyamMode = false
-                                        totalRakahs = count
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                listOf(1, 2, 3, 4).forEach { count ->
+                                    val isSelected = (!isQiyamMode && totalRakahs == count)
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSelected) Color(0xFF1B5E20) else Color(0xFFE8F5E9))
+                                            .clickable {
+                                                isQiyamMode = false
+                                                totalRakahs = count
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "$count",
+                                            fontSize = 14.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isSelected) Color.White else Color(0xFF1B5E20),
+                                            textAlign = TextAlign.Center
+                                        )
                                     }
-                                    .padding(vertical = 6.dp),
-                                contentAlignment = Alignment.Center
+                                }
+                            }
+                        }
+
+                        // صندوق "قيام الليل" (weight 1f)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.5.dp, Color(0xFF1B5E20), RoundedCornerShape(8.dp))
+                                .background(if (isQiyamMode) Color(0xFF1B5E20) else Color(0xFFE8F5E9))
+                                .clickable {
+                                    isQiyamMode = true
+                                    totalRakahs = 2
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
                             ) {
                                 Text(
-                                    text = if (count == 2) "2 (ركعتان)" else "$count",
-                                    fontSize = 13.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) Color.White else Color(0xFF1B5E20)
+                                    text = "قيام الليل",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isQiyamMode) Color.White else Color(0xFF1B5E20),
+                                    textAlign = TextAlign.Center
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "ركعتان - ركعتان",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (isQiyamMode) Color.White else Color(0xFF1B5E20),
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }

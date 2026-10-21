@@ -82,7 +82,6 @@ object QuranVocabularyFilter {
     private var allWords: List<QuranWord> = emptyList()
     private var verseFirstWordIndex: IntArray = IntArray(0)
     private var verseWordCount: IntArray = IntArray(0)
-    private var cachedVersesHash: Int = 0
     private var isFullMushafLoaded: Boolean = false
 
     // Inverted index for < 2ms global discovery across 6,236 verses
@@ -132,7 +131,6 @@ object QuranVocabularyFilter {
     private var pendingNextVerseIndex: Int = -1
     private var pendingNextVerseFirstWordGlobalIdx: Int = -1
     private var pendingNextVerseSim: Double = 0.0
-    private var pendingNextVerseText: String = ""
 
     // Rakah continuity memory: remembers the last non-Fatihah verse recited before starting a new Rakah
     var lastNonFatihahVerseIndex: Int = -1
@@ -145,6 +143,8 @@ object QuranVocabularyFilter {
     private var lastMatchedSpeechTimeMs: Long = System.currentTimeMillis()
     @Volatile
     private var lastPointerLockTimeMs: Long = 0L
+    @Volatile
+    private var backwardTrackingFrames: Int = 0
 
     // Rolling word buffer for multi-frame discovery
     private data class RollingAsrWord(
@@ -390,7 +390,6 @@ object QuranVocabularyFilter {
         pendingNextVerseIndex = -1
         pendingNextVerseFirstWordGlobalIdx = -1
         pendingNextVerseSim = 0.0
-        pendingNextVerseText = ""
     }
 
     /**
@@ -400,6 +399,7 @@ object QuranVocabularyFilter {
     fun enterDiscoveryMode(reason: String = "Manual") {
         recitationMode = RecitationMode.DISCOVERY
         consecutiveMismatches = 0
+        backwardTrackingFrames = 0
         clearPendingVerseTransition()
         discoveryRollingWords.clear()
         discoveryRollingChars.setLength(0)
@@ -443,6 +443,7 @@ object QuranVocabularyFilter {
         }
         recitationMode = RecitationMode.TRACKING
         consecutiveMismatches = 0
+        backwardTrackingFrames = 0
         lastPointerLockTimeMs = System.currentTimeMillis()
         clearPendingVerseTransition()
         discoveryRollingWords.clear()
@@ -983,7 +984,6 @@ object QuranVocabularyFilter {
         lastPointerLockTimeMs = 0L
 
         val bestEndJ = effectiveAlignResult.endJ
-        val bestStartJ = effectiveAlignResult.startJ
 
         // Map bestEndJ to the matching verse in the window
         var targetVerseIdx = confirmedVerseIndex
@@ -1001,7 +1001,9 @@ object QuranVocabularyFilter {
             val minCharsToEnter = if (candidatePage != currentConfirmedPage) {
                 minOf(7, maxOf(3, vLen / 2))
             } else if (vIdx == confirmedVerseIndex + 1) {
-                2 // Fast seamless transition to immediate next verse on same page
+                minOf(4, maxOf(2, vLen / 2))
+            } else if (vIdx == confirmedVerseIndex) {
+                1
             } else {
                 4
             }
@@ -1013,15 +1015,39 @@ object QuranVocabularyFilter {
                 break
             } else if (vIdx > confirmedVerseIndex && bestEndJ > vStartPos) {
                 // Hold On Pending: The reciter has entered the next verse, but hasn't reached minCharsToEnter yet.
-                // Do NOT fall back to i == 0 to falsely claim a match on the old verse!
+                // Do NOT fall back to falsely claim a match on an older verse!
                 isPendingAdvance = true
                 break
-            } else if (i == 0) {
-                targetVerseIdx = vIdx
-                offsetInVerse = minOf(vLen, maxOf(0, bestEndJ - vStartPos))
-                totalVerseChars = vLen
-                break
             }
+        }
+
+        // Backward Anti-Jitter Gate: Never jump back in sequential tracking without 6 consecutive frames (~2.5s)
+        if (targetVerseIdx < confirmedVerseIndex) {
+            if (targetVerseIdx == confirmedVerseIndex - 1) {
+                backwardTrackingFrames++
+                if (backwardTrackingFrames >= 6) {
+                    AppLogger.i(TAG, "Confirmed deliberate backward tracking to verse $targetVerseIdx after 6 consecutive frames")
+                    confirmedVerseIndex = targetVerseIdx
+                } else {
+                    // Reject transient backward jitter: clamp to confirmedVerseIndex
+                    targetVerseIdx = confirmedVerseIndex
+                    val curPos = windowVerseIndices.indexOf(confirmedVerseIndex)
+                    val curStart = if (curPos >= 0) verseStartInRef[curPos] else 0
+                    val curLen = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex].length else 1
+                    offsetInVerse = minOf(curLen, maxOf(0, bestEndJ - curStart))
+                    totalVerseChars = curLen
+                }
+            } else {
+                backwardTrackingFrames = 0
+                targetVerseIdx = confirmedVerseIndex
+                val curPos = windowVerseIndices.indexOf(confirmedVerseIndex)
+                val curStart = if (curPos >= 0) verseStartInRef[curPos] else 0
+                val curLen = if (confirmedVerseIndex in verseCanonicalChars.indices) verseCanonicalChars[confirmedVerseIndex].length else 1
+                offsetInVerse = minOf(curLen, maxOf(0, bestEndJ - curStart))
+                totalVerseChars = curLen
+            }
+        } else {
+            backwardTrackingFrames = 0
         }
 
         if (isPendingAdvance) {
@@ -1612,7 +1638,6 @@ object QuranVocabularyFilter {
                     pendingNextVerseIndex = targetVerseIdx
                     pendingNextVerseFirstWordGlobalIdx = firstTargetCandidate.word.globalIndex
                     pendingNextVerseSim = firstTargetCandidate.sim
-                    pendingNextVerseText = firstTargetCandidate.word.originalText
                 }
             }
 
@@ -2069,95 +2094,5 @@ object QuranVocabularyFilter {
             verseIdx = discoveredVIdx,
             highestSim = maxSim
         ).copy(discoveredNewLocation = true)
-    }
-
-    /**
-     * Legacy initializer for string lists (kept for backward compatibility).
-     */
-    @Synchronized
-    fun initializeVerses(verses: List<String>) {
-        if (isFullMushafLoaded) return
-        val hash = verses.hashCode()
-        if (hash == cachedVersesHash && allWords.isNotEmpty()) return
-
-        val words = ArrayList<QuranWord>()
-        val firstWordMap = IntArray(verses.size) { -1 }
-        val countMap = IntArray(verses.size) { 0 }
-
-        val logicalVerseMap = IntArray(verses.size) { it }
-        for (vIdx in verses.indices) {
-            val verse = verses[vIdx]
-            val cleanVerse = FuzzyMatcher.normalizeArabic(verse)
-            val verseTokens = cleanVerse.split(" ").filter { it.isNotBlank() }
-            
-            if (cleanVerse.contains("فباي الاء ربكما تكذبان") || cleanVerse.contains("ويل يومئذ للمكذبين") || cleanVerse.contains("فبأي آلاء ربكما تكذبان")) {
-                if (vIdx > 0) {
-                    logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
-                }
-            } else if (cleanVerse == "الرحمن الرحيم" && vIdx > 0 && FuzzyMatcher.normalizeArabic(verses[vIdx - 1]).contains("الحمد لله رب العالمين")) {
-                logicalVerseMap[vIdx] = logicalVerseMap[vIdx - 1]
-            } else if (verseTokens.size == 1) {
-                var nextIdx = vIdx + 1
-                while (nextIdx < verses.size) {
-                    val nextClean = FuzzyMatcher.normalizeArabic(verses[nextIdx])
-                    val nextTokens = nextClean.split(" ").filter { it.isNotBlank() }
-                    if (nextTokens.size > 1 && !nextClean.contains("فباي الاء") && !nextClean.contains("ويل يومئذ")) {
-                        break
-                    }
-                    nextIdx++
-                }
-                logicalVerseMap[vIdx] = minOf(nextIdx, verses.size - 1)
-            }
-        }
-        
-        var globalIdx = 0
-        for ((vIdx, verse) in verses.withIndex()) {
-            val logicalVIdx = logicalVerseMap[vIdx]
-            
-            if (firstWordMap[logicalVIdx] == -1) {
-                firstWordMap[logicalVIdx] = globalIdx
-            }
-            val cleanVerse = FuzzyMatcher.normalizeArabic(verse)
-            val verseTokens = cleanVerse.split(" ").filter { it.isNotBlank() }
-            val rawTokens = verse.split(" ").filter { it.isNotBlank() }
-            
-            countMap[logicalVIdx] += verseTokens.size
-            for (wIdx in verseTokens.indices) {
-                val orig = if (wIdx < rawTokens.size) rawTokens[wIdx] else verseTokens[wIdx]
-                val norm = verseTokens[wIdx]
-                words.add(
-                    QuranWord(
-                        globalIndex = globalIdx++,
-                        verseIndex = logicalVIdx,
-                        displayVerseIndex = vIdx,
-                        wordIndexInVerse = wIdx,
-                        originalText = orig,
-                        normalizedText = norm,
-                        skeletonText = FuzzyMatcher.skeletonWord(norm)
-                    )
-                )
-            }
-        }
-        allWords = words
-        verseFirstWordIndex = firstWordMap
-        verseWordCount = countMap
-        cachedVersesHash = hash
-        activeWordPointer = 0
-        confirmedVerseIndex = 0
-        consecutiveMismatches = 0
-    }
-
-    /**
-     * Backward-compatible wrapper for string lists.
-     */
-    @Synchronized
-    fun filterAndTrack(rawText: String, verses: List<String>): TrackingResult {
-        if (isFullMushafLoaded) {
-            return filterAndTrackFullMushaf(rawText)
-        }
-        if (allWords.isEmpty() || verses.hashCode() != cachedVersesHash) {
-            initializeVerses(verses)
-        }
-        return filterAndTrackFullMushaf(rawText)
     }
 }

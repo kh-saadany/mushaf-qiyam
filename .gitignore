@@ -34,9 +34,10 @@ assets/*.onnx
 *.onnx
 *.bin
 
-# Scratch scripts
-scratch/node_modules/
-scratch/package-lock.json
+# Scratch scripts and temporary files
+scratch/
+__pycache__/
+scripts/__pycache__/
 node_modules/
 !app/src/main/res/raw/silero_vad.onnx
 

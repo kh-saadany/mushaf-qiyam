@@ -396,13 +396,6 @@ object MushafPageRepository {
         return surahInfoList.firstOrNull { it.number == surahNumber }?.name ?: "سورة $surahNumber"
     }
 
-    fun getPageHeaderTitle(pageNumber: Int): String {
-        val verses = getPageVerses(pageNumber)
-        if (verses.isEmpty()) return "صفحة $pageNumber"
-        val distinctSurahs = verses.map { it.surahName }.distinct()
-        return distinctSurahs.joinToString(" • ")
-    }
-
     fun findTappedAyah(pageNumber: Int, normX: Float, normY: Float): Pair<Int, Int>? {
         val boxes = getPageBoxes(pageNumber)
         if (boxes.isEmpty()) return null

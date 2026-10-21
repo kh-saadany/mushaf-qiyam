@@ -158,7 +158,6 @@ fun MushafPageViewer(
             }
             
             // Top Peek Overlay: Displays upcoming text from the next page when near bottom of current page
-            var peekText by remember { mutableStateOf("") }
             val pageVerses = remember(currentPage, MushafPageRepository.isInitialized) {
                 if (MushafPageRepository.isInitialized) MushafPageRepository.getPageVerses(currentPage) else emptyList()
             }
@@ -167,24 +166,24 @@ fun MushafPageViewer(
             }
             val isLastVerseActive = pageVerses.lastOrNull()?.let { it.surah == activeSurah && it.ayah == activeAyah } ?: false
             val isNearBottomLine = (activeLineNumber > 0 && pageLines.isNotEmpty() && activeLineNumber >= pageLines.size - 1)
-            val shouldShowPeek = (isLastVerseActive || isNearBottomLine)
+            val shouldShowPeek = (isLastVerseActive || isNearBottomLine) && currentPage < 604
 
-            LaunchedEffect(shouldShowPeek, currentPage) {
-                if (shouldShowPeek && currentPage < 604) {
+            val peekText = remember(shouldShowPeek, currentPage, MushafPageRepository.isInitialized) {
+                if (shouldShowPeek && MushafPageRepository.isInitialized && currentPage < 604) {
                     val nextVerses = MushafPageRepository.getPageVerses(currentPage + 1)
                     if (nextVerses.isNotEmpty()) {
                         val allWords = nextVerses.flatMap { it.text.split(" ").filter { w -> w.isNotBlank() } }
                         val first15 = allWords.take(15).joinToString(" ")
-                        peekText = "$first15..."
+                        "$first15..."
                     } else {
-                        peekText = ""
+                        ""
                     }
                 } else {
-                    peekText = ""
+                    ""
                 }
             }
 
-            if (peekText.isNotEmpty()) {
+            if (shouldShowPeek && peekText.isNotEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -231,7 +230,7 @@ private fun MushafSinglePageCanvas(
         isLoading = false
     }
 
-    val (currentLine, nextLine) = remember(pageNumber, activeSurah, activeAyah, activeLineNumber, (wordProgress * 100).toInt(), MushafPageRepository.isInitialized) {
+    val (currentLine, nextLine) = remember(pageNumber, activeSurah, activeAyah, activeLineNumber, MushafPageRepository.isInitialized) {
         if (MushafPageRepository.isInitialized) {
             val pageLines = MushafPageRepository.getPageLines(pageNumber)
             if (activeLineNumber > 0) {

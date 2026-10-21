@@ -1,7 +1,6 @@
 package com.mushafqiyam
 
 import android.Manifest
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -48,7 +47,6 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,7 +61,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.3.0"
+        const val APP_VERSION = "0.7.3.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -82,7 +80,6 @@ class MainActivity : ComponentActivity() {
                     color = Color(0xFFF5F5F0)
                 ) {
                     MainAppScreen(
-                        appVersion = APP_VERSION,
                         audioRecognizer = audioRecognizer
                     )
                 }
@@ -99,7 +96,6 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainAppScreen(
-    appVersion: String,
     audioRecognizer: AudioRecognizer?
 ) {
     val context = LocalContext.current
@@ -220,9 +216,6 @@ fun MainAppScreen(
         QuranVocabularyFilter.currentDisplayedPage = currentPage
     }
 
-    var matchSimilarityText by remember {
-        mutableStateOf("🔍 وضع الاكتشاف الشامل")
-    }
     var graceEmptyFrames by remember { mutableIntStateOf(0) }
 
     // Page-Turn FSM and Anti-Jitter Hysteresis State
@@ -233,6 +226,8 @@ fun MainAppScreen(
 
     var activeLineNumber by remember { mutableIntStateOf(1) }
     var activeLinePage by remember { mutableIntStateOf(1) }
+    var lastLineChangeTimeMs by remember { mutableLongStateOf(0L) }
+    var backwardConfirmFrames by remember { mutableIntStateOf(0) }
 
     val executePrayerAction: (PrayerAction) -> Unit = { action ->
         when (action) {
@@ -248,13 +243,11 @@ fun MainAppScreen(
                     QuranVocabularyFilter.resetPointerToSurahAyah(action.surah, action.ayah)
                     isDiscoveryMode = false
                 }
-                matchSimilarityText = "🎯 ${MushafPageRepository.getSurahName(action.surah)} — آية ${action.ayah}"
                 prayerBannerText = prayerManager.topBannerText
             }
             is PrayerAction.EnterDiscovery -> {
                 QuranVocabularyFilter.enterDiscoveryMode("Prayer plan auto discovery")
                 isDiscoveryMode = true
-                matchSimilarityText = "🔍 وضع الاكتشاف الشامل"
                 prayerBannerText = prayerManager.topBannerText
             }
             is PrayerAction.StopListening -> {
@@ -318,14 +311,30 @@ fun MainAppScreen(
             val trackingResult = QuranVocabularyFilter.filterAndTrackFullMushaf(rawText)
 
             val cleanStream = rawText.replace(" ", "")
-            val isDhikrPrefixOrTransition = trackingResult.isPrayerTransition || trackingResult.isTasleem ||
-                cleanStream.startsWith("الله") || cleanStream.startsWith("لله") ||
-                cleanStream.startsWith("سمع") || cleanStream.startsWith("سبحان") ||
-                cleanStream.startsWith("ربنا") || cleanStream.startsWith("ربنو") ||
-                cleanStream.startsWith("سليكم") || cleanStream.startsWith("سلام") ||
-                cleanStream.contains("اللهاكبر") || cleanStream.contains("اللهكبر") ||
-                cleanStream.contains("سمعلله") || cleanStream.contains("سمعالله")
-            if (cleanStream.length >= 4 && !isDhikrPrefixOrTransition) {
+            val isDhikrOrIntroductory = trackingResult.isPrayerTransition || trackingResult.isTasleem ||
+                cleanStream.length < 4 ||
+                rawText.contains("بسم") ||
+                rawText.contains("رحمن") ||
+                rawText.contains("رحيم") ||
+                rawText.contains("اعوذ") ||
+                rawText.contains("أعوذ") ||
+                rawText.contains("شيطان") ||
+                rawText.contains("امين") ||
+                rawText.contains("آمين") ||
+                rawText.contains("ءامين") ||
+                cleanStream.startsWith("الله") ||
+                cleanStream.startsWith("لله") ||
+                cleanStream.startsWith("سمع") ||
+                cleanStream.startsWith("سبحان") ||
+                cleanStream.startsWith("ربنا") ||
+                cleanStream.startsWith("ربنو") ||
+                cleanStream.startsWith("سليكم") ||
+                cleanStream.startsWith("سلام") ||
+                cleanStream.contains("اللهاكبر") ||
+                cleanStream.contains("اللهكبر") ||
+                cleanStream.contains("سمعلله") ||
+                cleanStream.contains("سمعالله")
+            if (!isDhikrOrIntroductory) {
                 lastActiveRecitationStreamTimeMs = System.currentTimeMillis()
             }
 
@@ -372,26 +381,49 @@ fun MainAppScreen(
                     val isSameVerse = (mv.surah == activeSurah && mv.ayah == activeAyah)
                     val isNextVerse = (mv.surah == activeSurah && mv.ayah == activeAyah + 1) ||
                                       (mv.surah == activeSurah + 1 && mv.ayah == 1)
+                    val isBackwardVerse = (mv.surah == activeSurah && mv.ayah < activeAyah)
 
-                    if (isSameVerse && isTrackingMode) {
-                        // Monotonic progress ratchet inside same verse
-                        activeWordProgress = maxOf(activeWordProgress, newCharProgress)
+                    var allowVerseUpdate = true
+                    if (isTrackingMode && !trackingResult.discoveredNewLocation && isBackwardVerse) {
+                        backwardConfirmFrames++
+                        if (backwardConfirmFrames >= 6) {
+                            backwardConfirmFrames = 0
+                            allowVerseUpdate = true
+                            AppLogger.i("UIHighlight", "Confirmed deliberate backward jump to [$activeSurah:${mv.ayah}]")
+                        } else {
+                            allowVerseUpdate = false
+                        }
                     } else {
-                        activeSurah = mv.surah
-                        activeAyah = mv.ayah
-                        activeWordProgress = newCharProgress
+                        backwardConfirmFrames = 0
                     }
 
-                    // Proportional Line Mapping & Monotonic Line Ratchet on currentPage
-                    val candidateLine = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
-                    if (candidateLine != null) {
-                        if (activeLinePage != currentPage) {
-                            activeLinePage = currentPage
-                            activeLineNumber = candidateLine
-                        } else if (isTrackingMode && (isSameVerse || isNextVerse)) {
-                            activeLineNumber = maxOf(activeLineNumber, candidateLine)
+                    if (allowVerseUpdate) {
+                        if (isSameVerse && isTrackingMode) {
+                            // Monotonic progress ratchet inside same verse
+                            activeWordProgress = maxOf(activeWordProgress, newCharProgress)
                         } else {
-                            activeLineNumber = candidateLine
+                            activeSurah = mv.surah
+                            activeAyah = mv.ayah
+                            activeWordProgress = newCharProgress
+                        }
+
+                        // Proportional Line Mapping & Strict Monotonic Line Ratchet on currentPage
+                        val candidateLine = MushafPageRepository.findAyahLinesOnPage(currentPage, activeSurah, activeAyah, activeWordProgress).first?.lineNumber
+                        if (candidateLine != null) {
+                            if (activeLinePage != currentPage) {
+                                activeLinePage = currentPage
+                                activeLineNumber = candidateLine
+                                lastLineChangeTimeMs = nowMs
+                            } else if (isTrackingMode && !trackingResult.discoveredNewLocation) {
+                                // Line Dwell Hysteresis: Never bounce upward to an earlier line during tracking on same page
+                                if (candidateLine > activeLineNumber) {
+                                    activeLineNumber = candidateLine
+                                    lastLineChangeTimeMs = nowMs
+                                }
+                            } else {
+                                activeLineNumber = candidateLine
+                                lastLineChangeTimeMs = nowMs
+                            }
                         }
                     }
 
@@ -418,6 +450,14 @@ fun MainAppScreen(
                         if (pendingPageConfirmCount >= 2) {
                             val prevP = currentPage
                             currentPage = currentPage + 1
+                            val nextPageVerses = MushafPageRepository.getPageVerses(currentPage)
+                            if (nextPageVerses.isNotEmpty()) {
+                                activeSurah = nextPageVerses.first().surah
+                                activeAyah = nextPageVerses.first().ayah
+                            }
+                            activeWordProgress = 0f
+                            activeLinePage = currentPage
+                            activeLineNumber = 1
                             earlyTurnTriggeredForPage = prevP
                             lastPageTurnTimeMs = nowMs
                             pendingTargetPage = -1
@@ -557,13 +597,7 @@ fun MainAppScreen(
                         if (prayerManager.appMode == AppMode.PRAYER) {
                             val action = prayerManager.onFatihahCompleted(savedBookmark)
                             executePrayerAction(action)
-                        } else {
-                            matchSimilarityText = "🔍 اكتملت الفاتحة — بانتظار اكتشاف السورة/الآية التالية..."
                         }
-                    } else if (trackingResult.discoveredNewLocation) {
-                        matchSimilarityText = "🧭 تم اكتشاف: ${mv.surahName} — آية ${mv.ayah}"
-                    } else {
-                        matchSimilarityText = "🎯 ${mv.surahName} — آية ${mv.ayah}"
                     }
             } else {
                 graceEmptyFrames++
@@ -571,29 +605,7 @@ fun MainAppScreen(
                     graceEmptyFrames = 0
                 }
 
-                val isIntroductoryOrDhikr = rawText.contains("بسم") ||
-                    rawText.contains("رحمن") ||
-                    rawText.contains("رحيم") ||
-                    rawText.contains("اعوذ") ||
-                    rawText.contains("أعوذ") ||
-                    rawText.contains("شيطان") ||
-                    rawText.contains("امين") ||
-                    rawText.contains("آمين") ||
-                    rawText.contains("ءامين") ||
-                    cleanStream.length < 4 ||
-                    cleanStream.startsWith("الله") ||
-                    cleanStream.startsWith("لله") ||
-                    cleanStream.startsWith("سمع") ||
-                    cleanStream.startsWith("سبحان") ||
-                    cleanStream.startsWith("ربنا") ||
-                    cleanStream.startsWith("سليكم") ||
-                    cleanStream.startsWith("سلام") ||
-                    cleanStream.contains("اللهاكبر") ||
-                    cleanStream.contains("اللهكبر") ||
-                    cleanStream.contains("سمعلله") ||
-                    cleanStream.contains("سمعالله")
-
-                if (!isIntroductoryOrDhikr && !trackingResult.isPrayerTransition && !trackingResult.isTasleem &&
+                if (!isDhikrOrIntroductory &&
                     prayerManager.appMode == AppMode.PRAYER && prayerManager.currentPhase == PrayerPhase.SURAH_RECITATION) {
                     val action = prayerManager.recordMismatchInTarget()
                     executePrayerAction(action)

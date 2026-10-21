@@ -1,7 +1,5 @@
 package com.mushafqiyam
 
-import android.content.Context
-import android.content.SharedPreferences
 
 enum class AppMode {
     FREE_READING,

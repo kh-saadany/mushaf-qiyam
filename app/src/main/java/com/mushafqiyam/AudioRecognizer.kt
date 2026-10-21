@@ -246,15 +246,17 @@ class AudioRecognizer(private val context: Context) {
         }
 
         var result = sb.toString().trim()
-        // Tajweed acoustic normalization: Iqlab (ن before ب -> مب)
-        result = result.replace("نب", "مب").replace("نپ", "مب")
-        // Cross-word Idgham across word boundaries
-        result = result
-            .replace("ن ر", "ر")
-            .replace("ن ل", "ل")
-            .replace("ن م", "م")
-            .replace("ن ي", "ي")
-            .replace("ن و", "و")
+        if (result.contains('ن')) {
+            // Tajweed acoustic normalization: Iqlab (ن before ب -> مب)
+            result = result.replace("نب", "مب").replace("نپ", "مب")
+            // Cross-word Idgham across word boundaries
+            result = result
+                .replace("ن ر", "ر")
+                .replace("ن ل", "ل")
+                .replace("ن م", "م")
+                .replace("ن ي", "ي")
+                .replace("ن و", "و")
+        }
 
         // Strip spurious initial acoustic noise prefix before "الحمد" (e.g. "فلحمد" -> "الحمد")
         if (result.startsWith("فلحمد") || result.startsWith("ولحمد")) {

@@ -4,6 +4,11 @@ import kotlin.math.max
 
 object FuzzyMatcher {
 
+    private val DIACRITICS_REGEX = Regex("[\\u0617-\\u061A\\u064B-\\u065F\\u0670\\u06D6-\\u06ED]")
+    private val ALEF_VARIANTS_REGEX = Regex("[إأآٱ]")
+    private val NON_ARABIC_REGEX = Regex("[^\\u0621-\\u064A\\s]")
+    private val MULTI_SPACE_REGEX = Regex("\\s+")
+
     data class MatchResult(
         val verseIndex: Int,
         val verseText: String,
@@ -52,17 +57,17 @@ object FuzzyMatcher {
         if (text.isBlank()) return ""
         val withoutDiacritics = text
             .replace("\uFEFF", "")
-            .replace(Regex("[\\u0617-\\u061A\\u064B-\\u065F\\u0670\\u06D6-\\u06ED]"), "")
+            .replace(DIACRITICS_REGEX, "")
         val expanded = expandMuqattaat(withoutDiacritics)
         return expanded
-            .replace(Regex("[إأآٱ]"), "ا")
+            .replace(ALEF_VARIANTS_REGEX, "ا")
             .replace('ؤ', 'و')
             .replace('ئ', 'ي')
             .replace('ء', 'ا')
             .replace('ة', 'ه')
             .replace('ى', 'ي')
-            .replace(Regex("[^\\u0621-\\u064A\\s]"), "")
-            .replace(Regex("\\s+"), " ")
+            .replace(NON_ARABIC_REGEX, "")
+            .replace(MULTI_SPACE_REGEX, " ")
             .trim()
     }
 

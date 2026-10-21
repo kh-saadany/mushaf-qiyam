@@ -143,6 +143,8 @@ object QuranVocabularyFilter {
 
     private var lastFatihahCompletedTimeMs: Long = 0L
     private var lastMatchedSpeechTimeMs: Long = System.currentTimeMillis()
+    @Volatile
+    private var lastPointerLockTimeMs: Long = 0L
 
     // Rolling word buffer for multi-frame discovery
     private data class RollingAsrWord(
@@ -441,6 +443,7 @@ object QuranVocabularyFilter {
         }
         recitationMode = RecitationMode.TRACKING
         consecutiveMismatches = 0
+        lastPointerLockTimeMs = System.currentTimeMillis()
         clearPendingVerseTransition()
         discoveryRollingWords.clear()
         discoveryRollingChars.setLength(0)
@@ -462,6 +465,7 @@ object QuranVocabularyFilter {
     fun resetPointerToSurahAyah(surah: Int, ayah: Int) {
         val globalVerseIdx = MushafPageRepository.getGlobalVerseIndex(surah, ayah)
         resetPointerToVerse(globalVerseIdx)
+        lastPointerLockTimeMs = System.currentTimeMillis()
         AppLogger.i(TAG, "Tracking pointer locked to Surah $surah Ayah $ayah (GlobalVerse=$globalVerseIdx, WordPtr=$activeWordPointer)")
     }
 
@@ -703,7 +707,8 @@ object QuranVocabularyFilter {
                     PRAYER_TAKBIR_WORDS.any { pw -> FuzzyMatcher.wordSimilarity(rw, pw) >= 0.80 }
             }
         val silenceDurationMs = if (lastMatchedSpeechTimeMs > 0L) now - lastMatchedSpeechTimeMs else 0L
-        val canTriggerRecovery = consecutiveMismatches >= 3 && (silenceDurationMs >= 2500L || hasTakbirOrTransition || consecutiveMismatches >= 5)
+        val isPostLockGracePeriod = (now - lastPointerLockTimeMs < 40000L)
+        val canTriggerRecovery = !isPostLockGracePeriod && consecutiveMismatches >= 3 && (silenceDurationMs >= 2500L || hasTakbirOrTransition || consecutiveMismatches >= 5)
 
         if (canTriggerRecovery) {
             val recoveryStream = if (canonicalStream.length > 35) {
@@ -975,6 +980,7 @@ object QuranVocabularyFilter {
 
         consecutiveMismatches = 0
         lastMatchedSpeechTimeMs = System.currentTimeMillis()
+        lastPointerLockTimeMs = 0L
 
         val bestEndJ = effectiveAlignResult.endJ
         val bestStartJ = effectiveAlignResult.startJ

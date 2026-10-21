@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -19,7 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -33,9 +37,10 @@ fun PrayerSetupDialog(
     onDismiss: () -> Unit,
     onStartPrayer: (PrayerSessionConfig) -> Unit
 ) {
+    var isQiyamMode by remember { mutableStateOf(true) }
     var totalRakahs by remember { mutableIntStateOf(2) }
 
-    // Plans for up to 4 rakahs
+    // Plans for rakahs 1 and 2
     var r1Type by remember { mutableStateOf(RakahPlanType.CONTINUE_PREVIOUS) }
     var r1Surah by remember { mutableIntStateOf(savedBookmark?.second ?: 2) }
     var r1Ayah by remember { mutableIntStateOf(savedBookmark?.third ?: 1) }
@@ -43,14 +48,6 @@ fun PrayerSetupDialog(
     var r2Type by remember { mutableStateOf(RakahPlanType.CONTINUE_PREVIOUS) }
     var r2Surah by remember { mutableIntStateOf(2) }
     var r2Ayah by remember { mutableIntStateOf(1) }
-
-    var r3Type by remember { mutableStateOf(RakahPlanType.CONTINUE_PREVIOUS) }
-    var r3Surah by remember { mutableIntStateOf(2) }
-    var r3Ayah by remember { mutableIntStateOf(1) }
-
-    var r4Type by remember { mutableStateOf(RakahPlanType.CONTINUE_PREVIOUS) }
-    var r4Surah by remember { mutableIntStateOf(2) }
-    var r4Ayah by remember { mutableIntStateOf(1) }
 
     val allSurahs = remember { MushafPageRepository.getSurahList() }
 
@@ -77,7 +74,7 @@ fun PrayerSetupDialog(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "🕌 إعدادات صلاة القيام",
+                        text = "الإعدادات",
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF1B5E20),
@@ -88,7 +85,7 @@ fun PrayerSetupDialog(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "اضبط عدد الركعات وخطة التلاوة التي ستقرؤها بعد سورة الفاتحة",
+                        text = "اضبط وضع الصلاة وخطة التلاوة التي ستقرؤها بعد سورة الفاتحة",
                         fontSize = 13.sp,
                         color = Color(0xFF546E7A),
                         textAlign = TextAlign.Center,
@@ -97,9 +94,9 @@ fun PrayerSetupDialog(
 
                     Spacer(modifier = Modifier.height(18.dp))
 
-                    // 1. Selector for Number of Rak'ahs
+                    // 1. Selector for Prayer Mode & Number of Rak'ahs
                     Text(
-                        text = "عدد الركعات:",
+                        text = "نوع الصلاة وعدد الركعات:",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF263238),
@@ -108,25 +105,52 @@ fun PrayerSetupDialog(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
+                    // Prominent option for صلاة القيام
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isQiyamMode) Color(0xFF1B5E20) else Color(0xFFE8F5E9))
+                            .clickable {
+                                isQiyamMode = true
+                                totalRakahs = 2
+                            }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "🕌 صلاة القيام (شفع تلو شفع بتتابع مستمر)",
+                            fontSize = 14.sp,
+                            fontWeight = if (isQiyamMode) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isQiyamMode) Color.White else Color(0xFF1B5E20)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         listOf(1, 2, 3, 4).forEach { count ->
-                            val isSelected = (totalRakahs == count)
+                            val isSelected = (!isQiyamMode && totalRakahs == count)
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(42.dp)
+                                    .height(40.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) Color(0xFF1B5E20) else Color(0xFFE8F5E9))
-                                    .clickable { totalRakahs = count }
-                                    .padding(vertical = 8.dp),
+                                    .background(if (isSelected) Color(0xFF1B5E20) else Color(0xFFF1F8E9))
+                                    .clickable {
+                                        isQiyamMode = false
+                                        totalRakahs = count
+                                    }
+                                    .padding(vertical = 6.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = if (count == 2) "2 (ركعتان)" else "$count",
-                                    fontSize = 14.sp,
+                                    fontSize = 13.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                     color = if (isSelected) Color.White else Color(0xFF1B5E20)
                                 )
@@ -161,7 +185,7 @@ fun PrayerSetupDialog(
                         allSurahs = allSurahs
                     )
 
-                    if (totalRakahs >= 2) {
+                    if (isQiyamMode || totalRakahs >= 2) {
                         Spacer(modifier = Modifier.height(12.dp))
                         RakahPlanCard(
                             rakahIndex = 2,
@@ -172,38 +196,6 @@ fun PrayerSetupDialog(
                             onSurahChange = { r2Surah = it; r2Ayah = 1 },
                             ayahNumber = r2Ayah,
                             onAyahChange = { r2Ayah = it },
-                            savedBookmark = savedBookmark,
-                            allSurahs = allSurahs
-                        )
-                    }
-
-                    if (totalRakahs >= 3) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        RakahPlanCard(
-                            rakahIndex = 3,
-                            isFirstRakah = false,
-                            selectedType = r3Type,
-                            onTypeChange = { r3Type = it },
-                            surahNumber = r3Surah,
-                            onSurahChange = { r3Surah = it; r3Ayah = 1 },
-                            ayahNumber = r3Ayah,
-                            onAyahChange = { r3Ayah = it },
-                            savedBookmark = savedBookmark,
-                            allSurahs = allSurahs
-                        )
-                    }
-
-                    if (totalRakahs >= 4) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        RakahPlanCard(
-                            rakahIndex = 4,
-                            isFirstRakah = false,
-                            selectedType = r4Type,
-                            onTypeChange = { r4Type = it },
-                            surahNumber = r4Surah,
-                            onSurahChange = { r4Surah = it; r4Ayah = 1 },
-                            ayahNumber = r4Ayah,
-                            onAyahChange = { r4Ayah = it },
                             savedBookmark = savedBookmark,
                             allSurahs = allSurahs
                         )
@@ -230,11 +222,17 @@ fun PrayerSetupDialog(
                             onClick = {
                                 val plansList = mutableListOf<RakahPlan>()
                                 plansList.add(RakahPlan(r1Type, r1Surah, r1Ayah))
-                                if (totalRakahs >= 2) plansList.add(RakahPlan(r2Type, r2Surah, r2Ayah))
-                                if (totalRakahs >= 3) plansList.add(RakahPlan(r3Type, r3Surah, r3Ayah))
-                                if (totalRakahs >= 4) plansList.add(RakahPlan(r4Type, r4Surah, r4Ayah))
+                                if (isQiyamMode || totalRakahs >= 2) {
+                                    plansList.add(RakahPlan(r2Type, r2Surah, r2Ayah))
+                                }
 
-                                onStartPrayer(PrayerSessionConfig(totalRakahs, plansList))
+                                onStartPrayer(
+                                    PrayerSessionConfig(
+                                        totalRakahs = if (isQiyamMode) 2 else totalRakahs,
+                                        isQiyamMode = isQiyamMode,
+                                        plans = plansList
+                                    )
+                                )
                             },
                             modifier = Modifier
                                 .weight(1.5f)
@@ -242,7 +240,7 @@ fun PrayerSetupDialog(
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
                         ) {
-                            Text("بدء الصلاة الآن", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("بدء الصلاة", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
                     }
                 }
@@ -285,9 +283,9 @@ private fun RakahPlanCard(
                 // Option 1: Continue from saved bookmark
                 val bookmarkText = if (savedBookmark != null && savedBookmark.second > 1) {
                     val sName = MushafPageRepository.getSurahName(savedBookmark.second)
-                    "استكمال من المحفوظ: [$sName آية ${savedBookmark.third} - ص ${savedBookmark.first}]"
+                    "البدء من آخر آية توقفت عندها [$sName آية ${savedBookmark.third} - ص ${savedBookmark.first}]"
                 } else {
-                    "استكمال من المحفوظ (سورة البقرة)"
+                    "البدء من آخر آية توقفت عندها [سورة البقرة آية 1 - ص 2]"
                 }
 
                 PlanOptionRow(
@@ -299,7 +297,7 @@ private fun RakahPlanCard(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 PlanOptionRow(
-                    title = "تحديد سورة وآية مخصصة",
+                    title = "اختيار السورة والآية",
                     selected = (selectedType == RakahPlanType.CUSTOM_SURAH_AYAH),
                     onClick = { onTypeChange(RakahPlanType.CUSTOM_SURAH_AYAH) }
                 )
@@ -321,9 +319,17 @@ private fun RakahPlanCard(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 PlanOptionRow(
-                    title = "تحديد سورة وآية مخصصة لهذه الركعة",
+                    title = "اختيار السورة والآية",
                     selected = (selectedType == RakahPlanType.CUSTOM_SURAH_AYAH),
                     onClick = { onTypeChange(RakahPlanType.CUSTOM_SURAH_AYAH) }
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                PlanOptionRow(
+                    title = "اكتشاف صوتي تلقائي",
+                    selected = (selectedType == RakahPlanType.AUTO_DISCOVERY),
+                    onClick = { onTypeChange(RakahPlanType.AUTO_DISCOVERY) }
                 )
             }
 
@@ -374,35 +380,55 @@ private fun RakahPlanCard(
                         )
                     }
 
-                    // Ayah Number Stepper
+                    // Ayah Number Direct Input + Stepper
                     val maxAyahs = currentSurahInfo?.verseCount ?: 286
                     Row(
                         modifier = Modifier
-                            .weight(1f)
+                            .weight(1.1f)
                             .height(46.dp)
                             .border(1.dp, Color(0xFFBDBDBD), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 6.dp),
+                            .padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         IconButton(
                             onClick = { if (ayahNumber > 1) onAyahChange(ayahNumber - 1) },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         ) {
-                            Text("-", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text("-", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         }
 
-                        Text(
-                            text = "آية $ayahNumber",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        var textVal by remember(ayahNumber) { mutableStateOf(ayahNumber.toString()) }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("آية ", fontSize = 11.sp, color = Color.Gray)
+                            BasicTextField(
+                                value = textVal,
+                                onValueChange = { newStr ->
+                                    val digits = newStr.filter { it.isDigit() }
+                                    textVal = digits
+                                    val parsed = digits.toIntOrNull()
+                                    if (parsed != null && parsed in 1..maxAyahs) {
+                                        onAyahChange(parsed)
+                                    }
+                                },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                textStyle = TextStyle(
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    color = Color(0xFF1B5E20)
+                                ),
+                                modifier = Modifier.width(36.dp)
+                            )
+                        }
 
                         IconButton(
                             onClick = { if (ayahNumber < maxAyahs) onAyahChange(ayahNumber + 1) },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         ) {
-                            Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text("+", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

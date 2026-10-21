@@ -157,20 +157,25 @@ fun MushafPageViewer(
                 }
             }
             
-            // Top Peek Overlay
+            // Top Peek Overlay: Displays upcoming text from the next page when near bottom of current page
             var peekText by remember { mutableStateOf("") }
             val pageVerses = remember(currentPage, MushafPageRepository.isInitialized) {
                 if (MushafPageRepository.isInitialized) MushafPageRepository.getPageVerses(currentPage) else emptyList()
             }
+            val pageLines = remember(currentPage, MushafPageRepository.isInitialized) {
+                if (MushafPageRepository.isInitialized) MushafPageRepository.getPageLines(currentPage) else emptyList()
+            }
             val isLastVerseActive = pageVerses.lastOrNull()?.let { it.surah == activeSurah && it.ayah == activeAyah } ?: false
+            val isNearBottomLine = (activeLineNumber > 0 && pageLines.isNotEmpty() && activeLineNumber >= pageLines.size - 1)
+            val shouldShowPeek = (isLastVerseActive || isNearBottomLine)
 
-            LaunchedEffect(isLastVerseActive, currentPage) {
-                if (isLastVerseActive && currentPage < 604) {
+            LaunchedEffect(shouldShowPeek, currentPage) {
+                if (shouldShowPeek && currentPage < 604) {
                     val nextVerses = MushafPageRepository.getPageVerses(currentPage + 1)
-                    val nextVerse = nextVerses.firstOrNull()
-                    if (nextVerse != null) {
-                        val words = nextVerse.text.split(" ").take(5).joinToString(" ")
-                        peekText = words + "..."
+                    if (nextVerses.isNotEmpty()) {
+                        val allWords = nextVerses.flatMap { it.text.split(" ").filter { w -> w.isNotBlank() } }
+                        val first15 = allWords.take(15).joinToString(" ")
+                        peekText = "$first15..."
                     } else {
                         peekText = ""
                     }
@@ -183,17 +188,18 @@ fun MushafPageViewer(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 16.dp),
+                        .padding(top = 16.dp, start = 16.dp, end = 16.dp),
                     contentAlignment = Alignment.TopCenter
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                         Text(
                             text = peekText,
                             color = Color.White,
-                            fontSize = 18.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
                             modifier = Modifier
-                                .background(Color(0xAA000000), RoundedCornerShape(8.dp))
+                                .background(Color(0xCC000000), RoundedCornerShape(8.dp))
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
                         )
                     }

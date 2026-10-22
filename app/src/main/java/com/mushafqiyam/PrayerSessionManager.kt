@@ -48,7 +48,7 @@ class PrayerSessionManager {
 
     companion object {
         private const val TAG = "PrayerSession"
-        private const val RUKU_SILENCE_THRESHOLD_MS = 14000L
+        private const val RUKU_SILENCE_THRESHOLD_MS = 10000L
     }
 
     var appMode: AppMode = AppMode.FREE_READING
@@ -159,14 +159,19 @@ class PrayerSessionManager {
     fun onVerseTracked(surah: Int, ayah: Int, page: Int) {
         if (appMode != AppMode.PRAYER) return
 
-        if (currentPhase == PrayerPhase.FATIHAH_STANDBY) {
+        val isOutsideFatihah = surah > 1 || (surah == 1 && ayah > 7)
+
+        if ((currentPhase == PrayerPhase.FATIHAH || currentPhase == PrayerPhase.FATIHAH_STANDBY) && isOutsideFatihah) {
+            currentPhase = PrayerPhase.SURAH_RECITATION
+            surahTargetLockedTimeMs = System.currentTimeMillis()
+        } else if (currentPhase == PrayerPhase.FATIHAH_STANDBY) {
             // Woke up from standby by tracking a verse
             currentPhase = if (surah == 1) PrayerPhase.FATIHAH else PrayerPhase.SURAH_RECITATION
             updateBanner()
         }
 
         if (currentPhase == PrayerPhase.SURAH_RECITATION) {
-            if (surah > 1 || (surah == 1 && ayah > 7)) {
+            if (isOutsideFatihah) {
                 rakahVersesReadCount++
                 lastReadSurah = surah
                 lastReadAyah = ayah
@@ -313,20 +318,19 @@ class PrayerSessionManager {
     }
 
     /**
-     * Checks if 14 seconds have elapsed since last matched recitation or active recitation stream while in SURAH_RECITATION.
+     * Checks if 10 seconds have elapsed since last matched recitation while in SURAH_RECITATION.
+     * Exclusively relies on lastMatchedSpeechTimeMs (no stream noise resetting).
      */
     fun checkSilenceRuku(
         lastMatchedSpeechTimeMs: Long,
-        lastActiveRecitationStreamTimeMs: Long = 0L,
         onSaveBookmark: (page: Int, surah: Int, ayah: Int) -> Unit
     ): PrayerAction {
         if (appMode != AppMode.PRAYER || currentPhase != PrayerPhase.SURAH_RECITATION) return PrayerAction.NoAction
         if (rakahVersesReadCount < 1) return PrayerAction.NoAction
 
         val now = System.currentTimeMillis()
-        val effectiveLastSpeechMs = maxOf(lastMatchedSpeechTimeMs, lastActiveRecitationStreamTimeMs)
-        if (effectiveLastSpeechMs > 0L && (now - effectiveLastSpeechMs) >= RUKU_SILENCE_THRESHOLD_MS) {
-            AppLogger.i(TAG, "14s silence detected in SURAH_RECITATION (matchedSpeech=${now - lastMatchedSpeechTimeMs}ms, recitationStream=${now - lastActiveRecitationStreamTimeMs}ms). Triggering Ruku transition.")
+        if (lastMatchedSpeechTimeMs > 0L && (now - lastMatchedSpeechTimeMs) >= RUKU_SILENCE_THRESHOLD_MS) {
+            AppLogger.i(TAG, "10s silence detected in SURAH_RECITATION (matchedSpeech=${now - lastMatchedSpeechTimeMs}ms). Triggering Ruku transition.")
             return triggerRukuTransition(onSaveBookmark)
         }
         return PrayerAction.NoAction

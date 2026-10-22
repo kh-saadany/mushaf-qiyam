@@ -998,7 +998,15 @@ object QuranVocabularyFilter {
             val vStartPos = verseStartInRef[i]
             val vLen = verseCanonicalChars[vIdx].length
             val candidatePage = MushafPageRepository.getVerseByGlobalIndex(vIdx)?.page ?: currentConfirmedPage
-            val minCharsToEnter = if (candidatePage != currentConfirmedPage) {
+
+            // Early-Allah detection: check if لفظ الجلالة appears in the first 10 canonical chars of the new verse
+            val vCanon = verseCanonicalChars[vIdx]
+            val prefix10 = if (vCanon.length > 10) vCanon.substring(0, 10) else vCanon
+            val hasEarlyAllah = prefix10.contains("الله") || prefix10.contains("لله") || prefix10.contains("للهم") || prefix10.contains("وله")
+
+            val minCharsToEnter = if (hasEarlyAllah && vIdx > confirmedVerseIndex) {
+                minOf(8, maxOf(6, vLen * 2 / 3))
+            } else if (candidatePage != currentConfirmedPage) {
                 minOf(7, maxOf(3, vLen / 2))
             } else if (vIdx == confirmedVerseIndex + 1) {
                 minOf(4, maxOf(2, vLen / 2))
@@ -1006,6 +1014,30 @@ object QuranVocabularyFilter {
                 1
             } else {
                 4
+            }
+
+            // Gate 1: Strict Verse-Start Alignment & Gapped-Match Prevention for new verses
+            if (vIdx > confirmedVerseIndex && effectiveAlignResult.startJ >= vStartPos) {
+                // (a) Start position must be within first 2-3 chars of new verse
+                val startOffsetInVerse = effectiveAlignResult.startJ - vStartPos
+                if (startOffsetInVerse > 3) {
+                    // Match jumped past the opening of the new verse — reject entry
+                    if (bestEndJ > vStartPos) {
+                        isPendingAdvance = true
+                        break
+                    }
+                    continue
+                }
+                // (b) If match coverage inside new verse is sparse (<7 chars), require high contiguous density
+                val charsInNewVerse = bestEndJ - vStartPos
+                if (charsInNewVerse < 7 && (effectiveAlignResult.density < 0.80 || effectiveScore < 5)) {
+                    // Sparse/gapped match in the opening of new verse — reject entry
+                    if (bestEndJ > vStartPos) {
+                        isPendingAdvance = true
+                        break
+                    }
+                    continue
+                }
             }
 
             if (bestEndJ >= vStartPos + minCharsToEnter) {
@@ -1094,7 +1126,9 @@ object QuranVocabularyFilter {
 
         val charProgress = (offsetInVerse.toFloat() / maxOf(1, totalVerseChars).toFloat()).coerceIn(0f, 1f)
 
-        if (mv != null && mv.surah == 1 && mv.ayah == 7 && (offsetInVerse >= totalVerseChars - 4 || wordInAyah >= totalWords - 1)) {
+        val reachedDallin = stream.contains("ضالين") || stream.contains("ضلين") ||
+            offsetInVerse >= totalVerseChars - 7 || wordInAyah >= totalWords - 1
+        if (mv != null && mv.surah == 1 && mv.ayah == 7 && reachedDallin) {
             enterDiscoveryMode("Completed Al-Fatihah 1:7 (ولا الضالين)")
             discoveryRollingChars.setLength(0)
             discoveryRollingWords.clear()

@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.3.1"
+        const val APP_VERSION = "0.7.4.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -278,7 +278,6 @@ fun MainAppScreen(
             delay(1000L)
             val action = prayerManager.checkSilenceRuku(
                 lastMatchedSpeechTimeMs = lastMatchedSpeechTimeMs,
-                lastActiveRecitationStreamTimeMs = lastActiveRecitationStreamTimeMs,
                 onSaveBookmark = saveBookmark
             )
             executePrayerAction(action)

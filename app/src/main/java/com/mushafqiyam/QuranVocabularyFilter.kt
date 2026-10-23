@@ -900,7 +900,11 @@ object QuranVocabularyFilter {
         // even while anchor is locked, to catch repeated verses
         val vStart = maxOf(0, minOf(utteranceAnchorVerseIndex, confirmedVerseIndex - 1))
         val effectiveStart = maxOf(0, maxOf(vStart, confirmedVerseIndex - 7))
-        val vEnd = minOf(verseCanonicalChars.size - 1, confirmedVerseIndex + 2)
+        val vEnd = if (confirmedVerseIndex in 0..6) {
+            maxOf(6, minOf(verseCanonicalChars.size - 1, confirmedVerseIndex + 2))
+        } else {
+            minOf(verseCanonicalChars.size - 1, confirmedVerseIndex + 2)
+        }
 
         val windowVerseIndices = ArrayList<Int>(vEnd - effectiveStart + 1)
         val verseStartInRef = ArrayList<Int>(vEnd - effectiveStart + 1)
@@ -1087,11 +1091,12 @@ object QuranVocabularyFilter {
             return TrackingResult("", null, null, 0, effectiveRatio, recitationMode)
         }
 
-        // Strict advance guards: never skip more than 1 verse in a single step unless confirmed
+        // Strict advance guards: never skip more than 1 verse in a single step unless confirmed or inside Fatihah
         if (targetVerseIdx > confirmedVerseIndex + 1) {
+            val isInsideFatihah = (confirmedVerseIndex in 0..5 && targetVerseIdx <= 6)
             val v2Pos = windowVerseIndices.indexOf(confirmedVerseIndex + 2)
             val v2Start = if (v2Pos >= 0) verseStartInRef[v2Pos] else -1
-            if (v2Start >= 0 && bestEndJ >= v2Start + 6) {
+            if (isInsideFatihah || (v2Start >= 0 && bestEndJ >= v2Start + 6)) {
                 confirmedVerseIndex = targetVerseIdx
             } else {
                 targetVerseIdx = confirmedVerseIndex + 1

@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.4.0"
+        const val APP_VERSION = "0.7.4.1"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -288,7 +288,8 @@ fun MainAppScreen(
         if (rawText.isNotBlank()) {
             // 1. Prayer Standby Wakeup Check
             if (prayerManager.appMode == AppMode.PRAYER && (prayerManager.currentPhase == PrayerPhase.FATIHAH_STANDBY || prayerManager.currentPhase == PrayerPhase.QIYAM_PAIR_COMPLETE)) {
-                if (!prayerManager.checkStandbyWakeup(rawText)) {
+                val wakeupAyah = prayerManager.checkStandbyWakeup(rawText)
+                if (wakeupAyah == null) {
                     // Reciter in standby; highlight remains on 1:1, ignore non-Fatihah sounds
                     prayerBannerText = prayerManager.topBannerText
                     return@handlePartialResult
@@ -296,14 +297,19 @@ fun MainAppScreen(
                     // Woke up on Fatihah opening/verse!
                     showQiyamNextPairDialog = false
                     prayerBannerText = prayerManager.topBannerText
-                    QuranVocabularyFilter.resetPointerToSurahAyah(1, 1)
+                    val targetAyah = wakeupAyah.coerceIn(1, 7)
+                    val targetGIdx = MushafPageRepository.getGlobalVerseIndex(1, targetAyah)
+                    QuranVocabularyFilter.resetPointerToVerse(targetGIdx)
                     currentPage = 1
                     activeSurah = 1
-                    activeAyah = 1
+                    activeAyah = targetAyah
                     activeWordProgress = 0f
-                    activeLineNumber = 1
+                    val candidateLine = MushafPageRepository.findAyahLinesOnPage(1, 1, targetAyah, 0f).first?.lineNumber
+                    activeLineNumber = candidateLine ?: targetAyah
                     activeLinePage = 1
                     isDiscoveryMode = false
+                    prayerManager.onVerseTracked(1, targetAyah, 1, 0f)
+                    AppLogger.i("PrayerTransition", "Woke up from Standby at Fatihah 1:$targetAyah (line=$activeLineNumber, gIdx=$targetGIdx)")
                 }
             }
 
@@ -359,11 +365,6 @@ fun MainAppScreen(
                 hasRecitedAnyVerse = true
                 val nowMs = System.currentTimeMillis()
                 lastMatchedSpeechTimeMs = nowMs
-
-                if (prayerManager.appMode == AppMode.PRAYER) {
-                    prayerManager.onVerseTracked(mv.surah, mv.ayah, mv.page)
-                    prayerBannerText = prayerManager.topBannerText
-                }
 
                 val fullText = if (recognizedText.isEmpty()) filteredText else "$recognizedText $filteredText"
                 val textWords = fullText.split(" ")
@@ -424,19 +425,23 @@ fun MainAppScreen(
                                 lastLineChangeTimeMs = nowMs
                             }
                         }
+                        if (prayerManager.appMode == AppMode.PRAYER) {
+                            prayerManager.onVerseTracked(mv.surah, mv.ayah, mv.page, activeWordProgress)
+                            prayerBannerText = prayerManager.topBannerText
+                        }
                     }
 
-                    // Early Bottom-Line Proactive Page Flip
+                    // Early Bottom-Line Proactive Page Flip: Flip DURING the recitation of the last word of the page
                     val isLastVerseOnPage = run {
                         val pageVerses = MushafPageRepository.getPageVerses(currentPage)
                         pageVerses.isNotEmpty() && pageVerses.last().let { it.surah == mv.surah && it.ayah == mv.ayah }
                     }
                     val linesPair = MushafPageRepository.findAyahLinesOnPage(currentPage, mv.surah, mv.ayah, activeWordProgress)
                     val isBottomLine = (linesPair.second == null)
+                    val isLastWordOnPage = (trackingResult.currentWordInAyah >= trackingResult.totalWordsInAyah - 1)
 
-                    val isNearEndOfPage = (isLastVerseOnPage && isBottomLine) &&
-                        trackingResult.totalWordsInAyah >= 3 &&
-                        activeWordProgress >= 0.94f &&
+                    val isNearEndOfPage = (isLastVerseOnPage && isBottomLine && isLastWordOnPage) &&
+                        activeWordProgress >= 0.95f &&
                         currentPage < 604
 
                     if (isNearEndOfPage && earlyTurnTriggeredForPage != currentPage) {
@@ -446,7 +451,7 @@ fun MainAppScreen(
                             pendingTargetPage = currentPage + 1
                             pendingPageConfirmCount = 1
                         }
-                        if (pendingPageConfirmCount >= 2) {
+                        if (pendingPageConfirmCount >= 3) {
                             val prevP = currentPage
                             currentPage = currentPage + 1
                             val nextPageVerses = MushafPageRepository.getPageVerses(currentPage)
@@ -461,7 +466,7 @@ fun MainAppScreen(
                             lastPageTurnTimeMs = nowMs
                             pendingTargetPage = -1
                             pendingPageConfirmCount = 0
-                            AppLogger.i("PageTurn", "Proactive early flip from $prevP to $currentPage (progress=$activeWordProgress)")
+                            AppLogger.i("PageTurn", "Proactive early flip from $prevP to $currentPage during last word (progress=$activeWordProgress)")
                         }
                     } else {
                         // Reset pending counters when settled on currentPage
@@ -579,6 +584,10 @@ fun MainAppScreen(
                         activeLinePage = currentPage
                         activeLineNumber = candidateLine ?: 1
                         earlyTurnTriggeredForPage = -1
+                        if (prayerManager.appMode == AppMode.PRAYER) {
+                            prayerManager.onVerseTracked(mv.surah, mv.ayah, mv.page, activeWordProgress)
+                            prayerBannerText = prayerManager.topBannerText
+                        }
                     } else {
                         // Flip deferred (waiting for debounce or suppressed):
                         // Keep highlight steady and continuous on currentPage!
@@ -837,7 +846,7 @@ fun MainAppScreen(
                     ) {
                         IconButton(onClick = {
                             if (prayerManager.appMode == AppMode.FREE_READING) {
-                                if (hasRecitedAnyVerse) {
+                                if (hasRecitedAnyVerse && activeWordProgress >= 0.65f) {
                                     saveNextVerseAsBookmark(activeSurah, activeAyah)
                                 } else {
                                     saveBookmark(currentPage, activeSurah, activeAyah)
@@ -974,6 +983,10 @@ fun MainAppScreen(
             }
 
             // Main Interactive Mushaf Page Viewer
+            val plannedTargetVerse = if (prayerManager.appMode == AppMode.PRAYER) {
+                prayerManager.getPlannedTargetVerse(savedBookmark)
+            } else null
+
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 MushafPageViewer(
                     currentPage = currentPage,
@@ -982,6 +995,8 @@ fun MainAppScreen(
                     wordProgress = activeWordProgress,
                     activeLineNumber = activeLineNumber,
                     isScrollMode = isScrollMode,
+                    isPrayerMode = (prayerManager.appMode == AppMode.PRAYER),
+                    plannedTargetVerse = plannedTargetVerse,
                     onPageChanged = { newPage ->
                         currentPage = newPage
                         val pageVerses = MushafPageRepository.getPageVerses(newPage)
@@ -1028,7 +1043,7 @@ fun MainAppScreen(
                         ) {
                             IconButton(onClick = {
                                 if (prayerManager.appMode == AppMode.FREE_READING) {
-                                    if (hasRecitedAnyVerse) {
+                                    if (hasRecitedAnyVerse && activeWordProgress >= 0.65f) {
                                         saveNextVerseAsBookmark(activeSurah, activeAyah)
                                     } else {
                                         saveBookmark(currentPage, activeSurah, activeAyah)

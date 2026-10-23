@@ -379,7 +379,8 @@ object MushafPageRepository {
         for (i in matchingIndices.indices) {
             cumulativeWidth += lineWidths[i]
             val cumulativeFraction = cumulativeWidth / totalAyahWidth
-            if (clampedProgress < cumulativeFraction || i == matchingIndices.size - 1) {
+            // Add 0.08f hysteresis margin so highlight stays on current line until its last word is fully pronounced
+            if (clampedProgress < (cumulativeFraction + 0.08f) || i == matchingIndices.size - 1) {
                 chosenIndex = matchingIndices[i]
                 break
             }
@@ -394,6 +395,24 @@ object MushafPageRepository {
 
     fun getSurahName(surahNumber: Int): String {
         return surahInfoList.firstOrNull { it.number == surahNumber }?.name ?: "سورة $surahNumber"
+    }
+
+    fun getPreviewWordsFromVerse(surah: Int, ayah: Int, wordLimit: Int = 15): String {
+        val startGIdx = getGlobalVerseIndex(surah, ayah)
+        val firstVerse = getVerseByGlobalIndex(startGIdx) ?: return ""
+        val collectedWords = ArrayList<String>(wordLimit)
+        var currIdx = startGIdx
+        while (currIdx < allVersesList.size && collectedWords.size < wordLimit) {
+            val v = allVersesList[currIdx]
+            if (v.surah != firstVerse.surah) break
+            val words = v.text.split(" ").filter { it.isNotBlank() }
+            for (w in words) {
+                collectedWords.add(w)
+                if (collectedWords.size >= wordLimit) break
+            }
+            currIdx++
+        }
+        return if (collectedWords.isNotEmpty()) collectedWords.joinToString(" ") + "..." else ""
     }
 
     fun findTappedAyah(pageNumber: Int, normX: Float, normY: Float): Pair<Int, Int>? {

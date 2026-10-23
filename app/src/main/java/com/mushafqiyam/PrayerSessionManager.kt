@@ -88,6 +88,8 @@ class PrayerSessionManager {
         private set
     var rakahVersesReadCount: Int = 0
         private set
+    var lastVerseMaxProgress: Float = 0f
+        private set
 
     // For 4 consecutive mismatches fallback
     private var consecutiveQuranMismatchesInTarget: Int = 0
@@ -97,6 +99,32 @@ class PrayerSessionManager {
     // Top banner announcement text
     var topBannerText: String? = null
         private set
+
+    fun getPlannedTargetVerse(savedBookmark: Triple<Int, Int, Int>?): Triple<Int, Int, Int>? {
+        if (appMode != AppMode.PRAYER) return null
+        val currentPlan = plans.getOrNull(currentRakah - 1) ?: RakahPlan(RakahPlanType.CONTINUE_PREVIOUS)
+        return when (currentPlan.planType) {
+            RakahPlanType.CONTINUE_PREVIOUS -> {
+                if (currentRakah == 1) {
+                    if (savedBookmark != null && savedBookmark.second > 1) {
+                        savedBookmark
+                    } else if (lastReadSurah > 1) {
+                        Triple(lastReadPage, lastReadSurah, lastReadAyah)
+                    } else {
+                        val b2 = MushafPageRepository.getVerse(2, 1)
+                        Triple(b2?.page ?: 2, 2, 1)
+                    }
+                } else {
+                    Triple(lastReadPage, lastReadSurah, lastReadAyah)
+                }
+            }
+            RakahPlanType.CUSTOM_SURAH_AYAH -> {
+                val v = MushafPageRepository.getVerse(currentPlan.targetSurah, currentPlan.targetAyah)
+                Triple(v?.page ?: 1, currentPlan.targetSurah, currentPlan.targetAyah)
+            }
+            RakahPlanType.AUTO_DISCOVERY -> null
+        }
+    }
 
     fun startPrayerSession(config: PrayerSessionConfig, savedBookmark: Triple<Int, Int, Int>?): PrayerAction {
         appMode = AppMode.PRAYER
@@ -110,6 +138,7 @@ class PrayerSessionManager {
         currentRakah = 1
         currentPhase = PrayerPhase.FATIHAH
         rakahVersesReadCount = 0
+        lastVerseMaxProgress = 0f
         consecutiveQuranMismatchesInTarget = 0
         isInFallbackDiscovery = false
 
@@ -129,6 +158,7 @@ class PrayerSessionManager {
         currentRakah = 1
         currentPhase = PrayerPhase.FATIHAH
         rakahVersesReadCount = 0
+        lastVerseMaxProgress = 0f
         consecutiveQuranMismatchesInTarget = 0
         isInFallbackDiscovery = false
         rukuRakah2TimeMs = 0L
@@ -153,10 +183,11 @@ class PrayerSessionManager {
         rukuRakah2TimeMs = 0L
         tasleemHeardForCurrentPair = false
         surahTargetLockedTimeMs = 0L
+        lastVerseMaxProgress = 0f
         AppLogger.i(TAG, "Exited Prayer Session back to FREE_READING mode.")
     }
 
-    fun onVerseTracked(surah: Int, ayah: Int, page: Int) {
+    fun onVerseTracked(surah: Int, ayah: Int, page: Int, progress: Float = 0f) {
         if (appMode != AppMode.PRAYER) return
 
         val isOutsideFatihah = surah > 1 || (surah == 1 && ayah > 7)
@@ -172,10 +203,15 @@ class PrayerSessionManager {
 
         if (currentPhase == PrayerPhase.SURAH_RECITATION) {
             if (isOutsideFatihah) {
-                rakahVersesReadCount++
-                lastReadSurah = surah
-                lastReadAyah = ayah
-                lastReadPage = page
+                if (surah == lastReadSurah && ayah == lastReadAyah && rakahVersesReadCount >= 1) {
+                    lastVerseMaxProgress = maxOf(lastVerseMaxProgress, progress)
+                } else {
+                    rakahVersesReadCount++
+                    lastReadSurah = surah
+                    lastReadAyah = ayah
+                    lastReadPage = page
+                    lastVerseMaxProgress = progress
+                }
                 consecutiveQuranMismatchesInTarget = 0
                 isInFallbackDiscovery = false
                 updateBanner()
@@ -237,18 +273,18 @@ class PrayerSessionManager {
     /**
      * Checks if reciter spoke Bismillah or any verse of Al-Fatihah while in FATIHAH_STANDBY or QIYAM_PAIR_COMPLETE.
      * Hardened against Tashahhud/Dua words ("الرحيم", "الرحمن", "الحمد" as isolated words).
-     * Strictly requires explicit multi-word Fatihah compounds.
+     * Returns detected Ayah number (1..7) based on exact Hafs numbering, or null if no match.
      */
-    fun checkStandbyWakeup(rawStream: String): Boolean {
-        if (appMode != AppMode.PRAYER) return false
-        if (currentPhase != PrayerPhase.FATIHAH_STANDBY && currentPhase != PrayerPhase.QIYAM_PAIR_COMPLETE) return false
+    fun checkStandbyWakeup(rawStream: String): Int? {
+        if (appMode != AppMode.PRAYER) return null
+        if (currentPhase != PrayerPhase.FATIHAH_STANDBY && currentPhase != PrayerPhase.QIYAM_PAIR_COMPLETE) return null
 
         val now = System.currentTimeMillis()
         if (currentPhase == PrayerPhase.QIYAM_PAIR_COMPLETE) {
             // Require at least 20 seconds elapsed since Ruku of Rakah 2 OR explicit Tasleem heard
             val timeSinceRuku = now - rukuRakah2TimeMs
             if (timeSinceRuku < 20000L && !tasleemHeardForCurrentPair) {
-                return false
+                return null
             }
         }
 
@@ -256,26 +292,60 @@ class PrayerSessionManager {
             .replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
             .replace("ى", "ي").replace("ة", "ه").replace("ؤ", "و").replace("ئ", "ي")
 
-        // Hardened against Tashahhud ("التحيات لله", "السلام عليك أيها النبي ورحمة الله", "إنك حميد مجيد", "الغفور الرحيم")
-        val isExplicitFatihahCompound = clean.contains("بسمالله") || clean.contains("بسملله") ||
-                clean.contains("الحمدلله") || clean.contains("ربالعالمين") || clean.contains("ربلعلمين") ||
-                clean.contains("الرحمنالرحيم") || clean.contains("رحمنلرحيم") ||
-                clean.contains("مالكيوم") || clean.contains("ملكيوم") || clean.contains("يومالدين") || clean.contains("يوملدين") ||
-                clean.contains("اياكنعبد") || clean.contains("واياكنستعين") ||
-                clean.contains("اهدنالصراط") || clean.contains("اهدينصراط") || clean.contains("صراطلذين") ||
-                clean.contains("غيرالمغضوب") || clean.contains("غيرلمغضوب") || clean.contains("ولاضالين")
+        // Exact Hafs verse numbering (1..7):
+        // 1: بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+        // 2: الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ
+        // 3: الرَّحْمَٰنِ الرَّحِيمِ
+        // 4: مَالِكِ يَوْمِ الدِّينِ
+        // 5: إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ
+        // 6: اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ
+        // 7: صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ
+        val detectedAyah: Int? = when {
+            // Ayah 1: Check Basmalah FIRST so it is never shadowed by Ayah 3 ("الرحمن الرحيم")
+            clean.contains("بسمالله") || clean.contains("بسملله") -> 1
 
-        if (isExplicitFatihahCompound) {
+            // Ayah 7: صراط الذين أنعمت عليهم غير المغضوب عليهم ولا الضالين
+            clean.contains("ولاضالين") || clean.contains("ضالين") ||
+                    clean.contains("غيرالمغضوب") || clean.contains("غيرلمغضوب") ||
+                    clean.contains("عليهمغير") || clean.contains("صراطالذين") ||
+                    clean.contains("صراطلذين") || clean.contains("انعمتعليهم") -> 7
+
+            // Ayah 6: اهدنا الصراط المستقيم
+            clean.contains("اهدناالصراط") || clean.contains("اهدنالصراط") ||
+                    clean.contains("اهدينصراط") || clean.contains("المستقيم") ||
+                    clean.contains("لمستقيم") -> 6
+
+            // Ayah 5: إياك نعبد وإياك نستعين
+            clean.contains("اياكنعبد") || clean.contains("واياكنستعين") ||
+                    clean.contains("نعبدواياك") || clean.contains("نستعين") -> 5
+
+            // Ayah 4: مالك يوم الدين
+            clean.contains("مالكيوم") || clean.contains("ملكيوم") ||
+                    clean.contains("يومالدين") || clean.contains("يوملدين") -> 4
+
+            // Ayah 3: الرحمن الرحيم (checked after Basmalah)
+            clean.contains("الرحمنالرحيم") || clean.contains("رحمنلرحيم") ||
+                    clean.contains("رحمنرحيم") -> 3
+
+            // Ayah 2: الحمد لله رب العالمين
+            clean.contains("الحمدلله") || clean.contains("الحمدلل") ||
+                    clean.contains("ربالعالمين") || clean.contains("ربلعلمين") ||
+                    clean.contains("ربالعلمين") -> 2
+
+            else -> null
+        }
+
+        if (detectedAyah != null) {
             if (currentPhase == PrayerPhase.QIYAM_PAIR_COMPLETE) {
                 startNextQiyamPair()
             } else {
                 currentPhase = PrayerPhase.FATIHAH
             }
             updateBanner()
-            AppLogger.i(TAG, "Woke up from standby ($currentPhase) via Fatihah compound: stream='$rawStream'")
-            return true
+            AppLogger.i(TAG, "Woke up from standby ($currentPhase) via Fatihah Ayah $detectedAyah: stream='$rawStream'")
+            return detectedAyah
         }
-        return false
+        return null
     }
 
     /**
@@ -337,15 +407,16 @@ class PrayerSessionManager {
     }
 
     private fun triggerRukuTransition(onSaveBookmark: (page: Int, surah: Int, ayah: Int) -> Unit): PrayerAction {
-        // Requirement: Always advance bookmark to NEXT verse (N + 1)
+        // Distinguish completed verse (>= 65% progress) vs barely entered verse (< 65% progress)
+        val shouldAdvance = (lastVerseMaxProgress >= 0.65f)
         val gIdx = MushafPageRepository.getGlobalVerseIndex(lastReadSurah, lastReadAyah)
-        val nextV = if (gIdx >= 6235) { // 114:6 is index 6235 (0-based)
-            MushafPageRepository.getVerse(2, 1) // Wrap around to Al-Baqarah 2:1
-        } else {
-            MushafPageRepository.getVerseByGlobalIndex(gIdx + 1) ?: MushafPageRepository.getVerse(2, 1)
-        }
-        val nextBookmark = if (nextV != null) {
-            Triple(nextV.page, nextV.surah, nextV.ayah)
+        val nextBookmark = if (shouldAdvance) {
+            val nextV = if (gIdx >= 6235) { // 114:6 is index 6235 (0-based)
+                MushafPageRepository.getVerse(2, 1) // Wrap around to Al-Baqarah 2:1
+            } else {
+                MushafPageRepository.getVerseByGlobalIndex(gIdx + 1) ?: MushafPageRepository.getVerse(2, 1)
+            }
+            if (nextV != null) Triple(nextV.page, nextV.surah, nextV.ayah) else Triple(lastReadPage, lastReadSurah, lastReadAyah)
         } else {
             Triple(lastReadPage, lastReadSurah, lastReadAyah)
         }
@@ -354,8 +425,10 @@ class PrayerSessionManager {
         lastReadPage = nextBookmark.first
         lastReadSurah = nextBookmark.second
         lastReadAyah = nextBookmark.third
+        val recordedProgress = lastVerseMaxProgress
+        lastVerseMaxProgress = 0f
         isInFallbackDiscovery = false
-        AppLogger.i(TAG, "Saved Rak'ah $currentRakah bookmark at next verse [Surah $lastReadSurah: Ayah $lastReadAyah, Page $lastReadPage]")
+        AppLogger.i(TAG, "Saved Rak'ah $currentRakah bookmark at [Surah $lastReadSurah: Ayah $lastReadAyah, Page $lastReadPage] (advanced=$shouldAdvance, maxProg=${(recordedProgress * 100).toInt()}%)")
 
         if (isQiyamMode && currentRakah == 2) {
             rukuRakah2TimeMs = System.currentTimeMillis()
@@ -388,21 +461,26 @@ class PrayerSessionManager {
     fun onTasleem(onSaveBookmark: (page: Int, surah: Int, ayah: Int) -> Unit): PrayerAction {
         if (appMode != AppMode.PRAYER) return PrayerAction.NoAction
 
-        // If reciter was still in SURAH_RECITATION with at least 1 verse read, advance and save bookmark to next verse N+1
+        // If reciter was still in SURAH_RECITATION with at least 1 verse read, advance and save bookmark to next verse N+1 only if >= 65% progress
         if (currentPhase == PrayerPhase.SURAH_RECITATION && rakahVersesReadCount >= 1) {
-            val globalIdx = MushafPageRepository.getGlobalVerseIndex(lastReadSurah, lastReadAyah)
-            val nextV = if (globalIdx >= 6235) {
-                MushafPageRepository.getVerse(2, 1)
-            } else {
-                MushafPageRepository.getVerseByGlobalIndex(globalIdx + 1) ?: MushafPageRepository.getVerse(2, 1)
+            val shouldAdvance = (lastVerseMaxProgress >= 0.65f)
+            if (shouldAdvance) {
+                val globalIdx = MushafPageRepository.getGlobalVerseIndex(lastReadSurah, lastReadAyah)
+                val nextV = if (globalIdx >= 6235) {
+                    MushafPageRepository.getVerse(2, 1)
+                } else {
+                    MushafPageRepository.getVerseByGlobalIndex(globalIdx + 1) ?: MushafPageRepository.getVerse(2, 1)
+                }
+                if (nextV != null) {
+                    lastReadSurah = nextV.surah
+                    lastReadAyah = nextV.ayah
+                    lastReadPage = nextV.page
+                }
             }
-            if (nextV != null) {
-                lastReadSurah = nextV.surah
-                lastReadAyah = nextV.ayah
-                lastReadPage = nextV.page
-                onSaveBookmark(lastReadPage, lastReadSurah, lastReadAyah)
-                AppLogger.i(TAG, "Direct Tasleem during recitation: saved next verse bookmark [Surah $lastReadSurah: Ayah $lastReadAyah, Page $lastReadPage]")
-            }
+            onSaveBookmark(lastReadPage, lastReadSurah, lastReadAyah)
+            val recordedProgress = lastVerseMaxProgress
+            lastVerseMaxProgress = 0f
+            AppLogger.i(TAG, "Direct Tasleem during recitation: saved bookmark [Surah $lastReadSurah: Ayah $lastReadAyah, Page $lastReadPage] (advanced=$shouldAdvance, maxProg=${(recordedProgress * 100).toInt()}%)")
         }
 
         if (isQiyamMode) {

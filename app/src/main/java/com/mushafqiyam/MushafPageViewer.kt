@@ -53,6 +53,8 @@ fun MushafPageViewer(
     onFiveTap: () -> Unit,
     wordProgress: Float = 0f,
     activeLineNumber: Int = -1,
+    isPrayerMode: Boolean = false,
+    plannedTargetVerse: Triple<Int, Int, Int>? = null,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -157,7 +159,7 @@ fun MushafPageViewer(
                 }
             }
             
-            // Top Peek Overlay: Displays upcoming text from the next page when near bottom of current page
+            // Peek Overlay: Displays upcoming text from the next page or planned prayer target
             val pageVerses = remember(currentPage, MushafPageRepository.isInitialized) {
                 if (MushafPageRepository.isInitialized) MushafPageRepository.getPageVerses(currentPage) else emptyList()
             }
@@ -166,15 +168,29 @@ fun MushafPageViewer(
             }
             val isLastVerseActive = pageVerses.lastOrNull()?.let { it.surah == activeSurah && it.ayah == activeAyah } ?: false
             val isNearBottomLine = (activeLineNumber > 0 && pageLines.isNotEmpty() && activeLineNumber >= pageLines.size - 1)
-            val shouldShowPeek = (isLastVerseActive || isNearBottomLine) && currentPage < 604
+            val isNearEndTrigger = (isLastVerseActive || isNearBottomLine)
 
-            val peekText = remember(shouldShowPeek, currentPage, MushafPageRepository.isInitialized) {
-                if (shouldShowPeek && MushafPageRepository.isInitialized && currentPage < 604) {
-                    val nextVerses = MushafPageRepository.getPageVerses(currentPage + 1)
-                    if (nextVerses.isNotEmpty()) {
-                        val allWords = nextVerses.flatMap { it.text.split(" ").filter { w -> w.isNotBlank() } }
-                        val first15 = allWords.take(15).joinToString(" ")
-                        "$first15..."
+            val isBottomPeekPage = (currentPage == 1 || currentPage == 2)
+
+            val shouldShowPeek = if (currentPage == 1 && isPrayerMode) {
+                isNearEndTrigger && plannedTargetVerse != null
+            } else {
+                isNearEndTrigger && currentPage < 604
+            }
+
+            val peekText = remember(shouldShowPeek, currentPage, plannedTargetVerse, isPrayerMode, MushafPageRepository.isInitialized) {
+                if (shouldShowPeek && MushafPageRepository.isInitialized) {
+                    if (currentPage == 1 && isPrayerMode && plannedTargetVerse != null) {
+                        MushafPageRepository.getPreviewWordsFromVerse(plannedTargetVerse.second, plannedTargetVerse.third, 15)
+                    } else if (currentPage < 604) {
+                        val nextVerses = MushafPageRepository.getPageVerses(currentPage + 1)
+                        if (nextVerses.isNotEmpty()) {
+                            val allWords = nextVerses.flatMap { it.text.split(" ").filter { w -> w.isNotBlank() } }
+                            val first15 = allWords.take(15).joinToString(" ")
+                            "$first15..."
+                        } else {
+                            ""
+                        }
                     } else {
                         ""
                     }
@@ -186,9 +202,14 @@ fun MushafPageViewer(
             if (shouldShowPeek && peekText.isNotEmpty()) {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp, start = 16.dp, end = 16.dp),
-                    contentAlignment = Alignment.TopCenter
+                        .fillMaxSize()
+                        .padding(
+                            top = if (isBottomPeekPage) 0.dp else 16.dp,
+                            bottom = if (isBottomPeekPage) 48.dp else 0.dp,
+                            start = 16.dp,
+                            end = 16.dp
+                        ),
+                    contentAlignment = if (isBottomPeekPage) Alignment.BottomCenter else Alignment.TopCenter
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                         Text(

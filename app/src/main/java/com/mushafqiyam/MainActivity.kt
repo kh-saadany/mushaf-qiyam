@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.4.1"
+        const val APP_VERSION = "0.7.5.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -341,6 +341,9 @@ fun MainAppScreen(
                 cleanStream.contains("سمعالله")
             if (!isDhikrOrIntroductory) {
                 lastActiveRecitationStreamTimeMs = System.currentTimeMillis()
+                if (trackingResult.isPendingVerseAdvance) {
+                    lastMatchedSpeechTimeMs = System.currentTimeMillis()
+                }
             }
 
             // 2. Prayer Dhikr & Tasleem Isolation Hooks

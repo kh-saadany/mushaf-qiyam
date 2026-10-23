@@ -73,7 +73,8 @@ object QuranVocabularyFilter {
         val totalWordsInAyah: Int = 1,
         val charProgress: Float = 0f,
         val isPrayerTransition: Boolean = false,
-        val isTasleem: Boolean = false
+        val isTasleem: Boolean = false,
+        val isPendingVerseAdvance: Boolean = false
     ) {
         val mode: RecitationMode get() = recitationMode
         val confidence: Double get() = highestSimilarity
@@ -233,6 +234,22 @@ object QuranVocabularyFilter {
                     norm.substring(0, norm.length - 1)
                 } else {
                     norm
+                }
+
+                // b. Strip silent Waw (e.g. "أُو۟لَٰٓئِكَ" -> "اليك", "أُو۟لُوا۟" -> "الو", "أُو۟لِى" -> "الي", "أُولَٰتِ" -> "الات")
+                if ((orig.contains("و\u06df") || orig.contains("و۟")) && phonWord.contains("اول")) {
+                    phonWord = phonWord.replace("اول", "ال")
+                } else {
+                    // Orthography-agnostic fallback for silent Waw words
+                    if (phonWord.startsWith("اوليك") || phonWord.startsWith("واوليك") || phonWord.startsWith("فاوليك")) {
+                        phonWord = phonWord.replace("اوليك", "اليك")
+                    } else if (norm == "اولوا") {
+                        phonWord = "الو"
+                    } else if (norm == "واولوا") {
+                        phonWord = "والو"
+                    } else if (phonWord == "اولات" || phonWord == "واولات") {
+                        phonWord = phonWord.replace("اولات", "الات")
+                    }
                 }
 
                 // b. Remove Shamsi & Qamari Wasl assimilation in connected speech
@@ -1020,22 +1037,21 @@ object QuranVocabularyFilter {
                 4
             }
 
-            // Gate 1: Strict Verse-Start Alignment & Gapped-Match Prevention for new verses
+            // Gate 1: Strict Verse-Start Alignment for short matches, with Long-Phrase Override for genuine recitation
             if (vIdx > confirmedVerseIndex && effectiveAlignResult.startJ >= vStartPos) {
-                // (a) Start position must be within first 2-3 chars of new verse
                 val startOffsetInVerse = effectiveAlignResult.startJ - vStartPos
-                if (startOffsetInVerse > 3) {
-                    // Match jumped past the opening of the new verse — reject entry
+                val matchedSpanInNewVerse = bestEndJ - effectiveAlignResult.startJ + 1
+                val isConfirmedLongRecitation = (effectiveScore >= 7 && matchedSpanInNewVerse >= 7 && effectiveAlignResult.density >= 0.72)
+
+                if (startOffsetInVerse > 3 && !isConfirmedLongRecitation) {
                     if (bestEndJ > vStartPos) {
                         isPendingAdvance = true
                         break
                     }
                     continue
                 }
-                // (b) If match coverage inside new verse is sparse (<7 chars), require high contiguous density
                 val charsInNewVerse = bestEndJ - vStartPos
                 if (charsInNewVerse < 7 && (effectiveAlignResult.density < 0.80 || effectiveScore < 5)) {
-                    // Sparse/gapped match in the opening of new verse — reject entry
                     if (bestEndJ > vStartPos) {
                         isPendingAdvance = true
                         break
@@ -1087,8 +1103,8 @@ object QuranVocabularyFilter {
         }
 
         if (isPendingAdvance) {
-            // Stay in HOLD state waiting for next characters
-            return TrackingResult("", null, null, 0, effectiveRatio, recitationMode)
+            // Stay in HOLD state waiting for next characters, but mark isPendingVerseAdvance
+            return TrackingResult("", null, null, 0, effectiveRatio, recitationMode, isPendingVerseAdvance = true)
         }
 
         // Strict advance guards: never skip more than 1 verse in a single step unless confirmed or inside Fatihah

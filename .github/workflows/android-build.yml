@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - path-b-zipformer
+      - v0.8.0-dev
   workflow_dispatch:
 
 permissions:

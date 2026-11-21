@@ -44,3 +44,25 @@ node_modules/
 # Temporary clipboard snapshots
 java_latest.zip
 argon_snapshot.md
+studio_snapshot.md
+
+# Secrets & Environment
+.env
+.env.*
+*.env
+*.local
+*.pem
+*.key
+*.pfx
+*.jks
+*.keystore
+credentials.json
+token.json
+
+# Local agent caches
+.agent/auth/
+.agent/cache/
+
+# OS & IDE
+Thumbs.db
+.vscode/

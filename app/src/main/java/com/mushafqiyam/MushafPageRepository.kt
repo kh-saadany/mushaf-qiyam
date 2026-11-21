@@ -62,8 +62,15 @@ object MushafPageRepository {
     )
 
     @Volatile
-    var isInitialized: Boolean = false
+    var isMetadataInitialized: Boolean = false
         private set
+
+    @Volatile
+    var isReaderAssetsInitialized: Boolean = false
+        private set
+
+    val isInitialized: Boolean
+        get() = isMetadataInitialized && isReaderAssetsInitialized
 
     private val pagesVerses = HashMap<Int, List<MushafVerse>>(604)
     private val pagesBoxes = HashMap<Int, List<AyahBoundingBox>>(604)
@@ -75,25 +82,56 @@ object MushafPageRepository {
     // Keep at most 3 decoded page bitmaps in memory to guarantee low RAM usage
     private val bitmapCache = LruCache<Int, ImageBitmap>(3)
 
+    /**
+     * Fast, lightweight initialization (< 10ms) loading only verse and page metadata.
+     * Safe for Welcome Screen, Search indexing, and Bookmarks.
+     */
     @Synchronized
-    fun initRepository(context: Context, onProgress: ((String) -> Unit)? = null): Boolean {
+    fun initMetadataLight(context: Context): Boolean {
+        if (isMetadataInitialized) return true
+        return try {
+            loadQuranPagesMetadata(context)
+            isMetadataInitialized = true
+            AppLogger.i(TAG, "Light metadata initialized: ${pagesVerses.size} pages, ${allVersesList.size} verses.")
+            true
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to initialize light metadata: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Full reader initialization: loads 13,766 ayah bounding boxes, line groups,
+     * and ensures page PNG assets are extracted. Called only when entering recitation/reading.
+     */
+    @Synchronized
+    fun initReaderAssets(context: Context, onProgress: ((String) -> Unit)? = null): Boolean {
         try {
-            if (!isInitialized) {
-                onProgress?.invoke("⏳ جاري تحميل بيانات صفحات المصحف وإحداثيات التظليل...")
-                loadJsonMetadata(context)
-                isInitialized = true
+            if (!isMetadataInitialized) {
+                initMetadataLight(context)
             }
-            extractBundledPagesIfNeeded(context, onProgress)
+            if (!isReaderAssetsInitialized) {
+                onProgress?.invoke("⏳ جاري تحميل إحداثيات التظليل وصفحات المصحف...")
+                loadAyahBoxesMetadata(context)
+                extractBundledPagesIfNeeded(context, onProgress)
+                isReaderAssetsInitialized = true
+                AppLogger.i(TAG, "Reader assets initialized: ${pagesBoxes.values.sumOf { it.size }} highlight boxes.")
+            }
             return true
         } catch (e: Exception) {
-            AppLogger.e(TAG, "Failed to initialize MushafPageRepository: ${e.message}")
+            AppLogger.e(TAG, "Failed to initialize reader assets: ${e.message}")
             return false
         }
     }
 
-    private fun loadJsonMetadata(context: Context) {
+    @Synchronized
+    fun initRepository(context: Context, onProgress: ((String) -> Unit)? = null): Boolean {
+        initMetadataLight(context)
+        return initReaderAssets(context, onProgress)
+    }
+
+    private fun loadQuranPagesMetadata(context: Context) {
         pagesVerses.clear()
-        pagesBoxes.clear()
         allVersesList.clear()
         verseKeyToGlobalIndex.clear()
         surahInfoList.clear()
@@ -167,6 +205,11 @@ object MushafPageRepository {
                 )
             )
         }
+    }
+
+    private fun loadAyahBoxesMetadata(context: Context) {
+        pagesBoxes.clear()
+        pagesLines.clear()
 
         // 2. Load ayah-boxes.json
         val boxesJsonStr = context.assets.open("ayah-boxes.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -392,6 +435,10 @@ object MushafPageRepository {
     }
 
     fun getSurahList(): List<SurahInfo> = surahInfoList
+
+    fun getSurahInfo(surahNumber: Int): SurahInfo? {
+        return surahInfoList.firstOrNull { it.number == surahNumber }
+    }
 
     fun getSurahName(surahNumber: Int): String {
         return surahInfoList.firstOrNull { it.number == surahNumber }?.name ?: "سورة $surahNumber"

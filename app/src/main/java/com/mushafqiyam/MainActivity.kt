@@ -9,7 +9,6 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -64,6 +63,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 sealed class ReaderTarget {
@@ -179,6 +179,8 @@ fun MainAppScreen(
     var activeWordProgress by remember { mutableFloatStateOf(0f) }
     var isDiscoveryMode by remember { mutableStateOf(true) }
     var isScrollMode by remember { mutableStateOf(false) } // Default: Horizontal page flip mode
+    var activeLineNumber by remember { mutableIntStateOf(1) }
+    var activeLinePage by remember { mutableIntStateOf(savedBookmark.first) }
 
     // Smart Prayer Session Manager State
     val prayerManager = remember { PrayerSessionManager() }
@@ -333,8 +335,6 @@ fun MainAppScreen(
     var lastPageTurnTimeMs by remember { mutableLongStateOf(0L) }
     var earlyTurnTriggeredForPage by remember { mutableIntStateOf(-1) }
 
-    var activeLineNumber by remember { mutableIntStateOf(1) }
-    var activeLinePage by remember { mutableIntStateOf(1) }
     var lastLineChangeTimeMs by remember { mutableLongStateOf(0L) }
     var backwardConfirmFrames by remember { mutableIntStateOf(0) }
 

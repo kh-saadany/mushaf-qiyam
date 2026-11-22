@@ -249,7 +249,9 @@ fun MainAppScreen(
                 withContext(Dispatchers.IO) {
                     if (!MushafPageRepository.isReaderAssetsInitialized) {
                         MushafPageRepository.initReaderAssets(context) { progressMsg ->
-                            withContext(Dispatchers.Main) { initStepText = progressMsg }
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                initStepText = progressMsg
+                            }
                             engineStatus = progressMsg
                         }
                     }

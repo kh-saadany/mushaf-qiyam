@@ -62,11 +62,11 @@ fun MushafPageViewer(
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         if (isScrollMode) {
-            val lazyListState = rememberLazyListState()
+            val lazyListState = rememberLazyListState(initialFirstVisibleItemIndex = (currentPage - 1).coerceIn(0, 603))
             var viewportHeight by remember { mutableIntStateOf(0) }
             var itemHeight by remember { mutableIntStateOf(0) }
 
-            LaunchedEffect(currentPage, activeSurah, activeAyah, activeLineNumber, (wordProgress * 100).toInt()) {
+            LaunchedEffect(currentPage, activeSurah, activeAyah, activeLineNumber, (wordProgress * 100).toInt(), itemHeight, viewportHeight) {
                 if (itemHeight > 0 && viewportHeight > 0) {
                     val (currentLine, _) = if (activeLineNumber > 0) {
                         val lines = MushafPageRepository.getPageLines(currentPage)
@@ -87,7 +87,13 @@ fun MushafPageViewer(
                         // Top-Third Focus: place the active line at ~30% from the top of the viewport
                         // This leaves ~70% below for the rest of the verse and upcoming verses.
                         val offset = (yInPage - (viewportHeight * 0.30f)).toInt()
-                        lazyListState.animateScrollToItem(currentPage - 1, offset)
+                        val targetIndex = (currentPage - 1).coerceIn(0, 603)
+                        val pageDiff = kotlin.math.abs(lazyListState.firstVisibleItemIndex - targetIndex)
+                        if (pageDiff > 1) {
+                            lazyListState.scrollToItem(targetIndex, offset)
+                        } else {
+                            lazyListState.animateScrollToItem(targetIndex, offset)
+                        }
                     }
                 }
             }
@@ -131,7 +137,12 @@ fun MushafPageViewer(
             LaunchedEffect(currentPage) {
                 val targetIdx = (currentPage - 1).coerceIn(0, 603)
                 if (pagerState.currentPage != targetIdx) {
-                    pagerState.animateScrollToPage(targetIdx)
+                    val pageDiff = kotlin.math.abs(pagerState.currentPage - targetIdx)
+                    if (pageDiff > 1) {
+                        pagerState.scrollToPage(targetIdx)
+                    } else {
+                        pagerState.animateScrollToPage(targetIdx)
+                    }
                 }
             }
 

@@ -80,3 +80,32 @@ Google AI Studio review of this report and issuance of the first directive in `.
    - Added dedicated `Icons.Outlined.BookmarkAdd` toolbar action in both portrait bottom bar and landscape rail.
    - Changed Surah picker icon in landscape rail to `Icons.Outlined.MenuBook` for disambiguation.
    - Polished `WelcomeScreen.kt` button order: "البحث" on the right, "المرجعيات" on the left in RTL.
+
+---
+
+## Executive Report #004: Phase 2 Polish & Architecture Alignment (v0.7.5.4)
+- **Timestamp:** 2026-11-22
+- **Branch:** `v0.8.0-dev`
+- **Resulting Version:** `0.7.5.4` (Code 93) [lite]
+- **Status:** COMPLETED & VERIFIED (Approved by Senior Software Architect)
+
+### 1. Implementation Summary of Phase 2 Polish Deliverables
+1. **Startup Engine Warmup over WelcomeScreen (`MainActivity.kt`):**
+   - Transferred one-time initialization of reader assets, full-mushaf vocabulary filter (6,236 verses), and Zipformer2 ONNX model to `LaunchedEffect(Unit)` on `Dispatchers.IO`.
+   - The interactive initialization modal ("جاري تهيئة النظام...") appears immediately on app launch and auto-dismisses upon engine readiness.
+   - Guarded concurrency using `CompletableDeferred<Unit>` (`warmupDeferred`) allowing `LaunchedEffect(currentScreen)` to safely await completion if the user navigates before warmup completes.
+   - **Zero Audio Leakage:** Audio recording (`startListening()`) and microphone permissions remain strictly isolated to `AppScreen.Reading`.
+2. **Restored Vector Icons in Welcome Screen (`ui/WelcomeScreen.kt`):**
+   - Restored vector icons across the 1-2-1 layout: `PlayArrow` (Start Recitation), `Search` (Search), `Bookmark` (Bookmarks), and `Settings` (Settings).
+   - Wrapped screen in `CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl)` with `maxLines = 1, softWrap = false`, and compact button padding.
+3. **Portrait Header Restructure & Streamlined Bottom Bar (`MainActivity.kt`):**
+   - **Portrait Top Header:** Added a clean transparent header row displaying Surah name on the right (`0xFF1B5E20`) and Page number on the left (`0xFF455A64`), clickable to open the Surah picker (`showJumpDialog`).
+   - **Streamlined Bottom Bar:** Removed the bulky middle Surah/Page column, reducing total bar width to ~284dp across 7 buttons with `Arrangement.SpaceEvenly`.
+   - Completely resolved the horizontal overflow clipping issue on 360dp–390dp devices; the Microphone toggle button is now 100% visible, accessible, and sized prominently (44dp).
+   - Preserved landscape sidebar layout unchanged.
+4. **Smart Jump Threshold Strategy (`MushafPageViewer.kt`):**
+   - Implemented threshold rule: if `abs(target - current) > 1` (distant jump from bookmarks, search, or picker), instant scroll (`scrollToItem` / `scrollToPage`) is invoked with 0ms delay and zero intermediate frames.
+   - If `abs(target - current) <= 1`, smooth animated scroll (`animateScrollToItem` / `animateScrollToPage`) is retained for natural line-by-line recitation tracking.
+   - Initialized `LazyColumn` with `initialFirstVisibleItemIndex = (currentPage - 1)` to eliminate initial jump glitch upon entering scroll mode.
+5. **Cross-System Version Synchronization:**
+   - Synchronized `versionCode = 93`, `versionName = "0.7.5.4"`, `APP_VERSION = "0.7.5.4"`, `package.json = 1.0.4`, and GitHub Actions release tag `v0.7.5.4`.

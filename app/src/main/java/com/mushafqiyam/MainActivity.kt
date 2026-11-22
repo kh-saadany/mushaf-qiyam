@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -76,7 +77,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.5.3"
+        const val APP_VERSION = "0.7.5.4"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -237,87 +238,99 @@ fun MainAppScreen(
         }
     }
 
-    LaunchedEffect(currentScreen) {
-        if (currentScreen == AppScreen.Reading) {
-            if (audioRecognizer == null) {
-                audioRecognizer = getAudioRecognizer()
-            }
-            val needsInit = !MushafPageRepository.isReaderAssetsInitialized || !(audioRecognizer?.isEngineInitialized == true)
-            if (needsInit) {
-                isInitializingReaderEngine = true
-                initStepText = "جاري تهيئة المصحف ومحرك الصوت..."
-            }
-            try {
-                withContext(Dispatchers.IO) {
-                    if (!MushafPageRepository.isReaderAssetsInitialized) {
-                        MushafPageRepository.initReaderAssets(context) { progressMsg ->
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                initStepText = progressMsg
-                            }
-                            engineStatus = progressMsg
-                        }
-                    }
-                    if (!QuranVocabularyFilter.isInitialized) {
-                        withContext(Dispatchers.Main) { initStepText = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..." }
-                        engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
-                        QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
-                    }
+    val warmupDeferred = remember { CompletableDeferred<Unit>() }
 
-                    when (val target = readerTarget) {
-                        is ReaderTarget.SpecificVerse -> {
-                            withContext(Dispatchers.Main) {
-                                prayerManager.exitPrayerMode()
-                                prayerBannerText = null
-                                currentPage = target.page
-                                activeSurah = target.surah
-                                activeAyah = target.ayah
-                                activeWordProgress = 0f
-                                activeLineNumber = -1
-                                activeLinePage = target.page
-                            }
-                            QuranVocabularyFilter.resetPointerToSurahAyah(target.surah, target.ayah)
-                            isDiscoveryMode = false
+    // Startup Engine Warmup: One-time background initialization over WelcomeScreen (Strictly NO mic/AudioRecord)
+    LaunchedEffect(Unit) {
+        if (audioRecognizer == null) {
+            audioRecognizer = getAudioRecognizer()
+        }
+        val needsInit = !MushafPageRepository.isReaderAssetsInitialized || !(audioRecognizer?.isEngineInitialized == true)
+        if (needsInit) {
+            isInitializingReaderEngine = true
+            initStepText = "جاري تهيئة المصحف ومحرك الصوت..."
+        }
+        try {
+            withContext(Dispatchers.IO) {
+                if (!MushafPageRepository.isReaderAssetsInitialized) {
+                    MushafPageRepository.initReaderAssets(context) { progressMsg ->
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            initStepText = progressMsg
                         }
-                        is ReaderTarget.Discovery -> {
-                            withContext(Dispatchers.Main) {
-                                prayerManager.exitPrayerMode()
-                                prayerBannerText = null
-                            }
-                            val savedGIdx = MushafPageRepository.getGlobalVerseIndex(savedBookmark.second, savedBookmark.third)
-                            if (savedGIdx > 0) {
-                                QuranVocabularyFilter.setLastNonFatihahVerseIndex(savedGIdx)
-                            }
-                            QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
-                            isDiscoveryMode = true
-                        }
-                        is ReaderTarget.Prayer -> {
-                            // Handled by PrayerSessionManager
-                        }
-                    }
-
-                    if (!(audioRecognizer?.isEngineInitialized == true)) {
-                        withContext(Dispatchers.Main) { initStepText = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..." }
-                        engineStatus = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
-                        audioRecognizer?.initEngine("tilawa_model")
-                    }
-                    val asrOk = audioRecognizer?.isEngineInitialized == true
-                    val pageCount = MushafPageRepository.getAvailableLocalPageCount(context)
-                    engineStatus = if (asrOk) {
-                        "✅ المحرك جاهز (6,236 آية) | الصفحات المحفوظة: $pageCount / 604"
-                    } else {
-                        "⚠️ المحرك بوضع الحماية | الصفحات المحفوظة: $pageCount / 604"
-                    }
-
-                    if (hasMicPermission && !isListening) {
-                        withContext(Dispatchers.Main) {
-                            val started = audioRecognizer?.startListening() == true
-                            isListening = started
-                        }
+                        engineStatus = progressMsg
                     }
                 }
-            } finally {
-                withContext(Dispatchers.Main) {
-                    isInitializingReaderEngine = false
+                if (!QuranVocabularyFilter.isInitialized) {
+                    withContext(Dispatchers.Main) { initStepText = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..." }
+                    engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
+                    QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
+                }
+                if (!(audioRecognizer?.isEngineInitialized == true)) {
+                    withContext(Dispatchers.Main) { initStepText = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..." }
+                    engineStatus = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
+                    audioRecognizer?.initEngine("tilawa_model")
+                }
+                val asrOk = audioRecognizer?.isEngineInitialized == true
+                val pageCount = MushafPageRepository.getAvailableLocalPageCount(context)
+                engineStatus = if (asrOk) {
+                    "✅ المحرك جاهز (6,236 آية) | الصفحات المحفوظة: $pageCount / 604"
+                } else {
+                    "⚠️ المحرك بوضع الحماية | الصفحات المحفوظة: $pageCount / 604"
+                }
+            }
+        } catch (e: Exception) {
+            AppLogger.e("MainActivity", "Startup warmup failed: ${e.message}", e)
+        } finally {
+            warmupDeferred.complete(Unit)
+            withContext(Dispatchers.Main) {
+                isInitializingReaderEngine = false
+            }
+        }
+    }
+
+    // Entering Reading Screen: awaits warmup completion, applies readerTarget, starts audio recording
+    LaunchedEffect(currentScreen) {
+        if (currentScreen == AppScreen.Reading) {
+            warmupDeferred.await()
+
+            withContext(Dispatchers.IO) {
+                when (val target = readerTarget) {
+                    is ReaderTarget.SpecificVerse -> {
+                        withContext(Dispatchers.Main) {
+                            prayerManager.exitPrayerMode()
+                            prayerBannerText = null
+                            currentPage = target.page
+                            activeSurah = target.surah
+                            activeAyah = target.ayah
+                            activeWordProgress = 0f
+                            activeLineNumber = -1
+                            activeLinePage = target.page
+                        }
+                        QuranVocabularyFilter.resetPointerToSurahAyah(target.surah, target.ayah)
+                        isDiscoveryMode = false
+                    }
+                    is ReaderTarget.Discovery -> {
+                        withContext(Dispatchers.Main) {
+                            prayerManager.exitPrayerMode()
+                            prayerBannerText = null
+                        }
+                        val savedGIdx = MushafPageRepository.getGlobalVerseIndex(savedBookmark.second, savedBookmark.third)
+                        if (savedGIdx > 0) {
+                            QuranVocabularyFilter.setLastNonFatihahVerseIndex(savedGIdx)
+                        }
+                        QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
+                        isDiscoveryMode = true
+                    }
+                    is ReaderTarget.Prayer -> {
+                        // Handled by PrayerSessionManager
+                    }
+                }
+
+                if (hasMicPermission && !isListening) {
+                    withContext(Dispatchers.Main) {
+                        val started = audioRecognizer?.startListening() == true
+                        isListening = started
+                    }
                 }
             }
         }
@@ -1182,6 +1195,35 @@ fun MainAppScreen(
                 }
             }
 
+            // Portrait Top Header: Surah Name (Right) & Page Number (Left) - Transparent background over page
+            if (!isLandscape) {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showJumpDialog = true }
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val surahText = if (MushafPageRepository.isMetadataInitialized) {
+                            MushafPageRepository.getSurahName(activeSurah)
+                        } else ""
+                        Text(
+                            text = surahText,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1B5E20)
+                        )
+                        Text(
+                            text = "صفحة $currentPage",
+                            fontSize = 13.sp,
+                            color = Color(0xFF455A64)
+                        )
+                    }
+                }
+            }
+
             // Main Interactive Mushaf Page Viewer
             val plannedTargetVerse = if (prayerManager.appMode == AppMode.PRAYER) {
                 prayerManager.getPlannedTargetVerse(savedBookmark)
@@ -1243,89 +1285,104 @@ fun MainAppScreen(
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            IconButton(onClick = {
-                                if (prayerManager.appMode == AppMode.FREE_READING) {
-                                    if (hasRecitedAnyVerse && activeWordProgress >= 0.65f) {
-                                        saveNextVerseAsBookmark(activeSurah, activeAyah)
+                            IconButton(
+                                onClick = {
+                                    if (prayerManager.appMode == AppMode.FREE_READING) {
+                                        if (hasRecitedAnyVerse && activeWordProgress >= 0.65f) {
+                                            saveNextVerseAsBookmark(activeSurah, activeAyah)
+                                        } else {
+                                            saveBookmark(currentPage, activeSurah, activeAyah)
+                                        }
                                     } else {
-                                        saveBookmark(currentPage, activeSurah, activeAyah)
+                                        prayerManager.exitPrayerMode()
+                                        prayerBannerText = null
                                     }
-                                } else {
-                                    prayerManager.exitPrayerMode()
-                                    prayerBannerText = null
-                                }
-                                audioRecognizer?.stopListening()
-                                isListening = false
-                                currentScreen = AppScreen.Welcome
-                            }) {
+                                    audioRecognizer?.stopListening()
+                                    isListening = false
+                                    currentScreen = AppScreen.Welcome
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
                                 Icon(Icons.Default.Close, "العودة للرئيسية", tint = Color.White)
                             }
 
-                            IconButton(onClick = {
-                                coroutineScope.launch {
-                                    val record = BookmarkRepository.addOrUpdateBookmark(context, currentPage, activeSurah, activeAyah)
-                                    Toast.makeText(context, "تم حفظ المرجعية: ${record.surahName} — آية ${record.ayah}", Toast.LENGTH_SHORT).show()
-                                }
-                            }) {
+                            IconButton(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        val record = BookmarkRepository.addOrUpdateBookmark(context, currentPage, activeSurah, activeAyah)
+                                        Toast.makeText(context, "تم حفظ المرجعية: ${record.surahName} — آية ${record.ayah}", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
                                 Icon(Icons.Outlined.BookmarkAdd, "حفظ مرجعية", tint = Color.White)
                             }
 
-                            IconButton(onClick = {
-                                if (isListening) {
-                                audioRecognizer?.stopListening()
-                                isListening = false
-                            }
-                            showPrayerSetupDialog = true
-                        }) {
-                            Icon(Icons.Outlined.Settings, "الإعدادات", tint = Color.White)
-                        }
-
-                            IconButton(onClick = { isScrollMode = !isScrollMode }) {
-                                Icon(if (isScrollMode) Icons.Outlined.FormatLineSpacing else Icons.Outlined.AutoStories, "وضع القراءة", tint = Color.White)
-                            }
-
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                                IconButton(onClick = { if (currentPage < 604) currentPage++ }) {
-                                    Icon(Icons.Default.ChevronRight, "التالي", tint = Color.White)
-                                }
-
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.clickable { showJumpDialog = true }.padding(horizontal = 8.dp)
-                                ) {
-                                    val sName = if (MushafPageRepository.isInitialized) MushafPageRepository.getSurahName(activeSurah) else ""
-                                    Text(sName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                    Text("ص $currentPage", color = Color(0xFFFFF59D), fontSize = 12.sp)
-                                }
-
-                                IconButton(onClick = { if (currentPage > 1) currentPage-- }) {
-                                    Icon(Icons.Default.ChevronLeft, "السابق", tint = Color.White)
-                                }
-                            }
-
-                            if (!hasMicPermission) {
-                                IconButton(onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }) {
-                                    Icon(Icons.Outlined.MicNone, "صلاحية الميكروفون", tint = Color.Gray)
-                                }
-                            } else {
-                                IconButton(onClick = {
+                            IconButton(
+                                onClick = {
                                     if (isListening) {
                                         audioRecognizer?.stopListening()
                                         isListening = false
-                                    } else {
-                                        if (!isDiscoveryMode) {
-                                            QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
-                                        } else {
-                                            QuranVocabularyFilter.enterDiscoveryMode("Start Listening")
-                                        }
-                                        val started = audioRecognizer?.startListening() == true
-                                        isListening = started
                                     }
-                                }) {
+                                    showPrayerSetupDialog = true
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Outlined.Settings, "الإعدادات", tint = Color.White)
+                            }
+
+                            IconButton(
+                                onClick = { isScrollMode = !isScrollMode },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(if (isScrollMode) Icons.Outlined.FormatLineSpacing else Icons.Outlined.AutoStories, "وضع القراءة", tint = Color.White)
+                            }
+
+                            IconButton(
+                                onClick = { if (currentPage < 604) currentPage++ },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Default.ChevronRight, "التالي", tint = Color.White)
+                            }
+
+                            IconButton(
+                                onClick = { if (currentPage > 1) currentPage-- },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Default.ChevronLeft, "السابق", tint = Color.White)
+                            }
+
+                            if (!hasMicPermission) {
+                                IconButton(
+                                    onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                                    modifier = Modifier.size(44.dp)
+                                ) {
+                                    Icon(Icons.Outlined.MicNone, "صلاحية الميكروفون", tint = Color.Gray)
+                                }
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        if (isListening) {
+                                            audioRecognizer?.stopListening()
+                                            isListening = false
+                                        } else {
+                                            if (!isDiscoveryMode) {
+                                                QuranVocabularyFilter.resetPointerToSurahAyah(activeSurah, activeAyah)
+                                            } else {
+                                                QuranVocabularyFilter.enterDiscoveryMode("Start Listening")
+                                            }
+                                            val started = audioRecognizer?.startListening() == true
+                                            isListening = started
+                                        }
+                                    },
+                                    modifier = Modifier.size(44.dp)
+                                ) {
                                     Icon(
                                         if (isListening) Icons.Default.GraphicEq else Icons.Outlined.MicNone,
                                         "استماع",

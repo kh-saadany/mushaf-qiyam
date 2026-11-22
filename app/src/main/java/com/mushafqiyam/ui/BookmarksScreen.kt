@@ -43,7 +43,7 @@ fun BookmarksScreen(
                 TopAppBar(
                     title = {
                         Text(
-                            text = "الفواصل المحفوظة",
+                            text = "المرجعيات المحفوظة",
                             fontWeight = FontWeight.Bold,
                             fontSize = 20.sp,
                             color = DarkSlate
@@ -153,7 +153,7 @@ fun BookmarksScreen(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFE2E8F0).copy(alpha = 0.5f))
                 ) {
                     Text(
-                        text = "ℹ️ ميزة الفواصل المتعددة وحفظ المواضع المخصصة قيد الإعداد للدفعة القادمة.",
+                        text = "ℹ️ ميزة المرجعيات المتعددة وحفظ المواضع المخصصة قيد التطوير للدفعة الثانية.",
                         fontSize = 13.sp,
                         color = Color(0xFF475569),
                         textAlign = TextAlign.Center,

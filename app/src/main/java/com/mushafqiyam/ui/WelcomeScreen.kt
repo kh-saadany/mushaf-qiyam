@@ -1,8 +1,11 @@
 package com.mushafqiyam.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.MenuBook
@@ -40,17 +43,21 @@ fun WelcomeScreen(
 ) {
     val surahName = MushafPageRepository.getSurahName(lastSurah)
 
+    val scrollState = rememberScrollState()
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(BgColor)
-            .padding(24.dp),
+            .padding(horizontal = 24.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .widthIn(max = 500.dp),
+                .widthIn(max = 500.dp)
+                .verticalScroll(scrollState)
+                .padding(vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -133,108 +140,84 @@ fun WelcomeScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Main Primary Action: Start Recitation
+            // Row 1: Primary Action: "بدء التلاوة"
             Button(
                 onClick = onStartRecitation,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(14.dp),
+                    .fillMaxWidth(0.68f)
+                    .height(52.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryEmerald),
-                elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+                elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(26.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "البدء المباشر في التلاوة",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                }
+                Text(
+                    text = "بدء التلاوة",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Secondary Actions Grid / Row: Settings, Search, Bookmarks
+            // Row 2: Secondary Actions: "المرجعيات" & "البحث"
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.fillMaxWidth(0.88f),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Bookmarks Button
                 OutlinedButton(
                     onClick = onOpenBookmarks,
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkSlate)
+                    border = BorderStroke(1.5.dp, PrimaryEmerald),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryEmerald)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Bookmark,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "الفواصل",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
+                        text = "المرجعيات",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryEmerald
                     )
                 }
 
-                // Search Button
                 OutlinedButton(
                     onClick = onOpenSearch,
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp),
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkSlate)
+                    border = BorderStroke(1.5.dp, PrimaryEmerald),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryEmerald)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "البحث",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryEmerald
                     )
                 }
+            }
 
-                // Settings Button
-                OutlinedButton(
-                    onClick = onOpenSettings,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = DarkSlate)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "الإعدادات",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Row 3: Tertiary Action: "الإعدادات" (Centered)
+            OutlinedButton(
+                onClick = onOpenSettings,
+                modifier = Modifier
+                    .fillMaxWidth(0.55f)
+                    .height(48.dp),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.5.dp, PrimaryEmerald),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryEmerald)
+            ) {
+                Text(
+                    text = "الإعدادات",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryEmerald
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))

@@ -197,6 +197,9 @@ fun MainAppScreen(
                 } else {
                     saveBookmark(currentPage, activeSurah, activeAyah)
                 }
+            } else {
+                prayerManager.exitPrayerMode()
+                prayerBannerText = null
             }
             audioRecognizer?.stopListening()
             isListening = false
@@ -242,65 +245,76 @@ fun MainAppScreen(
                 isInitializingReaderEngine = true
                 initStepText = "جاري تهيئة المصحف ومحرك الصوت..."
             }
-            withContext(Dispatchers.IO) {
-                if (!MushafPageRepository.isReaderAssetsInitialized) {
-                    MushafPageRepository.initReaderAssets(context) { progressMsg ->
-                        initStepText = progressMsg
-                        engineStatus = progressMsg
+            try {
+                withContext(Dispatchers.IO) {
+                    if (!MushafPageRepository.isReaderAssetsInitialized) {
+                        MushafPageRepository.initReaderAssets(context) { progressMsg ->
+                            withContext(Dispatchers.Main) { initStepText = progressMsg }
+                            engineStatus = progressMsg
+                        }
                     }
-                }
-                if (!QuranVocabularyFilter.isInitialized) {
-                    initStepText = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
-                    engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
-                    QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
-                }
+                    if (!QuranVocabularyFilter.isInitialized) {
+                        withContext(Dispatchers.Main) { initStepText = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..." }
+                        engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
+                        QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
+                    }
 
-                when (val target = readerTarget) {
-                    is ReaderTarget.SpecificVerse -> {
+                    when (val target = readerTarget) {
+                        is ReaderTarget.SpecificVerse -> {
+                            withContext(Dispatchers.Main) {
+                                prayerManager.exitPrayerMode()
+                                prayerBannerText = null
+                                currentPage = target.page
+                                activeSurah = target.surah
+                                activeAyah = target.ayah
+                                activeWordProgress = 0f
+                                activeLineNumber = -1
+                                activeLinePage = target.page
+                            }
+                            QuranVocabularyFilter.resetPointerToSurahAyah(target.surah, target.ayah)
+                            isDiscoveryMode = false
+                        }
+                        is ReaderTarget.Discovery -> {
+                            withContext(Dispatchers.Main) {
+                                prayerManager.exitPrayerMode()
+                                prayerBannerText = null
+                            }
+                            val savedGIdx = MushafPageRepository.getGlobalVerseIndex(savedBookmark.second, savedBookmark.third)
+                            if (savedGIdx > 0) {
+                                QuranVocabularyFilter.setLastNonFatihahVerseIndex(savedGIdx)
+                            }
+                            QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
+                            isDiscoveryMode = true
+                        }
+                        is ReaderTarget.Prayer -> {
+                            // Handled by PrayerSessionManager
+                        }
+                    }
+
+                    if (!(audioRecognizer?.isEngineInitialized == true)) {
+                        withContext(Dispatchers.Main) { initStepText = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..." }
+                        engineStatus = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
+                        audioRecognizer?.initEngine("tilawa_model")
+                    }
+                    val asrOk = audioRecognizer?.isEngineInitialized == true
+                    val pageCount = MushafPageRepository.getAvailableLocalPageCount(context)
+                    engineStatus = if (asrOk) {
+                        "✅ المحرك جاهز (6,236 آية) | الصفحات المحفوظة: $pageCount / 604"
+                    } else {
+                        "⚠️ المحرك بوضع الحماية | الصفحات المحفوظة: $pageCount / 604"
+                    }
+
+                    if (hasMicPermission && !isListening) {
                         withContext(Dispatchers.Main) {
-                            currentPage = target.page
-                            activeSurah = target.surah
-                            activeAyah = target.ayah
-                            activeWordProgress = 0f
-                            activeLineNumber = -1
-                            activeLinePage = target.page
+                            val started = audioRecognizer?.startListening() == true
+                            isListening = started
                         }
-                        QuranVocabularyFilter.resetPointerToSurahAyah(target.surah, target.ayah)
-                        isDiscoveryMode = false
-                    }
-                    is ReaderTarget.Discovery -> {
-                        val savedGIdx = MushafPageRepository.getGlobalVerseIndex(savedBookmark.second, savedBookmark.third)
-                        if (savedGIdx > 0) {
-                            QuranVocabularyFilter.setLastNonFatihahVerseIndex(savedGIdx)
-                        }
-                        QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
-                        isDiscoveryMode = true
-                    }
-                    is ReaderTarget.Prayer -> {
-                        // Handled by PrayerSessionManager
                     }
                 }
-
-                if (!(audioRecognizer?.isEngineInitialized == true)) {
-                    initStepText = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
-                    engineStatus = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
-                    audioRecognizer?.initEngine("tilawa_model")
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isInitializingReaderEngine = false
                 }
-                val asrOk = audioRecognizer?.isEngineInitialized == true
-                val pageCount = MushafPageRepository.getAvailableLocalPageCount(context)
-                engineStatus = if (asrOk) {
-                    "✅ المحرك جاهز (6,236 آية) | الصفحات المحفوظة: $pageCount / 604"
-                } else {
-                    "⚠️ المحرك بوضع الحماية | الصفحات المحفوظة: $pageCount / 604"
-                }
-
-                if (hasMicPermission && !isListening) {
-                    withContext(Dispatchers.Main) {
-                        val started = audioRecognizer?.startListening() == true
-                        isListening = started
-                    }
-                }
-                isInitializingReaderEngine = false
             }
         }
     }
@@ -1021,6 +1035,9 @@ fun MainAppScreen(
                                 } else {
                                     saveBookmark(currentPage, activeSurah, activeAyah)
                                 }
+                            } else {
+                                prayerManager.exitPrayerMode()
+                                prayerBannerText = null
                             }
                             audioRecognizer?.stopListening()
                             isListening = false
@@ -1235,6 +1252,9 @@ fun MainAppScreen(
                                     } else {
                                         saveBookmark(currentPage, activeSurah, activeAyah)
                                     }
+                                } else {
+                                    prayerManager.exitPrayerMode()
+                                    prayerBannerText = null
                                 }
                                 audioRecognizer?.stopListening()
                                 isListening = false

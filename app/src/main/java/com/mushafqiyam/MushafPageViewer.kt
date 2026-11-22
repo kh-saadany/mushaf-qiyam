@@ -29,7 +29,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -55,6 +57,7 @@ fun MushafPageViewer(
     activeLineNumber: Int = -1,
     isPrayerMode: Boolean = false,
     plannedTargetVerse: Triple<Int, Int, Int>? = null,
+    onAyahLongPressed: ((page: Int, surah: Int, ayah: Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -111,6 +114,7 @@ fun MushafPageViewer(
                                     wordProgress = wordProgress,
                                     activeLineNumber = activeLineNumber,
                                     onTapAyah = { s, a -> onAyahTapped(pageNum, s, a) },
+                                    onLongPressAyah = { s, a -> onAyahLongPressed?.invoke(pageNum, s, a) },
                                     onFiveTap = onFiveTap
                                 )
                             }
@@ -153,6 +157,7 @@ fun MushafPageViewer(
                             wordProgress = wordProgress,
                             activeLineNumber = activeLineNumber,
                             onTapAyah = { s, a -> onAyahTapped(pageNumber, s, a) },
+                            onLongPressAyah = { s, a -> onAyahLongPressed?.invoke(pageNumber, s, a) },
                             onFiveTap = onFiveTap
                         )
                     }
@@ -237,9 +242,11 @@ private fun MushafSinglePageCanvas(
     wordProgress: Float = 0f,
     activeLineNumber: Int = -1,
     onTapAyah: (surah: Int, ayah: Int) -> Unit,
+    onLongPressAyah: ((surah: Int, ayah: Int) -> Unit)? = null,
     onFiveTap: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     var pageBitmap by remember(pageNumber) { mutableStateOf<ImageBitmap?>(null) }
     var isLoading by remember(pageNumber) { mutableStateOf(true) }
 
@@ -301,29 +308,42 @@ private fun MushafSinglePageCanvas(
                 .background(Color(0xFFFFFDF5))
                 .border(1.dp, Color(0xFFD7CCC8), RoundedCornerShape(8.dp))
                 .pointerInput(pageNumber) {
-                    detectTapGestures { tapOffset ->
-                        val now = System.currentTimeMillis()
-                        if (now - lastTapTime < 500) {
-                            tapCount++
-                        } else {
-                            tapCount = 1
-                        }
-                        lastTapTime = now
+                    detectTapGestures(
+                        onTap = { tapOffset ->
+                            val now = System.currentTimeMillis()
+                            if (now - lastTapTime < 500) {
+                                tapCount++
+                            } else {
+                                tapCount = 1
+                            }
+                            lastTapTime = now
 
-                        if (tapCount >= 5) {
-                            tapCount = 0
-                            onFiveTap()
-                        }
+                            if (tapCount >= 5) {
+                                tapCount = 0
+                                onFiveTap()
+                            }
 
-                        if (size.width > 0 && size.height > 0) {
-                            val normX = (tapOffset.x / size.width.toFloat()).coerceIn(0f, 1f)
-                            val normY = (tapOffset.y / size.height.toFloat()).coerceIn(0f, 1f)
-                            val hit = MushafPageRepository.findTappedAyah(pageNumber, normX, normY)
-                            if (hit != null) {
-                                onTapAyah(hit.first, hit.second)
+                            if (size.width > 0 && size.height > 0) {
+                                val normX = (tapOffset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                val normY = (tapOffset.y / size.height.toFloat()).coerceIn(0f, 1f)
+                                val hit = MushafPageRepository.findTappedAyah(pageNumber, normX, normY)
+                                if (hit != null) {
+                                    onTapAyah(hit.first, hit.second)
+                                }
+                            }
+                        },
+                        onLongPress = { pressOffset ->
+                            if (size.width > 0 && size.height > 0) {
+                                val normX = (pressOffset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                val normY = (pressOffset.y / size.height.toFloat()).coerceIn(0f, 1f)
+                                val hit = MushafPageRepository.findTappedAyah(pageNumber, normX, normY)
+                                if (hit != null) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onLongPressAyah?.invoke(hit.first, hit.second)
+                                }
                             }
                         }
-                    }
+                    )
                 }
         ) {
             val bmp = pageBitmap

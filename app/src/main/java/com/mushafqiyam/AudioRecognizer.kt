@@ -44,6 +44,12 @@ class AudioRecognizer(private val context: Context) {
     @Volatile
     private var recognizer: OnlineRecognizer? = null
 
+    val isEngineInitialized: Boolean
+        get() = recognizer != null
+
+    @Volatile
+    var pendingStartListening: Boolean = false
+
     @Volatile
     private var currentStream: OnlineStream? = null
 
@@ -86,6 +92,14 @@ class AudioRecognizer(private val context: Context) {
      * Initializes the native Sherpa-ONNX Zipformer2-CTC Quran Phoneme engine.
      */
     fun initEngine(modelDirInAssets: String = "tilawa_model"): Boolean {
+        if (recognizer != null) {
+            AppLogger.i(TAG, "Sherpa-ONNX recognizer already initialized (idempotent)")
+            if (pendingStartListening) {
+                pendingStartListening = false
+                startListening()
+            }
+            return true
+        }
         return try {
             AppLogger.i(TAG, "Initializing Sherpa-ONNX Zipformer2-CTC Phoneme engine (Dir: $modelDirInAssets)...")
 
@@ -155,6 +169,10 @@ class AudioRecognizer(private val context: Context) {
 
                 AppLogger.i(TAG, "Sherpa-ONNX Zipformer2-CTC Quran engine initialized successfully (Model: $modelPath)")
                 logMemoryUsage("Post-Init")
+                if (pendingStartListening) {
+                    pendingStartListening = false
+                    startListening()
+                }
                 true
             } else {
                 AppLogger.w(TAG, "Zipformer2-CTC Quran model files missing: model=$modelPath, tokens=$tokensPath")
@@ -270,8 +288,8 @@ class AudioRecognizer(private val context: Context) {
         if (isRecording.get()) return true
         val rec = recognizer
         if (rec == null) {
-            AppLogger.w(TAG, "Sherpa-ONNX recognizer not initialized")
-            onError?.invoke("المحرك غير مهيأ")
+            AppLogger.i(TAG, "Sherpa-ONNX recognizer not initialized yet; queueing pendingStartListening = true")
+            pendingStartListening = true
             return false
         }
 
@@ -430,6 +448,7 @@ class AudioRecognizer(private val context: Context) {
     }
 
     fun stopListening() {
+        pendingStartListening = false
         if (!isRecording.get()) return
         isRecording.set(false)
 

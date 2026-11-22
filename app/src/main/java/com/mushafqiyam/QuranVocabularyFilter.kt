@@ -83,7 +83,12 @@ object QuranVocabularyFilter {
     private var allWords: List<QuranWord> = emptyList()
     private var verseFirstWordIndex: IntArray = IntArray(0)
     private var verseWordCount: IntArray = IntArray(0)
-    private var isFullMushafLoaded: Boolean = false
+    @Volatile
+    var isFullMushafLoaded: Boolean = false
+        private set
+
+    val isInitialized: Boolean
+        get() = isFullMushafLoaded
 
     // Inverted index for < 2ms global discovery across 6,236 verses
     private val skeletonToGlobalIndices = HashMap<String, IntArray>(16384)

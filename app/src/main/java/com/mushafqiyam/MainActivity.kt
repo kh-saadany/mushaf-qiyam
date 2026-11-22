@@ -15,6 +15,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
+import com.mushafqiyam.data.BookmarkRepository
 import com.mushafqiyam.ui.AppScreen
 import com.mushafqiyam.ui.WelcomeScreen
 import com.mushafqiyam.ui.BookmarksScreen
@@ -35,8 +37,10 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.FormatLineSpacing
+import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MicNone
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Settings
@@ -62,11 +66,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
+sealed class ReaderTarget {
+    data object Discovery : ReaderTarget()
+    data class SpecificVerse(val page: Int, val surah: Int, val ayah: Int) : ReaderTarget()
+    data object Prayer : ReaderTarget()
+}
+
 class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.5.2"
+        const val APP_VERSION = "0.7.5.3"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -115,9 +125,13 @@ fun MainAppScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? ComponentActivity
+    val coroutineScope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("mushaf_prefs", Context.MODE_PRIVATE) }
 
     var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Welcome) }
+    var readerTarget by remember { mutableStateOf<ReaderTarget>(ReaderTarget.Discovery) }
+    var isInitializingReaderEngine by remember { mutableStateOf(false) }
+    var initStepText by remember { mutableStateOf("جاري تهيئة المصحف ومحرك الصوت...") }
     var audioRecognizer: AudioRecognizer? by remember { mutableStateOf(null) }
 
     // Persistent Recitation Bookmark: load from SharedPreferences
@@ -223,26 +237,56 @@ fun MainAppScreen(
             if (audioRecognizer == null) {
                 audioRecognizer = getAudioRecognizer()
             }
+            val needsInit = !MushafPageRepository.isReaderAssetsInitialized || !(audioRecognizer?.isEngineInitialized == true)
+            if (needsInit) {
+                isInitializingReaderEngine = true
+                initStepText = "جاري تهيئة المصحف ومحرك الصوت..."
+            }
             withContext(Dispatchers.IO) {
                 if (!MushafPageRepository.isReaderAssetsInitialized) {
                     MushafPageRepository.initReaderAssets(context) { progressMsg ->
+                        initStepText = progressMsg
                         engineStatus = progressMsg
                     }
                 }
-                engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
-                QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
-
-                // Set saved bookmark for continuity priority in DISCOVERY mode
-                val savedGIdx = MushafPageRepository.getGlobalVerseIndex(savedBookmark.second, savedBookmark.third)
-                if (savedGIdx > 0) {
-                    QuranVocabularyFilter.setLastNonFatihahVerseIndex(savedGIdx)
+                if (!QuranVocabularyFilter.isInitialized) {
+                    initStepText = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
+                    engineStatus = "⏳ جاري بناء الفهرس العكسي لكامل المصحف (6,236 آية)..."
+                    QuranVocabularyFilter.initializeFullMushaf(MushafPageRepository.getAllVerses())
                 }
 
-                QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
-                isDiscoveryMode = true
+                when (val target = readerTarget) {
+                    is ReaderTarget.SpecificVerse -> {
+                        withContext(Dispatchers.Main) {
+                            currentPage = target.page
+                            activeSurah = target.surah
+                            activeAyah = target.ayah
+                            activeWordProgress = 0f
+                            activeLineNumber = -1
+                            activeLinePage = target.page
+                        }
+                        QuranVocabularyFilter.resetPointerToSurahAyah(target.surah, target.ayah)
+                        isDiscoveryMode = false
+                    }
+                    is ReaderTarget.Discovery -> {
+                        val savedGIdx = MushafPageRepository.getGlobalVerseIndex(savedBookmark.second, savedBookmark.third)
+                        if (savedGIdx > 0) {
+                            QuranVocabularyFilter.setLastNonFatihahVerseIndex(savedGIdx)
+                        }
+                        QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")
+                        isDiscoveryMode = true
+                    }
+                    is ReaderTarget.Prayer -> {
+                        // Handled by PrayerSessionManager
+                    }
+                }
 
-                engineStatus = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
-                val asrOk = audioRecognizer?.initEngine("tilawa_model") ?: false
+                if (!(audioRecognizer?.isEngineInitialized == true)) {
+                    initStepText = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
+                    engineStatus = "⏳ جاري تهيئة محرك Zipformer2 الفونيمي..."
+                    audioRecognizer?.initEngine("tilawa_model")
+                }
+                val asrOk = audioRecognizer?.isEngineInitialized == true
                 val pageCount = MushafPageRepository.getAvailableLocalPageCount(context)
                 engineStatus = if (asrOk) {
                     "✅ المحرك جاهز (6,236 آية) | الصفحات المحفوظة: $pageCount / 604"
@@ -256,6 +300,7 @@ fun MainAppScreen(
                         isListening = started
                     }
                 }
+                isInitializingReaderEngine = false
             }
         }
     }
@@ -825,6 +870,7 @@ fun MainAppScreen(
             onDismiss = { showPrayerSetupDialog = false },
             onStartPrayer = { config ->
                 showPrayerSetupDialog = false
+                readerTarget = ReaderTarget.Prayer
                 currentScreen = AppScreen.Reading
                 val action = prayerManager.startPrayerSession(config, savedBookmark)
                 executePrayerAction(action)
@@ -860,6 +906,47 @@ fun MainAppScreen(
         )
     }
 
+    if (isInitializingReaderEngine) {
+        Dialog(
+            onDismissRequest = {},
+            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color.White,
+                shadowElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .padding(24.dp)
+                        .fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = Color(0xFF0F5132),
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(42.dp)
+                    )
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Text(
+                        text = "جاري تهيئة النظام...",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1E293B)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = initStepText,
+                        fontSize = 13.sp,
+                        color = Color(0xFF64748B),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+
     when (currentScreen) {
         AppScreen.Welcome -> {
             WelcomeScreen(
@@ -868,6 +955,7 @@ fun MainAppScreen(
                 lastAyah = savedBookmark.third,
                 appVersion = MainActivity.APP_VERSION,
                 onStartRecitation = {
+                    readerTarget = ReaderTarget.Discovery
                     currentScreen = AppScreen.Reading
                     if (!hasMicPermission) {
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -889,6 +977,14 @@ fun MainAppScreen(
                 savedBookmark = savedBookmark,
                 onNavigateBack = { currentScreen = AppScreen.Welcome },
                 onContinueRecitation = {
+                    readerTarget = ReaderTarget.SpecificVerse(savedBookmark.first, savedBookmark.second, savedBookmark.third)
+                    currentScreen = AppScreen.Reading
+                    if (!hasMicPermission) {
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                onSelectBookmark = { page, surah, ayah ->
+                    readerTarget = ReaderTarget.SpecificVerse(page, surah, ayah)
                     currentScreen = AppScreen.Reading
                     if (!hasMicPermission) {
                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
@@ -934,6 +1030,15 @@ fun MainAppScreen(
                         }
 
                         IconButton(onClick = {
+                            coroutineScope.launch {
+                                val record = BookmarkRepository.addOrUpdateBookmark(context, currentPage, activeSurah, activeAyah)
+                                Toast.makeText(context, "تم حفظ المرجعية: ${record.surahName} — آية ${record.ayah}", Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(Icons.Outlined.BookmarkAdd, "حفظ مرجعية", tint = Color.White)
+                        }
+
+                        IconButton(onClick = {
                             if (isListening) {
                                 audioRecognizer?.stopListening()
                                 isListening = false
@@ -956,7 +1061,7 @@ fun MainAppScreen(
                                 onClick = { showJumpDialog = true },
                                 modifier = Modifier.padding(vertical = 8.dp)
                             ) {
-                                Icon(Icons.Outlined.Bookmarks, contentDescription = "السور", tint = Color.White)
+                                Icon(Icons.Outlined.MenuBook, contentDescription = "السور", tint = Color.White)
                             }
 
                             IconButton(onClick = { if (currentPage > 1) currentPage-- }) {
@@ -1098,6 +1203,12 @@ fun MainAppScreen(
                         QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)
                         isDiscoveryMode = false
                     },
+                    onAyahLongPressed = { page, surah, ayah ->
+                        coroutineScope.launch {
+                            val record = BookmarkRepository.addOrUpdateBookmark(context, page, surah, ayah)
+                            Toast.makeText(context, "تم حفظ المرجعية: ${record.surahName} — آية ${record.ayah}", Toast.LENGTH_SHORT).show()
+                        }
+                    },
                     onFiveTap = {
                         showDiagnosticsPanel = true
                     },
@@ -1130,6 +1241,15 @@ fun MainAppScreen(
                                 currentScreen = AppScreen.Welcome
                             }) {
                                 Icon(Icons.Default.Close, "العودة للرئيسية", tint = Color.White)
+                            }
+
+                            IconButton(onClick = {
+                                coroutineScope.launch {
+                                    val record = BookmarkRepository.addOrUpdateBookmark(context, currentPage, activeSurah, activeAyah)
+                                    Toast.makeText(context, "تم حفظ المرجعية: ${record.surahName} — آية ${record.ayah}", Toast.LENGTH_SHORT).show()
+                                }
+                            }) {
+                                Icon(Icons.Outlined.BookmarkAdd, "حفظ مرجعية", tint = Color.White)
                             }
 
                             IconButton(onClick = {

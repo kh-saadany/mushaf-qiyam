@@ -160,28 +160,11 @@ fun WelcomeScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Row 2: Secondary Actions: "المرجعيات" & "البحث"
+            // Row 2: Secondary Actions: "البحث" (Right) & "المرجعيات" (Left)
             Row(
                 modifier = Modifier.fillMaxWidth(0.88f),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedButton(
-                    onClick = onOpenBookmarks,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.5.dp, PrimaryEmerald),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryEmerald)
-                ) {
-                    Text(
-                        text = "المرجعيات",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PrimaryEmerald
-                    )
-                }
-
                 OutlinedButton(
                     onClick = onOpenSearch,
                     modifier = Modifier
@@ -193,6 +176,23 @@ fun WelcomeScreen(
                 ) {
                     Text(
                         text = "البحث",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryEmerald
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onOpenBookmarks,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.5.dp, PrimaryEmerald),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryEmerald)
+                ) {
+                    Text(
+                        text = "المرجعيات",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = PrimaryEmerald

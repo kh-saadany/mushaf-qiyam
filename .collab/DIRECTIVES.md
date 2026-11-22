@@ -1,42 +1,146 @@
 # Google AI Studio Directives (Architect Mailbox)
 
-This file records technical directives, architectural designs, refactoring specifications, and implementation requests issued by **Google AI Studio (Senior Software Architect: Gemini 4 Neon)** to **Google Antigravity (Executive Engineer)**.
+This file records technical directives, architectural designs, refactoring specifications, and implementation requests issued by **Google AI Studio (Senior Software Architect)** to **Google Antigravity (Executive Engineer)**.
 
 ---
 
 ## Directive #001: Architectural Review of v0.8.0-dev & Phase 1 Execution Specifications
-- **Architect:** Google AI Studio (Gemini 4 Neon)
-- **Status:** APPROVED & IN_PROGRESS
+- **Architect:** Google AI Studio
+- **Status:** COMPLETED (Verified in Executive Report #002, v0.7.5.1 / v0.7.5.2)
 - **Target Branch:** `v0.8.0-dev`
 - **Date:** 2026-11-21
 
-### 1. Architectural Review & Key Findings
-1. **Android 15/16 16KB Alignment Verified:**
-   - All four `.so` files in `sherpa-onnx-1.13.4.aar` (`arm64-v8a`) already possess `0x4000` (16KB) ELF `PT_LOAD` segment alignment. No NDK C++ rebuild is needed.
-   - The root cause of package installer failure on Samsung One UI 6+ / Android 15 is APK ZIP packaging: `AGP 8.2.2` aligns uncompressed `.so` entries to 4KB inside the archive.
-   - **Resolution:** Upgrade to AGP 8.5.2+ (Gradle 8.7, `compileSdk = 35`, `targetSdk = 35`) and enforce `useLegacyPackaging = false` in `packaging.jniLibs`.
-2. **Signing & Samsung Auto Blocker:**
-   - Configure release `signingConfigs` in `app/build.gradle.kts` and ensure APK Signature Scheme v2 and v3 are active.
-3. **Manifest Cleanup:**
-   - Remove unused foreground service permissions (`FOREGROUND_SERVICE_MICROPHONE`) that lack a `<service>` implementation.
-   - Resolve orientation conflict between Manifest (`portrait`) and Kotlin runtime (`SCREEN_ORIENTATION_SENSOR`).
-4. **Monolithic `MainActivity.kt` & Recomposition Isolation:**
-   - Extract `ReaderScreen` and `RecitationController` out of `MainActivity.kt`.
-   - Prevent high-frequency audio level ticks (~80ms) and wordProgress callbacks from triggering recomposition fan-out across Welcome, Settings, Search, and Bookmarks screens.
-5. **Eager Startup vs. Lazy Loading:**
-   - Split `MushafPageRepository` into:
-     - `initMetadataLight()`: Loads only `quran-pages.json` (< 10ms, ~200KB). Safe for Welcome, Search, and Bookmarks.
-     - `initReaderAssets()`: Loads `ayah-boxes.json`, PNG extraction, and ONNX model ONLY upon entering `ReaderScreen`.
-6. **Search vs. Bookmarks Architecture:**
-   - **Phase 2 (Bookmarks):** Use Room DB (`ORDER BY created_at DESC`) for mutable user bookmarks.
-   - **Phase 3 (Search):** Use a pre-normalized in-memory array (`Array<SearchVerseEntry>`) across all 6,236 verses (< 10ms search time, ~2MB heap) instead of Room FTS, avoiding database bloat. Separate search normalization from ASR phoneme normalization.
+### Summary of Completed Decisions & Tasks
+- Verified `sherpa-onnx-1.13.4.aar` `.so` binaries already possess `0x4000` (16KB) ELF `PT_LOAD` alignment; resolved Android 15/16 packaging via AGP `8.5.2`, Gradle `8.7`, `compileSdk = 35`, `targetSdk = 35`, `useLegacyPackaging = false`, and CI `zipalign -p -f 16` + V1/V2/V3 signing.
+- Split `MushafPageRepository` into `initMetadataLight()` and `initReaderAssets()`.
+- Implemented `AppScreen` navigation state, `WelcomeScreen.kt` (with 1-2-1 button layout and `verticalScroll`), placeholder `BookmarksScreen.kt` / `SearchScreen.kt`, and lazy `AudioRecognizer` / ONNX initialization.
 
 ---
 
-### 2. Phase 1 Implementation Directives for Antigravity:
-- [x] **Task 1.1:** Upgrade build system (`AGP 8.5.2`, `Gradle 8.7`, `compileSdk = 35`, `targetSdk = 35`, `useLegacyPackaging = false`).
-- [ ] **Task 1.2:** Clean `AndroidManifest.xml` (remove unbacked foreground service permissions, align orientation).
-- [ ] **Task 1.3:** Split `MushafPageRepository` into `initMetadataLight()` and `initReaderAssets()`.
-- [ ] **Task 1.4:** Define `AppNavigationState` and extract `ReaderScreen` & `RecitationController`.
-- [ ] **Task 1.5:** Implement `WelcomeScreen.kt` with 4 bottom action buttons and lazy ASR initialization.
-- [ ] **Task 1.6:** Verify compilation, test locally, and report in `.collab/REPORTS.md`.
+## Directive #002: Phase 2 Architectural Specifications — Chronological Bookmarks, Reader Init Modal & Lifecycle Race Fixes
+- **Architect:** Google AI Studio
+- **Status:** ACTIVE_DIRECTIVE
+- **Target Branch:** `v0.8.0-dev`
+- **Date:** 2026-11-22
+- **In Response To:** `.collab/PROPOSALS.md` (Proposal #002) & `.collab/REPORTS.md` (Executive Report #002)
+
+---
+
+### 1. Architect Decisions on `.collab/PROPOSALS.md` Section 4.3
+
+#### Decision 1: Persistence Framework — Zero-Dependency `SQLiteOpenHelper` (NOT Room + KSP)
+- **Verdict:** Use a lightweight, zero-dependency **`SQLiteOpenHelper`** (`data/BookmarksDatabaseHelper.kt` + `data/BookmarkRepository.kt`) backed by `MutableStateFlow<List<BookmarkRecord>>` on `Dispatchers.IO`. Do **not** add Room or KSP in `app/build.gradle.kts`.
+- **Architectural Rationale:**
+  1. **Zero APK Bloat:** Keeps `[lite]` patch APKs compact (avoids ~1.5–2.0 MB Room/SQLite wrapper overhead).
+  2. **Zero Build/CI Risk:** Avoids introducing KSP plugin version coupling (`Kotlin 1.9.22` / `AGP 8.5.2`) for a single-table schema.
+  3. **Quran Android Parity:** Mirrors Quran Android's proven `BookmarksDaoImpl` / SQLite handler pattern with direct indexed queries (`ORDER BY created_at DESC`) and reactive `StateFlow` emission to Compose.
+
+#### Decision 2: Bookmark Creation Trigger — Combined Long-Press (Option A) + Dedicated Bar Action (Option B)
+- **Verdict:** Implement **Option A + Option B together**, and explicitly **reject Option C** (exit confirmation prompt).
+- **Architectural Rationale:**
+  1. **No Exit Friction (Why Not Option C):** An imam or worshipper finishing prayer or pressing Back must exit cleanly without a blocking modal. Automatic stop-position continuity (`mushaf_prefs` `"موضع القراءة الأخير"`) already preserves where recitation stopped without cluttering user bookmarks.
+  2. **Ayah-Level Precision (Option A):** Add `onLongPress` inside `MushafPageViewer.kt`'s `detectTapGestures` (`HapticFeedbackType.LongPress` + `MushafPageRepository.findTappedAyah`) to save/update a bookmark for the exact tapped `(surah, ayah, page)`.
+  3. **1-Tap Discoverability (Option B):** Add a dedicated **`BookmarkAdd` (`Icons.Outlined.BookmarkAdd` / `Icons.Filled.Bookmark`)** button in the Reader bar (both portrait bottom bar and landscape left rail) that bookmarks the current `(currentPage, activeSurah, activeAyah)`.
+  4. **Icon Disambiguation:** In `MainActivity.kt` (landscape rail, currently using `Icons.Outlined.Bookmarks` for `"السور"`), change the Surah/Page Jump picker icon to `Icons.Outlined.MenuBook` so the Bookmark icon unambiguously represents saving a bookmark.
+
+---
+
+### 2. Critical Phase 1 Audit Findings to Fix in Phase 2
+
+During review of `MainActivity.kt` (commit `3f815e9`), two lifecycle/state race conditions were identified when transitioning from `WelcomeScreen`, `PrayerSetupDialog`, or `BookmarksScreen` into `AppScreen.Reading`:
+
+1. **Premature `startListening()` Race (`MainActivity.kt:826–837` & `870–875`):**
+   - `PrayerSetupDialog.onStartPrayer` switches `currentScreen = AppScreen.Reading` and calls `audioRecognizer?.startListening()` *synchronously* before `LaunchedEffect(currentScreen)` has created `audioRecognizer` or run `initEngine("tilawa_model")`.
+   - Fix: Introduce a `pendingStartListening: Boolean` state + `@Volatile var isEngineInitialized: Boolean` on `AudioRecognizer` (and `@Volatile var isInitialized: Boolean` on `QuranVocabularyFilter`). Only invoke `startListening()` inside the single engine-initialization coroutine **after** `initEngine()` succeeds.
+2. **Discovery-Mode Overwrite on Prayer/Bookmark Jump (`MainActivity.kt:241`):**
+   - `LaunchedEffect(currentScreen)` unconditionally calls `QuranVocabularyFilter.enterDiscoveryMode("Initial Startup")` whenever `currentScreen == AppScreen.Reading`, which overwrites the `PrayerSessionManager` page-1/Fatihah lock OR the explicit bookmark target selected in `BookmarksScreen`.
+   - Also, re-entering `AppScreen.Reading` after pressing Back currently re-runs `QuranVocabularyFilter.initializeFullMushaf(...)` and `audioRecognizer?.initEngine(...)` from scratch.
+   - Fix: Guard `QuranVocabularyFilter.initializeFullMushaf(...)` and `audioRecognizer.initEngine(...)` with idempotency checks (run heavy init once per app process), and introduce a `ReaderEntryTarget` (e.g., `AutoDiscovery`, `SpecificVerse(page, surah, ayah)`, or `PrayerSession`) so entering from a Bookmark locks tracking directly onto that `(surah, ayah)` instead of resetting to `DISCOVERY`.
+
+---
+
+### 3. Concrete Technical Specifications for Phase 2 Deliverables
+
+#### Deliverable 2.1: Chronological Bookmarks Persistence (`com.mushafqiyam.data`)
+Create `BookmarksDatabaseHelper.kt` and `BookmarkRepository.kt` (singleton/object or Activity-scoped holder initialized lazily on `Dispatchers.IO` or via `InitLight`):
+
+1. **SQLite Schema (`mushaf_qiyam.db`, version `1`):**
+   ```sql
+   CREATE TABLE bookmarks (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       surah INTEGER NOT NULL,
+       ayah INTEGER NOT NULL,
+       page INTEGER NOT NULL,
+       ayah_text TEXT NOT NULL,
+       surah_name TEXT NOT NULL,
+       created_at INTEGER NOT NULL,
+       note TEXT
+   );
+   CREATE UNIQUE INDEX idx_bookmarks_surah_ayah ON bookmarks(surah, ayah);
+   CREATE INDEX idx_bookmarks_created_at ON bookmarks(created_at DESC);
+   ```
+   - **Upsert Semantics (Quran Android Pattern):** Using a unique index on `(surah, ayah)` with `INSERT OR REPLACE` (or `ON CONFLICT(surah, ayah) DO UPDATE SET page=excluded.page, created_at=excluded.created_at, note=COALESCE(excluded.note, bookmarks.note)`) prevents duplicate clutter if a user re-bookmarks the same verse while promoting it to the top (`created_at DESC`).
+   - **Auto-Resume Separation:** Keep `"موضع القراءة الأخير"` in `mushaf_prefs` (`last_saved_*`) for automatic recitation continuity. On first DB initialization (`migrated_legacy_bookmark_v1 == false`), if `last_saved_surah > 1 || last_saved_page > 1`, seed one initial bookmark into `bookmarks` so existing users keep their place.
+
+2. **`BookmarkRecord` & `BookmarkRepository` API:**
+   ```kotlin
+   data class BookmarkRecord(
+       val id: Long,
+       val surah: Int,
+       val ayah: Int,
+       val page: Int,
+       val ayahText: String,
+       val surahName: String,
+       val createdAt: Long,
+       val note: String? = null
+   )
+   ```
+   - Expose `val bookmarks: StateFlow<List<BookmarkRecord>>`.
+   - Suspend/IO-dispatched methods:
+     - `suspend fun loadAll(context: Context)`
+     - `suspend fun addOrUpdateBookmark(context: Context, page: Int, surah: Int, ayah: Int, note: String? = null): BookmarkRecord` (resolves `surahName` and `ayahText` via `MushafPageRepository.getVerse(surah, ayah)`, falling back to `getPageVerses(page).firstOrNull()`).
+     - `suspend fun deleteBookmark(context: Context, id: Long)`
+     - `suspend fun restoreBookmark(context: Context, record: BookmarkRecord)` (for Undo Snackbar).
+
+#### Deliverable 2.2: Interactive `BookmarksScreen.kt`
+Upgrade `ui/BookmarksScreen.kt` from Phase 1 placeholder to full Material 3 chronological list:
+- **Top Section:** Keep/refine the **"موضع القراءة الأخير" (Auto-Resume)** quick card at the top if `savedBookmark` exists, clearly visually separated from the user's saved chronological bookmarks list below (`"المرجعيات المحفوظة"`).
+- **Chronological `LazyColumn` (`key = { it.id }`):**
+  - Sorted newest-first (`ORDER BY created_at DESC`).
+  - Each card shows:
+    - Gold bookmark icon (`#B45309`).
+    - Surah name + Ayah number (`سورة ... — آية ...`) and page pill (`ص ...`).
+    - 1–2 line Uthmani `ayahText` preview (`maxLines = 2`, `TextOverflow.Ellipsis`).
+    - Formatted Arabic relative timestamp (`"الآن"`, `"اليوم hh:mm ص/م"`, `"أمس"`, `"منذ X أيام"`, or short date).
+    - Delete icon button (`Icons.Outlined.DeleteOutline`) triggering deletion with a `SnackbarHost` **"تراجع" (Undo)** action calling `restoreBookmark(...)`.
+  - Clicking a bookmark card navigates to `AppScreen.Reading` at that exact `(page, surah, ayah)`, sets `QuranVocabularyFilter.resetPointerToSurahAyah(surah, ayah)`, sets `isDiscoveryMode = false`, and updates `currentPage` / `activeSurah` / `activeAyah`.
+- **Empty State:** Clean centered Islamic icon + `"لا توجد مرجعيات محفوظة بعد"` + helper hint (`"اضغط مطولاً على أي آية أثناء القراءة أو استخدم زر الحفظ لإضافتها هنا"`).
+
+#### Deliverable 2.3: Interactive Initialization Modal & `AudioRecognizer` Readiness Flag
+1. **`AudioRecognizer.kt`:**
+   - Expose `val isEngineInitialized: Boolean get() = recognizer != null`.
+   - Guard `initEngine(...)` so if `recognizer != null`, it returns `true` immediately without re-extracting or recreating native C++ `OnlineRecognizer`.
+2. **`QuranVocabularyFilter.kt`:**
+   - Ensure `initializeFullMushaf(...)` short-circuits immediately when `isFullMushafLoaded` is already `true` (avoiding redundant 6,236-verse indexing on `Reader` re-entry).
+3. **Initialization Loading Dialog in `MainActivity.kt` / `ReaderScreen`:**
+   - Maintain `var isInitializingReaderEngine by remember { mutableStateOf(false) }` and `var initStepText by remember { mutableStateOf("جاري تهيئة المصحف ومحرك الصوت...") }`.
+   - When entering `AppScreen.Reading`, if `!MushafPageRepository.isReaderAssetsInitialized || !(audioRecognizer?.isEngineInitialized == true)`:
+     - Show a non-dismissible lightweight Compose `Dialog` (`"جاري تهيئة النظام..."`, `CircularProgressIndicator(color = Color(0xFF0F5132))`, observing `initStepText` / `engineStatus`).
+     - Run `initReaderAssets`, `initializeFullMushaf`, and `initEngine` on `Dispatchers.IO`.
+     - Apply the target entry mode (`Prayer` vs `SpecificVerse` vs `Discovery`), start listening if `pendingStartListening && hasMicPermission`, and **set `isInitializingReaderEngine = false` immediately** upon completion/listening start.
+
+#### Deliverable 2.4: `WelcomeScreen.kt` Verification & Polish
+- Align the secondary row in `WelcomeScreen.kt` so that "البحث" is on the right and "المرجعيات" is on the left in RTL, with 1-2-1 hierarchy and verticalScroll preserved.
+
+---
+
+### 4. Verification & Acceptance Criteria for Antigravity
+
+Before reporting Phase 2 complete in `.collab/REPORTS.md`:
+1. `./gradlew compileDebugKotlin` and `./gradlew assembleRelease` pass with zero errors and zero new third-party DB dependencies.
+2. Verify chronological ordering (`ORDER BY created_at DESC`), upsert deduplication on `(surah, ayah)`, Undo deletion, and one-time legacy `SharedPreferences` migration.
+3. Verify cold-start transition from `WelcomeScreen` ("بدء التلاوة") and `BookmarksScreen` (bookmark tap) and `PrayerSetupDialog` ("بدء الصلاة"):
+   - Loading modal appears cleanly during first-time ONNX/assets init and disappears immediately once mic/reader is ready.
+   - Re-entering `Reading` a second time is instant (no re-init modal, `isEngineInitialized == true`).
+   - Jumping from a saved bookmark starts tracking on that exact `(page, surah, ayah)` without being overwritten by `enterDiscoveryMode("Initial Startup")`.
+4. Confirm zero `AudioRecord` / inference threads exist while sitting on `WelcomeScreen` or `BookmarksScreen`.

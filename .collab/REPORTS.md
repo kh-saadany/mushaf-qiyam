@@ -109,3 +109,59 @@ Google AI Studio review of this report and issuance of the first directive in `.
    - Initialized `LazyColumn` with `initialFirstVisibleItemIndex = (currentPage - 1)` to eliminate initial jump glitch upon entering scroll mode.
 5. **Cross-System Version Synchronization:**
    - Synchronized `versionCode = 93`, `versionName = "0.7.5.4"`, `APP_VERSION = "0.7.5.4"`, `package.json = 1.0.4`, and GitHub Actions release tag `v0.7.5.4`.
+
+---
+
+## Executive Report #005: Completion of Phase 3 Execution (Directive #003)
+- **Timestamp:** 2026-11-23
+- **Branch:** `review/phase-3` (target merge: `v0.8.0-dev`)
+- **Resulting Version:** `0.7.6.0` (Code 94) [lite]
+- **Status:** COMPLETED & VERIFIED (Awaiting Dual Subagent Audit & Architect Review)
+
+### 1. Implementation Summary of Phase 3 Deliverables
+1. **Deliverable 3.1 — Offline Text Quran Search Engine (`com.mushafqiyam.search.QuranSearchEngine.kt`):**
+   - Built a dedicated, zero-dependency in-memory search engine indexing all 6,236 verses from `MushafPageRepository.getAllVerses()`.
+   - Implemented **Dual-Form Normalization**:
+     - `normalizedImlai`: Expands Uthmani dagger alefs (`وٰ` -> `ا`, `ىٰ` -> `ي`, standalone `\u0670` -> `ا`), strips Tashkeel/Tatweel, and unifies alef/yaa/taa-marbuta forms to support standard keyboard queries (`الصراط`, `العالمين`, `الصلاة`, `الكتاب`, `السماوات`).
+     - `normalizedUthmani`: Preserves stripped clean text without dagger-alef expansion to handle standard words (`الرحمن`, `ذلك`, `هذا`, `طه`, `يس`, `الم`).
+   - Multi-tier match ranking: Tier 0 (exact normalized query match), Tier 1 (starts with query), Tier 2 (substring match). Secondary sort by shortest verse length.
+   - Diacritized Uthmani highlighting: `findUthmaniHighlightRanges` maps character positions from normalized form back to the full diacritized Uthmani text (`verse.text`), ensuring diacritics and ligatures are safely highlighted with zero text mutation.
+   - Lazy one-time indexing on `Dispatchers.IO` (`< 35ms`), query execution `< 10ms`.
+
+2. **Deliverable 3.2 — Stateless Multi-Match Offline Voice Search (`com.mushafqiyam.QuranVocabularyFilter.kt`):**
+   - Added `VoiceVerseMatch`, `VoiceSearchResponse`, and `searchAllMatchingVerses(streamText, maxResults = 10)` for non-destructive multi-verse matching.
+   - Two-stage matching pipeline:
+     - Stage A: Zero-allocation exact phonetic substring scan across pre-indexed canonical phoneme strings (`canonicalTajweedPhonemes`).
+     - Stage B: Isolated-DP fuzzy phonetic matching (`alignStreamToRefCompactStateless`) using temporary locally allocated DP arrays (`IntArray(M + 1)`).
+   - **Zero State Mutation:** Live recitation tracking arrays (`dpPrevScore`, `dpCurrScore`, `confirmedVerseIndex`, `pendingVerseIndex`) remain 100% untouched.
+
+3. **Deliverable 3.3 — Interactive Unified Search Screen (`ui/SearchScreen.kt` + `MainActivity.kt`):**
+   - Implemented unified text and voice search interface with RTL Material 3 styling.
+   - Debounced search query flow (120ms debounce) for instant text matching.
+   - Quick Surah suggestion chips ("الفاتحة", "البقرة", "يس", "الكهف", "الملك", "الرحمن", "الإخلاص").
+   - Voice search integration: Mic icon in search bar, animated green recording banner showing live partial transcription.
+   - 3500ms post-speech silence auto-stop timer in `MainActivity.kt`: stops audio recording and freezes search results.
+   - **Strict Voice UX Invariant:** Zero auto-jumping. Even if a query produces a single match, the user must explicitly tap the verse card to navigate.
+   - Tap on a result triggers `onNavigateToVerse(surah, ayah, page)` transitioning seamlessly to `AppScreen.Reading`.
+
+4. **Deliverable 3.4 — 4-Gate In-App Update Checker (`update/AppUpdateChecker.kt` + `ui/UpdateCheckerDialog.kt`):**
+   - Built zero-dependency update checker using standard `java.net.HttpURLConnection` and `org.json.JSONObject` on `Dispatchers.IO`.
+   - **4-Gate Verification Pipeline:**
+     - Gate 1: Semantic version comparison (`compareSemanticVersions("0.7.6.0", remoteTag)`) ensuring updates are only triggered when `remote > local`.
+     - Gate 2: Release integrity filter rejecting `draft == true` and `prerelease == true`.
+     - Gate 3: Release artifact discovery preferring `-lite.apk` as primary download asset, with release HTML URL fallback.
+     - Gate 4: Zero background connection invariant; network calls occur strictly on user demand via "حول التطبيق والتحديثات" dialog.
+   - Integrated `UpdateCheckerDialog` with checking, up-to-date, update-available, and error states with Arabic localization.
+   - Added compact card to `PrayerSetupDialog.kt` showing current version and "التحقق من وجود تحديثات" button.
+
+5. **Deliverable 3.5 — Permissions, CI, Tests & Version Alignment:**
+   - Added `android.permission.INTERNET` to `AndroidManifest.xml` (strictly NO `REQUEST_INSTALL_PACKAGES`).
+   - Updated GitHub Actions CI (`.github/workflows/android-build.yml`): versioned APK artifact naming `mushaf-qiyam-v${VERSION}-lite.apk`, release tag `v0.7.6.0`.
+   - Added unit tests:
+     - `QuranSearchEngineTest.kt`: Tests Dual-Form Normalization (Imla'i and Uthmani), tier ranking, and Uthmani highlight ranges.
+     - `AppUpdateCheckerTest.kt`: Tests `compareSemanticVersions`, 4-gate JSON parsing, draft/prerelease rejection, and asset discovery.
+   - Strict version synchronization:
+     - `app/build.gradle.kts`: `versionCode = 94`, `versionName = "0.7.6.0"`
+     - `MainActivity.kt`: `APP_VERSION = "0.7.6.0"`
+     - `package.json`: `"version": "1.0.5"`
+

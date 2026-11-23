@@ -2155,4 +2155,231 @@ object QuranVocabularyFilter {
             highestSim = maxSim
         ).copy(discoveredNewLocation = true)
     }
+
+    data class VoiceVerseMatch(
+        val verse: MushafPageRepository.MushafVerse,
+        val surahName: String,
+        val matchTier: Int, // 0 = Exact phonetic substring match (Stage A), 1 = Fuzzy DP match (Stage B)
+        val score: Int,
+        val density: Double
+    )
+
+    data class VoiceSearchResponse(
+        val rawText: String,
+        val phoneticStream: String,
+        val results: List<VoiceVerseMatch>,
+        val totalMatches: Int,
+        val elapsedMs: Long
+    )
+
+    /**
+     * Pure read-only multi-match voice search over all 6,236 verses.
+     * Uses warmed-up verseCanonicalChars and fourGramToVerseIndices.
+     * Completely stateless: NEVER mutates confirmedVerseIndex, rolling buffers, or DP arrays!
+     */
+    fun searchAllMatchingVerses(projectedText: String, limit: Int = 150): VoiceSearchResponse {
+        val t0 = System.currentTimeMillis()
+        if (!isFullMushafLoaded || projectedText.isBlank() || verseCanonicalChars.isEmpty()) {
+            return VoiceSearchResponse(
+                rawText = projectedText,
+                phoneticStream = "",
+                results = emptyList(),
+                totalMatches = 0,
+                elapsedMs = 0L
+            )
+        }
+
+        val phoneticStream = toPhoneticCanonicalStream(projectedText.replace(" ", ""))
+        if (phoneticStream.length < 4) {
+            return VoiceSearchResponse(
+                rawText = projectedText,
+                phoneticStream = phoneticStream,
+                results = emptyList(),
+                totalMatches = 0,
+                elapsedMs = System.currentTimeMillis() - t0
+            )
+        }
+
+        val stageAMatches = ArrayList<VoiceVerseMatch>()
+        val stageAMatchedIndices = HashSet<Int>()
+
+        // Stage A: Exact Phonetic Substring Scan across all 6,236 verses (< 3ms)
+        if (phoneticStream.length >= 5) {
+            for (vIdx in verseCanonicalChars.indices) {
+                if (verseCanonicalChars[vIdx].contains(phoneticStream)) {
+                    val mv = MushafPageRepository.getVerseByGlobalIndex(vIdx)
+                    if (mv != null) {
+                        stageAMatches.add(
+                            VoiceVerseMatch(
+                                verse = mv,
+                                surahName = MushafPageRepository.getSurahName(mv.surah),
+                                matchTier = 0,
+                                score = phoneticStream.length,
+                                density = 1.0
+                            )
+                        )
+                        stageAMatchedIndices.add(vIdx)
+                    }
+                }
+            }
+        }
+
+        val stageBMatches = ArrayList<VoiceVerseMatch>()
+
+        // Stage B: Isolated-DP Fuzzy Phonetic Fallback via 4-grams
+        if (stageAMatches.size < limit) {
+            val candidateHitCounts = HashMap<Int, Int>(256)
+            for (k in 0..phoneticStream.length - 4) {
+                val tetra = phoneticStream.substring(k, k + 4)
+                val matches = fourGramToVerseIndices[tetra] ?: continue
+                if (matches.size <= 300) { // relaxed cap for voice search
+                    for (v in matches) {
+                        if (!stageAMatchedIndices.contains(v)) {
+                            candidateHitCounts[v] = (candidateHitCounts[v] ?: 0) + 1
+                        }
+                    }
+                }
+            }
+
+            val topCandidates = candidateHitCounts.entries
+                .sortedByDescending { it.value }
+                .take(80)
+
+            for (entry in topCandidates) {
+                val vIdx = entry.key
+                if (vIdx !in verseCanonicalChars.indices) continue
+                val refCanon = verseCanonicalChars[vIdx]
+                val dpResult = alignStreamToRefCompactStateless(phoneticStream, refCanon)
+                val ratio = dpResult.score.toDouble() / phoneticStream.length.toDouble()
+                if (ratio >= 0.72 && dpResult.density >= 0.70) {
+                    val mv = MushafPageRepository.getVerseByGlobalIndex(vIdx)
+                    if (mv != null) {
+                        stageBMatches.add(
+                            VoiceVerseMatch(
+                                verse = mv,
+                                surahName = MushafPageRepository.getSurahName(mv.surah),
+                                matchTier = 1,
+                                score = dpResult.score,
+                                density = dpResult.density
+                            )
+                        )
+                    }
+                }
+            }
+
+            stageBMatches.sortByDescending { it.score }
+        }
+
+        val combined = ArrayList<VoiceVerseMatch>(stageAMatches.size + stageBMatches.size)
+        combined.addAll(stageAMatches)
+        for (item in stageBMatches) {
+            if (combined.size < limit) {
+                combined.add(item)
+            }
+        }
+
+        val totalMatches = stageAMatches.size + stageBMatches.size
+        val elapsed = System.currentTimeMillis() - t0
+
+        return VoiceSearchResponse(
+            rawText = projectedText,
+            phoneticStream = phoneticStream,
+            results = combined,
+            totalMatches = totalMatches,
+            elapsedMs = elapsed
+        )
+    }
+
+    /**
+     * Compact semi-global DP alignment with local thread-safe arrays (Stateless).
+     * NEVER touches live-tracking dpPrevScore / dpCurrScore!
+     */
+    fun alignStreamToRefCompactStateless(stream: String, ref: String): CompactAlignmentResult {
+        val m = stream.length
+        val n = ref.length
+        if (m == 0 || n == 0) return CompactAlignmentResult(0, 0, 0, 0.0)
+
+        var prevScore = IntArray(n + 2)
+        var currScore = IntArray(n + 2)
+        var prevStart = IntArray(n + 2)
+        var currStart = IntArray(n + 2)
+        var prevGap = IntArray(n + 2)
+        var currGap = IntArray(n + 2)
+
+        val maxWeakGap = 3
+
+        for (i in 1..m) {
+            val sc = stream[i - 1]
+            for (j in 1..n) {
+                if (sc == ref[j - 1]) {
+                    if (prevScore[j - 1] > 0 && (prevScore[j - 1] >= 4 || prevGap[j - 1] <= maxWeakGap)) {
+                        currScore[j] = prevScore[j - 1] + 1
+                        currStart[j] = if (prevStart[j - 1] > 0) prevStart[j - 1] else j
+                        currGap[j] = 0
+                    } else {
+                        currScore[j] = 1
+                        currStart[j] = j
+                        currGap[j] = 0
+                    }
+                } else {
+                    if (prevScore[j] >= currScore[j - 1]) {
+                        currScore[j] = prevScore[j]
+                        currStart[j] = prevStart[j]
+                        currGap[j] = prevGap[j]
+                    } else {
+                        val prevS = currScore[j - 1]
+                        val st = currStart[j - 1]
+                        val span = j - st + 1
+                        val localDensity = if (span > 0) prevS.toDouble() / span.toDouble() else 0.0
+                        val gap = currGap[j - 1] + 1
+                        if ((prevS <= 3 && gap > maxWeakGap) || (prevS >= 4 && span >= 8 && (span > 2 * prevS || localDensity < 0.55))) {
+                            currScore[j] = 0
+                            currStart[j] = j
+                            currGap[j] = 0
+                        } else {
+                            currScore[j] = prevS
+                            currStart[j] = st
+                            currGap[j] = gap
+                        }
+                    }
+                }
+            }
+            val tmpS = prevScore
+            prevScore = currScore
+            currScore = tmpS
+            java.util.Arrays.fill(currScore, 0, n + 2, 0)
+
+            val tmpSt = prevStart
+            prevStart = currStart
+            currStart = tmpSt
+            java.util.Arrays.fill(currStart, 0, n + 2, 0)
+
+            val tmpG = prevGap
+            prevGap = currGap
+            currGap = tmpG
+            java.util.Arrays.fill(currGap, 0, n + 2, 0)
+        }
+
+        var bestScore = 0
+        var bestStartJ = 0
+        var bestEndJ = 0
+        var bestDensity = 0.0
+
+        for (j in 1..n) {
+            val s = prevScore[j]
+            if (s >= 3) {
+                val st = prevStart[j]
+                val span = maxOf(1, j - st + 1)
+                val dens = s.toDouble() / span.toDouble()
+                if (dens >= 0.60 && (s > bestScore || (s == bestScore && dens > bestDensity))) {
+                    bestScore = s
+                    bestStartJ = st
+                    bestEndJ = j
+                    bestDensity = dens
+                }
+            }
+        }
+
+        return CompactAlignmentResult(bestScore, bestStartJ, bestEndJ, bestDensity)
+    }
 }

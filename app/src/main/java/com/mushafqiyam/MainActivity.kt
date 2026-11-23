@@ -61,6 +61,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import com.mushafqiyam.ui.UpdateCheckerDialog
+import com.mushafqiyam.update.AppUpdateChecker
+import com.mushafqiyam.update.UpdateCheckResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -77,7 +80,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.5.4"
+        const val APP_VERSION = "0.7.6.0"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -192,6 +195,12 @@ fun MainAppScreen(
     var lastMatchedSpeechTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var lastActiveRecitationStreamTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
+    // Phase 3 In-App Update Checker & Voice Search States
+    var updateCheckState by remember { mutableStateOf<UpdateCheckResult>(UpdateCheckResult.Idle) }
+    var isVoiceSearching by remember { mutableStateOf(false) }
+    var voiceSearchText by remember { mutableStateOf("") }
+    var lastVoiceSpeechTimeMs by remember { mutableLongStateOf(0L) }
+
     BackHandler(enabled = currentScreen != AppScreen.Welcome) {
         if (currentScreen == AppScreen.Reading) {
             if (prayerManager.appMode == AppMode.FREE_READING) {
@@ -208,6 +217,10 @@ fun MainAppScreen(
             isListening = false
             currentScreen = AppScreen.Welcome
         } else {
+            if (currentScreen == AppScreen.Search && isVoiceSearching) {
+                audioRecognizer?.stopListening()
+                isVoiceSearching = false
+            }
             currentScreen = AppScreen.Welcome
         }
     }
@@ -231,10 +244,31 @@ fun MainAppScreen(
         hasMicPermission = isGranted
         if (isGranted) {
             AppLogger.i("UI", "Microphone permission granted")
-            val started = audioRecognizer?.startListening() == true
-            isListening = started
+            if (currentScreen == AppScreen.Reading) {
+                val started = audioRecognizer?.startListening() == true
+                isListening = started
+            } else if (currentScreen == AppScreen.Search) {
+                voiceSearchText = ""
+                lastVoiceSpeechTimeMs = System.currentTimeMillis()
+                val started = audioRecognizer?.startListening() == true
+                isVoiceSearching = started
+            }
         } else {
             AppLogger.w("UI", "Microphone permission denied by user")
+        }
+    }
+
+    // Voice Search Silence Auto-Stop: automatically stops mic after 3500ms of post-speech silence while freezing results
+    LaunchedEffect(isVoiceSearching, voiceSearchText, lastVoiceSpeechTimeMs) {
+        if (isVoiceSearching && voiceSearchText.isNotBlank()) {
+            while (isVoiceSearching) {
+                delay(500)
+                if (System.currentTimeMillis() - lastVoiceSpeechTimeMs >= 3500) {
+                    audioRecognizer?.stopListening()
+                    isVoiceSearching = false
+                    break
+                }
+            }
         }
     }
 
@@ -762,7 +796,14 @@ fun MainAppScreen(
     var memoryStatus by remember { mutableStateOf("RAM: في انتظار بدء التشغيل...") }
 
     audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
-    audioRecognizer?.onPartialResult = handlePartialResult
+    audioRecognizer?.onPartialResult = { text ->
+        if (currentScreen == AppScreen.Search) {
+            voiceSearchText = text
+            lastVoiceSpeechTimeMs = System.currentTimeMillis()
+        } else if (currentScreen == AppScreen.Reading) {
+            handlePartialResult(text)
+        }
+    }
     audioRecognizer?.onMemoryUpdate = { mem -> memoryStatus = mem }
     audioRecognizer?.onError = { err ->
         AppLogger.e("UI", "AudioRecognizer error: $err")
@@ -896,7 +937,14 @@ fun MainAppScreen(
     if (showPrayerSetupDialog) {
         PrayerSetupDialog(
             savedBookmark = savedBookmark,
+            appVersion = MainActivity.APP_VERSION,
             onDismiss = { showPrayerSetupDialog = false },
+            onCheckForUpdate = {
+                updateCheckState = UpdateCheckResult.Checking
+                coroutineScope.launch {
+                    updateCheckState = AppUpdateChecker.checkForUpdate(context)
+                }
+            },
             onStartPrayer = { config ->
                 showPrayerSetupDialog = false
                 readerTarget = ReaderTarget.Prayer
@@ -912,6 +960,17 @@ fun MainAppScreen(
             }
         )
     }
+
+    UpdateCheckerDialog(
+        state = updateCheckState,
+        onDismiss = { updateCheckState = UpdateCheckResult.Idle },
+        onRetry = {
+            updateCheckState = UpdateCheckResult.Checking
+            coroutineScope.launch {
+                updateCheckState = AppUpdateChecker.checkForUpdate(context)
+            }
+        }
+    )
 
     if (showQiyamNextPairDialog) {
         val nextSName = MushafPageRepository.getSurahName(prayerManager.lastReadSurah)
@@ -1023,7 +1082,40 @@ fun MainAppScreen(
         }
         AppScreen.Search -> {
             SearchScreen(
-                onNavigateBack = { currentScreen = AppScreen.Welcome }
+                onNavigateBack = {
+                    if (isVoiceSearching) {
+                        audioRecognizer?.stopListening()
+                        isVoiceSearching = false
+                    }
+                    currentScreen = AppScreen.Welcome
+                },
+                onSelectVerse = { page, surah, ayah ->
+                    if (isVoiceSearching) {
+                        audioRecognizer?.stopListening()
+                        isVoiceSearching = false
+                    }
+                    readerTarget = ReaderTarget.SpecificVerse(page, surah, ayah)
+                    currentScreen = AppScreen.Reading
+                    if (!hasMicPermission) {
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                },
+                isVoiceListening = isVoiceSearching,
+                voiceStreamingText = voiceSearchText,
+                onStartVoiceListening = {
+                    if (!hasMicPermission) {
+                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        voiceSearchText = ""
+                        lastVoiceSpeechTimeMs = System.currentTimeMillis()
+                        val started = audioRecognizer?.startListening() == true
+                        isVoiceSearching = started
+                    }
+                },
+                onStopVoiceListening = {
+                    audioRecognizer?.stopListening()
+                    isVoiceSearching = false
+                }
             )
         }
         AppScreen.Reading, AppScreen.Settings -> {

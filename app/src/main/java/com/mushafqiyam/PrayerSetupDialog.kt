@@ -1,5 +1,6 @@
 package com.mushafqiyam
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,7 +36,9 @@ import androidx.compose.ui.window.DialogProperties
 @Composable
 fun PrayerSetupDialog(
     savedBookmark: Triple<Int, Int, Int>?, // (page, surah, ayah)
+    appVersion: String = MainActivity.APP_VERSION,
     onDismiss: () -> Unit,
+    onCheckForUpdate: () -> Unit = {},
     onStartPrayer: (PrayerSessionConfig) -> Unit
 ) {
     var isQiyamMode by remember { mutableStateOf(true) }
@@ -271,6 +275,57 @@ fun PrayerSetupDialog(
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
                         ) {
                             Text("بدء الصلاة", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // App Information & Update Checker Card
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F5F9))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = "مصحف القيام",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Text(
+                                    text = "الإصدار: $appVersion",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = onCheckForUpdate,
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                border = BorderStroke(1.dp, Color(0xFF0F5132)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF0F5132))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "التحقق من التحديث",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }

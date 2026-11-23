@@ -148,12 +148,13 @@ jobs:
           echo "WARNING: Keystore not found! APK may remain signed with debug cert."
         fi
 
+        VERSION=$(grep 'versionName = ' app/build.gradle.kts | head -n 1 | awk -F'"' '{print $2}')
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
-          echo "Packaging Full Release APK..."
-          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-b-full.apk
+          echo "Packaging Full Release APK (v${VERSION})..."
+          mv "$RAW_APK" "app/build/outputs/apk/release/mushaf-qiyam-v${VERSION}-full.apk"
         else
-          echo "Packaging Lite Release APK..."
-          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-b-lite.apk
+          echo "Packaging Lite Release APK (v${VERSION})..."
+          mv "$RAW_APK" "app/build/outputs/apk/release/mushaf-qiyam-v${VERSION}-lite.apk"
         fi
 
     - name: Clean & Hide Previous GitHub Releases
@@ -168,17 +169,16 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v0.7.5.4"
-        name: "مصحف القيام — V0.7.5.4 (Startup Warmup, Header Restructure & Instant Jump)"
+        tag: "v0.7.6.0"
+        name: "مصحف القيام — V0.7.6.0 (Offline Quran Search & In-App Update Checker)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — تحديث V0.7.5.4 [lite]
+          ### مصحف القيام — تحديث V0.7.6.0 [lite]
 
-          1. **تهيئة المحرك الاستباقية فوق شاشة الترحيب (Startup Engine Warmup):** نقل تهيئة أصول المصحف والنموذج الفونيمي فور فتح التطبيق مع نافذة تقدم واختفاء تلقائي فور الجاهزية (0ms انتقال للقراءة)، مع عزل الميكروفون تماماً عن شاشة الترحيب.
-          2. **إعادة الأيقونات لأزرار شاشة الترحيب:** إعادة توظيف الأيقونات داخل أزرار التلاوة، البحث، المرجعيات، والإعدادات داخل بيئة RTL متناسقة.
-          3. **ترويسة رأسية علوية للشاشة وإفراغ الشريط السفلي:** نقل اسم السورة (يميناً) ورقم الصفحة (يساراً) كنص بسيط أعلى الشاشة في الوضع الرأسي (قابل للنقر لفتح السور)، وإفراغ الشريط السفلي للأزرار التفاعلية فقط مما يضمن ظهور زر الميكروفون بوضوح كامل دون أي قص على جميع الشاشات (320dp+).
-          4. **القفز الفوري للصفحات البعيدة (Instant Jump Threshold):** استبدال التمرير المتتابع بالانتقال المباشر والفوري (0ms) عند القفز لصفحة بعيدة (فارق أكثر من صفحة) في وضعي التمرير الرأسي والصفحات لتوفير المعالج والرسوميات وراحة عين القارئ.
+          1. **محرك البحث القرآني بالتطبيع المزدوج (Dual-Form Search):** بحث نصي فوري بدون إنترنت في كامل آيات المصحف (6,236 آية) مع دعم الرسمين الإملائي والعثماني والألف الخنجرية وتظليل النتائج بالنص العثماني المشكّل.
+          2. **البحث الصوتي في المصحف (Offline Voice Search):** قراءة الآية أو جزء منها بالصوت للبحث عنها محلياً وعرض كافة الآيات المتطابقة دون أي انتقال تلقائي، مع تجميد النتائج للتصفح واختيار الآية يدوياً.
+          3. **فاحص التحديثات الآمن (In-App Update Checker):** فحص التحديثات مباشرة من شاشة الإعدادات وفق بروتوكول البوابات الأربع (4-Gate Pipeline) والتحميل الآمن دون أذونات حساسة.
 
 
 

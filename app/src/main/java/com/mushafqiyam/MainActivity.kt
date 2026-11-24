@@ -764,11 +764,12 @@ fun MainAppScreen(
                 "UIHighlight",
                 "[$status] Page=$currentPage | UI=[$activeSurah:$activeAyah] | Line=${activeLineNum ?: "-"} | Prog=${(activeWordProgress * 100).toInt()}% (Word=$wordInfo) | Mode=${trackingResult.mode} | Ratio=${"%.2f".format(trackingResult.confidence)}"
             )
-        } catch (t: Throwable) {
-            AppLogger.e("UIHighlight", "Fatal protection: exception in handlePartialResult: ${t.message}", t)
-            CrashHandler.recordException(context, "handlePartialResult", "Exception in handlePartialResult", t)
         }
+    } catch (t: Throwable) {
+        AppLogger.e("UIHighlight", "Fatal protection: exception in handlePartialResult: ${t.message}", t)
+        CrashHandler.recordException(context, "handlePartialResult", "Exception in handlePartialResult", t)
     }
+}
 
     var memoryStatus by remember { mutableStateOf("RAM: في انتظار بدء التشغيل...") }
 

@@ -144,3 +144,70 @@ Before reporting Phase 2 complete in `.collab/REPORTS.md`:
    - Re-entering `Reading` a second time is instant (no re-init modal, `isEngineInitialized == true`).
    - Jumping from a saved bookmark starts tracking on that exact `(page, surah, ayah)` without being overwritten by `enterDiscoveryMode("Initial Startup")`.
 4. Confirm zero `AudioRecord` / inference threads exist while sitting on `WelcomeScreen` or `BookmarksScreen`.
+
+
+---
+
+## Directive #004: Isolated Crash Hardening & Native Diagnostics Hotfix (`v0.7.5.5 [lite]`)
+- **Architect:** Google AI Studio (Gemini 4 Neon)
+- **Status:** ACTIVE_HOTFIX_DIRECTIVE (PM Approved — Execute BEFORE merging `review/phase-3`)
+- **Target Branch:** `v0.8.0-dev` (branch strictly from `d2c488e` / `v0.7.5.4` — **DO NOT** include Phase 3 Search/UpdateChecker features in this hotfix!)
+- **Target Version:** `0.7.5.5` (Build Code `94`) `[lite]`
+- **Note on `review/phase-3`:** Keep `review/phase-3` untouched for now; once `v0.7.5.5` is field-verified on Samsung Android 14, we will rebase `review/phase-3` onto `v0.7.5.5`, apply the 5 Phase 3 audit fixes, and release `v0.7.6.0` (Code `95`).
+
+---
+
+### 1. Objective
+Eliminate silent process crashes on first spoken word (`v0.7.5.4` on Android 14 / Samsung One UI) and guarantee 100% diagnostic visibility for **both** Kotlin/Java exceptions AND Native C++/JNI crashes (`SIGSEGV`/`SIGABRT`).
+
+---
+
+### 2. Required Deliverables on `v0.8.0-dev`
+
+#### Deliverable H1: Dual-Layer Crash & Native Exit Reporter (`app/src/main/java/com/mushafqiyam/CrashHandler.kt` + `MainActivity.kt`)
+1. **Java/Kotlin Uncaught Exception Handler:**
+   - Install in `MainActivity.onCreate()` via `Thread.setDefaultUncaughtExceptionHandler` (chaining safely to previous handler after synchronous write).
+   - Synchronously persist (`commit()`) stack trace, thread name, device/Android SDK/ABI, `APP_VERSION`, and last 4,000 chars of `AppLogger` to `filesDir/latest_crash.txt` + `SharedPreferences`.
+   - Provide `CrashHandler.recordException(tag: String, t: Throwable)` for caught runtime errors.
+2. **MANDATORY Native C++ Crash Capture (`ApplicationExitInfo` — Android 11+ / API 30+):**
+   - Query `(context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getHistoricalProcessExitReasons(context.packageName, 0, 3)`.
+   - Inspect the most recent entry whose `timestamp > lastShownExitTimestamp` and whose `reason` is one of:
+     `REASON_CRASH_NATIVE`, `REASON_CRASH`, `REASON_ANR`, `REASON_LOW_MEMORY`, or `REASON_SIGNALED`.
+   - Extract: human-readable `reason`, `status` (POSIX signal e.g. `SIGSEGV=11`, `SIGABRT=6`), `description`, `pss`/`rss` KB, `timestamp`, and up to first 4KB of `traceInputStream` (safely closed via `.use {}`).
+   - Store it as the pending crash report (if no newer Kotlin crash exists) and save `lastShownExitTimestamp = entry.timestamp` in `SharedPreferences` so it displays once.
+3. **Post-Crash AlertDialog in `MainActivity.kt`:**
+   - If a pending crash report (Kotlin OR Native `ApplicationExitInfo`) exists on app startup, show an RTL `AlertDialog` displaying a scrollable preview with a 1-tap **"نسخ تقرير العطل"** button (copies full report to clipboard + Toast) and **"إغلاق"** (clears pending flag).
+
+#### Deliverable H2: `AudioRecognizer.kt` JNI & Silence-Buffer Hardening
+1. **Prevent Unbounded C++ Fbank Accumulation During Silence (CRITICAL):**
+   - Initialize `lastSpeechTimestampMs = System.currentTimeMillis()` inside `startListening()`.
+   - Track a silence gate flag (`var streamClearedForSilence = false`) in `captureThread`:
+     - Always compute `rms` on every chunk (`640` samples). If `rms > 0.005f`, update `lastSpeechTimestampMs = now` and set `streamClearedForSilence = false`.
+     - While `now - lastSpeechTimestampMs <= 2000L`: feed `acceptWaveform(samplesToFeed, SAMPLE_RATE)` under `synchronized(streamLock)`.
+     - Once `now - lastSpeechTimestampMs > 2000L` (prolonged silence): **STOP calling `acceptWaveform(...)`** so C++ Kaldi Fbank does NOT accumulate thousands of silence frames while `inferenceThread` sleeps! Reset the stream **once**.
+2. **Eliminate JNI Use-After-Free (`streamLock` Discipline):**
+   - In `inferenceThread`, `captureThread`, `resetStream()`, `stopListening()`, and `release()`: read `val stream = currentStream` and `val rec = recognizer` **STRICTLY INSIDE** `synchronized(streamLock)`.
+   - NEVER hold `streamLock` across `Thread.sleep(...)`, `projectPhonemesToCanonical(...)`, or `mainHandler.post { ... }`.
+   - Zero-GC partial read guard: `val samplesToFeed = if (readSamples == floatSamples.size) floatSamples else floatSamples.copyOf(readSamples)`.
+3. **Atomic Asset Copy & Model Integrity Logging (`resolveFilePath`):**
+   - Copy to `File(internalFile.parentFile, "$fileName.tmp")` first, then `tmpFile.renameTo(internalFile)` atomically.
+   - Log exact byte sizes of `model.int8.onnx` and `tokens.txt` during `initEngine()`, and abort init safely if `model.int8.onnx` is `< 10 * 1024 * 1024` bytes.
+4. **Main-Thread Callback Shield:**
+   - Wrap `onPartialResult?.invoke(projected)` and `onAudioLevel?.invoke(level)` inside `mainHandler.post { try { ... } catch (t: Throwable) { CrashHandler.recordException(context, TAG, "...", t) } }`.
+
+#### Deliverable H3: Tracker, UI & Packaging Hardening
+1. **`MainActivity.kt`:** Wrap `handlePartialResult(rawText)` body in top-level `try { ... } catch (t: Throwable) { CrashHandler.recordException(context, "MainActivity", "...", t) }`.
+2. **`QuranVocabularyFilter.kt`:**
+   - Wrap `filterAndTrackFullMushaf` in `try/catch(Throwable)` returning a safe empty `TrackingResult` on unexpected failure.
+   - Add strict bounds checks on `verseCanonicalChars.indices`, `contStart in 0 until allWords.size && contEnd >= contStart` before `allWords.subList`, and `gPos in allWords.indices`.
+3. **`app/build.gradle.kts`:**
+   - Add `androidResources { noCompress += listOf("onnx", "int8", "txt", "bin", "json") }`.
+   - Keep `jniLibs { useLegacyPackaging = false }`.
+4. **Version & CI Alignment (`v0.7.5.5` — Code `94` `[lite]`):**
+   - `app/build.gradle.kts`: `versionCode = 94`, `versionName = "0.7.5.5"`
+   - `MainActivity.kt`: `APP_VERSION = "0.7.5.5"`
+   - `package.json`: `"version": "1.0.5"`
+   - `.github/workflows/android-build.yml`:
+     - `tag: "v0.7.5.5"`
+     - `name: "مصحف القيام — V0.7.5.5 (Audio JNI Hardening & Crash Diagnostics Hotfix)"`
+     - Package artifact with versioned filename: `mushaf-qiyam-v${VERSION}-lite.apk`.

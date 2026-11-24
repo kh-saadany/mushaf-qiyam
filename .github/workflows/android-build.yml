@@ -148,12 +148,15 @@ jobs:
           echo "WARNING: Keystore not found! APK may remain signed with debug cert."
         fi
 
+        VERSION=$(grep 'versionName =' app/build.gradle.kts | sed 's/.*versionName = "\(.*\)".*/\1/')
+        echo "Extracted App Version: $VERSION"
+
         if [[ "$COMMIT_MSG" == *"[full]"* ]]; then
           echo "Packaging Full Release APK..."
-          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-b-full.apk
+          mv "$RAW_APK" "app/build/outputs/apk/release/mushaf-qiyam-v${VERSION}-full.apk"
         else
           echo "Packaging Lite Release APK..."
-          mv "$RAW_APK" app/build/outputs/apk/release/mushaf-qiyam-b-lite.apk
+          mv "$RAW_APK" "app/build/outputs/apk/release/mushaf-qiyam-v${VERSION}-lite.apk"
         fi
 
     - name: Clean & Hide Previous GitHub Releases
@@ -168,17 +171,18 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         artifacts: "app/build/outputs/apk/release/*.apk"
-        tag: "v0.7.5.4"
-        name: "مصحف القيام — V0.7.5.4 (Startup Warmup, Header Restructure & Instant Jump)"
+        tag: "v0.7.5.5"
+        name: "مصحف القيام — V0.7.5.5 (Audio JNI Hardening & Crash Diagnostics Hotfix)"
         allowUpdates: true
         recreate: true
         body: |
-          ### مصحف القيام — تحديث V0.7.5.4 [lite]
+          ### مصحف القيام — تحديث V0.7.5.5 [lite]
 
-          1. **تهيئة المحرك الاستباقية فوق شاشة الترحيب (Startup Engine Warmup):** نقل تهيئة أصول المصحف والنموذج الفونيمي فور فتح التطبيق مع نافذة تقدم واختفاء تلقائي فور الجاهزية (0ms انتقال للقراءة)، مع عزل الميكروفون تماماً عن شاشة الترحيب.
-          2. **إعادة الأيقونات لأزرار شاشة الترحيب:** إعادة توظيف الأيقونات داخل أزرار التلاوة، البحث، المرجعيات، والإعدادات داخل بيئة RTL متناسقة.
-          3. **ترويسة رأسية علوية للشاشة وإفراغ الشريط السفلي:** نقل اسم السورة (يميناً) ورقم الصفحة (يساراً) كنص بسيط أعلى الشاشة في الوضع الرأسي (قابل للنقر لفتح السور)، وإفراغ الشريط السفلي للأزرار التفاعلية فقط مما يضمن ظهور زر الميكروفون بوضوح كامل دون أي قص على جميع الشاشات (320dp+).
-          4. **القفز الفوري للصفحات البعيدة (Instant Jump Threshold):** استبدال التمرير المتتابع بالانتقال المباشر والفوري (0ms) عند القفز لصفحة بعيدة (فارق أكثر من صفحة) في وضعي التمرير الرأسي والصفحات لتوفير المعالج والرسوميات وراحة عين القارئ.
+          1. **إصلاح أمان الذاكرة وتراكم عينات الصوت (Silence Kaldi Fbank Drain):** إيقاف تمرير عينات الصوت إلى `acceptWaveform` فور استمرار الصمت أكثر من ثانيتين وتصفير المسار لمنع انفجار ذاكرة Fbank عند استيقاظ خيط الاستدلال مع أول كلمة.
+          2. **حماية مسار الاستدعاء الأصلي وقفل الخيوط (`streamLock` Discipline):** قراءة `currentStream` و`recognizer` حصرياً داخل قفل التزامن لمنع أي تداخل أو وصول لذاكرة محررة (Use-After-Free) في مكتبات C++.
+          3. **التقاط أخطاء الذاكرة الأصلية (Native Exit Diagnostics):** الاستعلام عن أسباب خروج العملية عبر `ApplicationExitInfo` على Android 11+ لالتقاط إشارات `SIGSEGV` و`SIGABRT` وحالات الذاكرة المنخفضة وعرضها في نافذة تقرير قابلة للنسخ.
+          4. **الدرع البرمجي العام وحفظ السجل (`CrashHandler`):** التقاط كافة الاستثناءات غير المعالجة وتغليف استدعاءات `Looper` و`handlePartialResult` بكتل حماية وحفظ الـ Stack Trace على القرص مع زر نسخ بلمسة واحدة.
+          5. **منع ضغط أصول النماذج (AAPT2 No-Compress):** حظر ضغط ملفات `onnx` و`txt` في الـ APK لضمان قراءة الذاكرة المتوافقة مع أجهزة سامسونج وAndroid 14+.
 
 
 

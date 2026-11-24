@@ -11,8 +11,8 @@ android {
         applicationId = "com.mushafqiyam.zipformer"
         minSdk = 24
         targetSdk = 35
-        versionCode = 93
-        versionName = "0.7.5.4"
+        versionCode = 94
+        versionName = "0.7.5.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -43,6 +43,10 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
+    androidResources {
+        noCompress += listOf("onnx", "int8", "txt", "bin", "json")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

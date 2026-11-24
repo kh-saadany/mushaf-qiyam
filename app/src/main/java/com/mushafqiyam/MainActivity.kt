@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
@@ -77,7 +78,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "MushafQiyam"
-        const val APP_VERSION = "0.7.5.4"
+        const val APP_VERSION = "0.7.5.5"
     }
 
     private var audioRecognizer: AudioRecognizer? = null
@@ -93,6 +94,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashHandler.init(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         AppLogger.i(TAG, "Mushaf Qiyam App Started (Version: $APP_VERSION)")
 
@@ -191,6 +193,11 @@ fun MainAppScreen(
     var hasRecitedAnyVerse by remember { mutableStateOf(false) }
     var lastMatchedSpeechTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var lastActiveRecitationStreamTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var pendingCrashReport by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        pendingCrashReport = CrashHandler.getPendingCrashReport(context)
+    }
 
     BackHandler(enabled = currentScreen != AppScreen.Welcome) {
         if (currentScreen == AppScreen.Reading) {
@@ -407,8 +414,9 @@ fun MainAppScreen(
     }
 
     val handlePartialResult: (String) -> Unit = handlePartialResult@{ rawText ->
-        if (rawText.isNotBlank()) {
-            // 1. Prayer Standby Wakeup Check
+        try {
+            if (rawText.isNotBlank()) {
+                // 1. Prayer Standby Wakeup Check
             if (prayerManager.appMode == AppMode.PRAYER && (prayerManager.currentPhase == PrayerPhase.FATIHAH_STANDBY || prayerManager.currentPhase == PrayerPhase.QIYAM_PAIR_COMPLETE)) {
                 val wakeupAyah = prayerManager.checkStandbyWakeup(rawText)
                 if (wakeupAyah == null) {
@@ -756,13 +764,23 @@ fun MainAppScreen(
                 "UIHighlight",
                 "[$status] Page=$currentPage | UI=[$activeSurah:$activeAyah] | Line=${activeLineNum ?: "-"} | Prog=${(activeWordProgress * 100).toInt()}% (Word=$wordInfo) | Mode=${trackingResult.mode} | Ratio=${"%.2f".format(trackingResult.confidence)}"
             )
+        } catch (t: Throwable) {
+            AppLogger.e("UIHighlight", "Fatal protection: exception in handlePartialResult: ${t.message}", t)
+            CrashHandler.recordException(context, "handlePartialResult", "Exception in handlePartialResult", t)
         }
     }
 
     var memoryStatus by remember { mutableStateOf("RAM: في انتظار بدء التشغيل...") }
 
     audioRecognizer?.onAudioLevel = { level -> audioLevel = level }
-    audioRecognizer?.onPartialResult = handlePartialResult
+    audioRecognizer?.onPartialResult = { text ->
+        try {
+            handlePartialResult(text)
+        } catch (t: Throwable) {
+            AppLogger.e("UI", "Fatal protection: exception in onPartialResult callback: ${t.message}", t)
+            CrashHandler.recordException(context, "onPartialResult", "Exception in onPartialResult", t)
+        }
+    }
     audioRecognizer?.onMemoryUpdate = { mem -> memoryStatus = mem }
     audioRecognizer?.onError = { err ->
         AppLogger.e("UI", "AudioRecognizer error: $err")
@@ -772,6 +790,57 @@ fun MainAppScreen(
     var showDiagnosticsPanel by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
     var showJumpDialog by remember { mutableStateOf(false) }
+
+    if (pendingCrashReport != null) {
+        val crashReport = pendingCrashReport ?: ""
+        AlertDialog(
+            onDismissRequest = { /* Require user interaction to clear */ },
+            confirmButton = {
+                TextButton(onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    val clip = ClipData.newPlainText("Mushaf Crash Report", crashReport)
+                    clipboard?.setPrimaryClip(clip)
+                    Toast.makeText(context, "تم نسخ تقرير العطل إلى الحافظة", Toast.LENGTH_SHORT).show()
+                }) {
+                    Text("نسخ تقرير العطل")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    CrashHandler.clearPendingCrashReport(context)
+                    pendingCrashReport = null
+                }) {
+                    Text("إغلاق")
+                }
+            },
+            title = {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Text("⚠️ تقرير تشخيص عطل التطبيق", fontWeight = FontWeight.Bold, color = Color(0xFFC62828))
+                }
+            },
+            text = {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .background(Color(0xFF263238), RoundedCornerShape(6.dp))
+                            .padding(8.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = crashReport,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color(0xFFECEFF1)
+                            )
+                        }
+                    }
+                }
+            }
+        )
+    }
 
     if (showDiagnosticsPanel) {
         val logs by AppLogger.logs.collectAsState()

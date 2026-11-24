@@ -527,6 +527,15 @@ object QuranVocabularyFilter {
      */
     @Synchronized
     fun filterAndTrackFullMushaf(rawText: String): TrackingResult {
+        return try {
+            filterAndTrackFullMushafInternal(rawText)
+        } catch (t: Throwable) {
+            AppLogger.e(TAG, "Fatal protection: caught exception in filterAndTrackFullMushaf: ${t.message}", t)
+            TrackingResult("", null, null, 0, 0.0, recitationMode)
+        }
+    }
+
+    private fun filterAndTrackFullMushafInternal(rawText: String): TrackingResult {
         if (!isFullMushafLoaded && MushafPageRepository.isInitialized) {
             initializeFullMushaf(MushafPageRepository.getAllVerses())
         }
@@ -1364,6 +1373,7 @@ object QuranVocabularyFilter {
 
         for (cand in topCandidates) {
             val vIdx = cand.key
+            if (vIdx !in verseCanonicalChars.indices) continue
             val canon = verseCanonicalChars[vIdx]
 
             // If cleanRolling is significantly longer than canon (e.g. reading 2 short verses in a breath),
@@ -1919,44 +1929,46 @@ object QuranVocabularyFilter {
             val nextVIdx = lastNonFatihahVerseIndex + 1
             val contStart = verseFirstWordIndex[nextVIdx]
             val contEnd = minOf(allWords.size - 1, contStart + 12)
-            val contWindow = allWords.subList(contStart, contEnd + 1)
+            if (contStart in 0 until allWords.size && contEnd >= contStart) {
+                val contWindow = allWords.subList(contStart, contEnd + 1)
 
-            val contMatched = ArrayList<QuranWord>()
-            var contMaxSim = 0.0
-            for (rw in discoveryRollingWords) {
-                for (cw in contWindow) {
-                    if (contMatched.isNotEmpty() && cw.globalIndex <= contMatched.last().globalIndex) continue
-                    val s = FuzzyMatcher.wordSimilarity(rw.normWord, cw.normalizedText)
-                    if (s >= 0.78) {
-                        contMatched.add(cw)
-                        if (s > contMaxSim) contMaxSim = s
-                        break
+                val contMatched = ArrayList<QuranWord>()
+                var contMaxSim = 0.0
+                for (rw in discoveryRollingWords) {
+                    for (cw in contWindow) {
+                        if (contMatched.isNotEmpty() && cw.globalIndex <= contMatched.last().globalIndex) continue
+                        val s = FuzzyMatcher.wordSimilarity(rw.normWord, cw.normalizedText)
+                        if (s >= 0.78) {
+                            contMatched.add(cw)
+                            if (s > contMaxSim) contMaxSim = s
+                            break
+                        }
                     }
                 }
-            }
-            if (contMatched.size >= 2 && (contMatched.last().globalIndex - contMatched.first().globalIndex) <= 4) {
-                val foundVIdx = contMatched.last().verseIndex
-                confirmedVerseIndex = foundVIdx
-                activeWordPointer = minOf(allWords.size - 1, contMatched.last().globalIndex + 1)
-                recitationMode = RecitationMode.TRACKING
-                consecutiveMismatches = 0
-                clearPendingVerseTransition()
-                discoveryRollingWords.clear()
+                if (contMatched.size >= 2 && (contMatched.last().globalIndex - contMatched.first().globalIndex) <= 4) {
+                    val foundVIdx = contMatched.last().verseIndex
+                    confirmedVerseIndex = foundVIdx
+                    activeWordPointer = minOf(allWords.size - 1, contMatched.last().globalIndex + 1)
+                    recitationMode = RecitationMode.TRACKING
+                    consecutiveMismatches = 0
+                    clearPendingVerseTransition()
+                    discoveryRollingWords.clear()
 
-                val mv = MushafPageRepository.getVerseByGlobalIndex(foundVIdx)
-                if (mv != null && mv.surah > 1) {
-                    lastNonFatihahVerseIndex = foundVIdx
+                    val mv = MushafPageRepository.getVerseByGlobalIndex(foundVIdx)
+                    if (mv != null && mv.surah > 1) {
+                        lastNonFatihahVerseIndex = foundVIdx
+                    }
+                    AppLogger.i(TAG, "Rakah Continuity Discovery matched [${mv?.surah}:${mv?.ayah}] (Page ${mv?.page})")
+                    return TrackingResult(
+                        filteredText = contMatched.joinToString(" ") { it.originalText },
+                        matchedVerseIndex = foundVIdx,
+                        matchedVerse = mv,
+                        matchedWordsCount = contMatched.size,
+                        highestSimilarity = contMaxSim,
+                        recitationMode = RecitationMode.TRACKING,
+                        discoveredNewLocation = true
+                    )
                 }
-                AppLogger.i(TAG, "Rakah Continuity Discovery matched [${mv?.surah}:${mv?.ayah}] (Page ${mv?.page})")
-                return TrackingResult(
-                    filteredText = contMatched.joinToString(" ") { it.originalText },
-                    matchedVerseIndex = foundVIdx,
-                    matchedVerse = mv,
-                    matchedWordsCount = contMatched.size,
-                    highestSimilarity = contMaxSim,
-                    recitationMode = RecitationMode.TRACKING,
-                    discoveredNewLocation = true
-                )
             }
         }
 
@@ -2015,6 +2027,7 @@ object QuranVocabularyFilter {
                     else -> 0.85
                 }
                 for (gPos in positions) {
+                    if (gPos !in allWords.indices) continue
                     if (inPostFatihahCooldown && allWords[gPos].verseIndex <= 6) continue
                     val exactSim = FuzzyMatcher.wordSimilarity(rw.normWord, allWords[gPos].normalizedText)
                     val finalSim = maxOf(baseSim, exactSim)

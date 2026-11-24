@@ -109,3 +109,56 @@ Google AI Studio review of this report and issuance of the first directive in `.
    - Initialized `LazyColumn` with `initialFirstVisibleItemIndex = (currentPage - 1)` to eliminate initial jump glitch upon entering scroll mode.
 5. **Cross-System Version Synchronization:**
    - Synchronized `versionCode = 93`, `versionName = "0.7.5.4"`, `APP_VERSION = "0.7.5.4"`, `package.json = 1.0.4`, and GitHub Actions release tag `v0.7.5.4`.
+
+
+---
+
+## Executive Report #005: Directive #004 Execution — Isolated Audio JNI Hardening & Native Diagnostics Hotfix (v0.7.5.5 [lite])
+- **Timestamp:** 2026-11-24
+- **Branch:** `v0.8.0-dev` (cleanly isolated from `d2c488e` / `v0.7.5.4` — zero Phase 3 files)
+- **Resulting Version:** `0.7.5.5` (Build Code `94`) `[lite]`
+- **Status:** COMPLETED & VERIFIED (Awaiting Dual Subagent Audit)
+
+### 1. Implementation Summary of Deliverables
+
+#### Deliverable H1: Dual-Layer Crash & Native Process Exit Reporter (`CrashHandler.kt` + `MainActivity.kt`)
+1. **Java/Kotlin Uncaught Exception Handler:**
+   - Implemented `com.mushafqiyam.CrashHandler` installed in `MainActivity.onCreate()` via `Thread.setDefaultUncaughtExceptionHandler`.
+   - On uncaught exception: synchronously persists (`commit()`) stack trace, thread ID, device specifications, `APP_VERSION`, and last 4,000 characters of in-app logs to `filesDir/latest_crash.txt` and `SharedPreferences` before delegating to the previous system handler.
+   - Provided `CrashHandler.recordException(context, tag, message, t)` for caught runtime exceptions.
+2. **Android 11+ (API 30+) Native C++ Crash Capture (`ApplicationExitInfo`):**
+   - Implemented `checkHistoricalNativeCrashes(context: Context)` querying `ActivityManager.getHistoricalProcessExitReasons(packageName, 0, 5)`.
+   - Filters for abnormal reasons: `REASON_CRASH_NATIVE`, `REASON_CRASH`, `REASON_ANR`, `REASON_LOW_MEMORY`, and `REASON_SIGNALED`.
+   - Formats human-readable POSIX signals (e.g. `SIGSEGV (11)`, `SIGABRT (6)`, `SIGBUS (7)`), PID, memory stats (PSS/RSS), and up to 4KB of native trace from `traceInputStream`.
+   - Deduplicates historical reports via `last_shown_exit_timestamp` in `SharedPreferences`.
+3. **Interactive Post-Crash Alert Dialog in `MainActivity.kt`:**
+   - `pendingCrashReport` state initialized on startup via `CrashHandler.getPendingCrashReport(context)`.
+   - Displays a clean RTL `AlertDialog` with monospace scrollable dark preview, a 1-tap **"نسخ تقرير العطل"** button (copies full report to clipboard + Toast), and **"إغلاق"** (clears pending report).
+
+#### Deliverable H2: `AudioRecognizer.kt` JNI & Silence-Buffer Hardening
+1. **Unbounded C++ Fbank Drain Prevention (Thermal/Silence Gate):**
+   - Initialized `lastSpeechTimestampMs = System.currentTimeMillis()` in `startListening()`.
+   - `captureThread` tracks `streamClearedForSilence`:
+     - While `silenceDurationMs <= 2000L`: feeds audio to `acceptWaveform(samplesToFeed, SAMPLE_RATE)`.
+     - When `silenceDurationMs > 2000L`: completely stops calling `acceptWaveform` and resets the native stream once under `streamLock`, eliminating native memory buffer accumulation during prolonged silence.
+2. **Strict JNI `streamLock` Discipline:**
+   - In `inferenceThread`, `captureThread`, `resetStream()`, `stopListening()`, and `release()`: reads `currentStream` and `recognizer` strictly inside `synchronized(streamLock)`.
+   - Never holds `streamLock` across `Thread.sleep()`, phoneme projection, or `mainHandler.post`.
+   - Slices partial read frames (`floatSamples.copyOf(readSamples)`) to avoid feeding uninitialized memory into C++ Kaldi Fbank.
+3. **Atomic Asset Resolution & Integrity Guard:**
+   - `resolveFilePath` writes to `$fileName.tmp` and renames atomically to prevent zero-byte or truncated files from passing.
+   - `initEngine()` logs exact byte sizes of `model.int8.onnx` and `tokens.txt`, and aborts safely with an error message if model file is `< 10MB`.
+4. **Looper Callback Shield:**
+   - Guarded `onPartialResult?.invoke(projected)` and `onAudioLevel?.invoke(level)` with try-catch inside `mainHandler.post`.
+
+#### Deliverable H3: Tracker, UI & Packaging Hardening
+1. **`MainActivity.kt`:** Wrapped `handlePartialResult` in top-level `try-catch(Throwable)` recording to `CrashHandler`.
+2. **`QuranVocabularyFilter.kt`:**
+   - Wrapped `filterAndTrackFullMushaf` in a defensive `try-catch` returning a safe empty `TrackingResult`.
+   - Added array bounds checks on `verseCanonicalChars.indices`, `contStart in 0 until allWords.size && contEnd >= contStart` before `subList`, and `gPos in allWords.indices`.
+3. **Packaging (`app/build.gradle.kts`):** Added `androidResources { noCompress += listOf("onnx", "int8", "txt", "bin", "json") }`.
+4. **Version Alignment:**
+   - `app/build.gradle.kts`: `versionCode = 94`, `versionName = "0.7.5.5"`
+   - `MainActivity.kt`: `APP_VERSION = "0.7.5.5"`
+   - `package.json`: `"version": "1.0.5"`
+   - `.github/workflows/android-build.yml`: release tag `v0.7.5.5`, artifact `mushaf-qiyam-v${VERSION}-lite.apk`.

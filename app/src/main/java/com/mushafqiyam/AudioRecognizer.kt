@@ -67,21 +67,38 @@ class AudioRecognizer(private val context: Context) {
     var onMemoryUpdate: ((String) -> Unit)? = null
 
     private fun resolveFilePath(modelDirInAssets: String, fileName: String): String? {
-        val internalFile = File(context.filesDir, "$modelDirInAssets/$fileName")
+        val targetDir = File(context.filesDir, modelDirInAssets)
+        val internalFile = File(targetDir, fileName)
         if (internalFile.exists() && internalFile.length() > 0) {
-            AppLogger.i(TAG, "Found existing $fileName in storage: ${internalFile.absolutePath}")
+            AppLogger.i(TAG, "Found existing $fileName in storage (${internalFile.length()} bytes): ${internalFile.absolutePath}")
             return internalFile.absolutePath
         }
 
         return try {
-            internalFile.parentFile?.mkdirs()
+            targetDir.mkdirs()
+            val tmpFile = File(targetDir, "$fileName.tmp")
+            if (tmpFile.exists()) tmpFile.delete()
+
             context.assets.open("$modelDirInAssets/$fileName").use { input ->
-                FileOutputStream(internalFile).use { output ->
+                FileOutputStream(tmpFile).use { output ->
                     input.copyTo(output)
                 }
             }
-            AppLogger.i(TAG, "Copied $fileName from APK assets to ${internalFile.absolutePath}")
-            internalFile.absolutePath
+
+            if (tmpFile.exists() && tmpFile.length() > 0) {
+                if (internalFile.exists()) internalFile.delete()
+                val renamed = tmpFile.renameTo(internalFile)
+                if (renamed && internalFile.exists()) {
+                    AppLogger.i(TAG, "Copied and atomically committed $fileName from APK assets (${internalFile.length()} bytes): ${internalFile.absolutePath}")
+                    internalFile.absolutePath
+                } else {
+                    AppLogger.e(TAG, "Failed to rename $tmpFile to $internalFile")
+                    null
+                }
+            } else {
+                AppLogger.w(TAG, "Temporary asset copy failed or zero bytes for $fileName")
+                null
+            }
         } catch (t: Throwable) {
             AppLogger.w(TAG, "Could not resolve asset $fileName: ${t.localizedMessage}")
             null
@@ -127,8 +144,19 @@ class AudioRecognizer(private val context: Context) {
 
             val tokensPath = resolveFilePath(modelDirInAssets, "tokens.txt")
 
-            if (modelPath != null && File(modelPath).exists() &&
-                tokensPath != null && File(tokensPath).exists()) {
+            val modelFile = if (modelPath != null) File(modelPath) else null
+            val tokensFile = if (tokensPath != null) File(tokensPath) else null
+
+            if (modelFile != null && modelFile.exists() &&
+                tokensFile != null && tokensFile.exists()) {
+
+                AppLogger.i(TAG, "Model candidate: ${modelFile.name} (${modelFile.length()} bytes), Tokens: ${tokensFile.name} (${tokensFile.length()} bytes)")
+
+                if (modelFile.length() < 10 * 1024 * 1024) {
+                    AppLogger.e(TAG, "ABORTING: Model file is suspiciously small (< 10MB, actual: ${modelFile.length()} bytes). Corrupt or incomplete!")
+                    mainHandler.post { onError?.invoke("ملف نموذج التلاوة غير مكتمل (${modelFile.length() / 1024} KB)") }
+                    return false
+                }
 
                 val featConfig = FeatureConfig(
                     sampleRate = SAMPLE_RATE,
@@ -313,8 +341,14 @@ class AudioRecognizer(private val context: Context) {
                 return false
             }
 
-            // Create initial streaming recognizer stream
-            currentStream = rec.createStream()
+            // Create initial streaming recognizer stream under streamLock
+            lastSpeechTimestampMs = System.currentTimeMillis()
+            synchronized(streamLock) {
+                try {
+                    currentStream?.release()
+                } catch (_: Throwable) {}
+                currentStream = rec.createStream()
+            }
             audioRecord?.startRecording()
             isRecording.set(true)
             logMemoryUsage("Start-Listening")
@@ -335,33 +369,45 @@ class AudioRecognizer(private val context: Context) {
                             continue
                         }
 
-                        val stream = currentStream
-                        val currentRec = recognizer
-                        if (stream == null || currentRec == null) {
-                            Thread.sleep(20)
-                            continue
-                        }
-
                         var isEndpoint = false
                         var rawText = ""
 
                         synchronized(streamLock) {
-                            while (currentRec.isReady(stream)) {
-                                currentRec.decode(stream)
-                            }
-                            isEndpoint = currentRec.isEndpoint(stream)
-                            rawText = currentRec.getResult(stream).text.trim()
-                            if (isEndpoint) {
-                                currentRec.reset(stream)
+                            val stream = currentStream
+                            val currentRec = recognizer
+                            if (stream != null && currentRec != null) {
+                                try {
+                                    while (currentRec.isReady(stream)) {
+                                        currentRec.decode(stream)
+                                    }
+                                    isEndpoint = currentRec.isEndpoint(stream)
+                                    rawText = currentRec.getResult(stream).text.trim()
+                                    if (isEndpoint) {
+                                        currentRec.reset(stream)
+                                    }
+                                } catch (e: Throwable) {
+                                    AppLogger.e(TAG, "Error during Sherpa-ONNX decode/getResult: ${e.message}", e)
+                                }
                             }
                         }
 
                         if (rawText.isNotBlank()) {
-                            val projected = projectPhonemesToCanonical(rawText)
-                            if (projected.isNotBlank() && projected != lastEmittedProjected) {
-                                lastEmittedProjected = projected
-                                AppLogger.i(TAG, "Raw Phonemes: '$rawText' -> Projected Canonical: '$projected'")
-                                mainHandler.post { onPartialResult?.invoke(projected) }
+                            try {
+                                val projected = projectPhonemesToCanonical(rawText)
+                                if (projected.isNotBlank() && projected != lastEmittedProjected) {
+                                    lastEmittedProjected = projected
+                                    AppLogger.i(TAG, "Raw Phonemes: '$rawText' -> Projected Canonical: '$projected'")
+                                    mainHandler.post {
+                                        try {
+                                            onPartialResult?.invoke(projected)
+                                        } catch (t: Throwable) {
+                                            AppLogger.e(TAG, "Exception in onPartialResult: ${t.message}", t)
+                                            CrashHandler.recordException(context, TAG, "Exception in onPartialResult", t)
+                                        }
+                                    }
+                                }
+                            } catch (t: Throwable) {
+                                AppLogger.e(TAG, "Error projecting phonemes: ${t.message}", t)
                             }
                         }
 
@@ -387,6 +433,7 @@ class AudioRecognizer(private val context: Context) {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
                 val readChunk = ShortArray(CHUNK_SAMPLES)
                 val floatSamples = FloatArray(CHUNK_SAMPLES)
+                var streamClearedForSilence = false
 
                 AppLogger.i(TAG, "Audio Capture Producer loop started (16kHz Mono, chunk=$CHUNK_SAMPLES samples)")
 
@@ -404,17 +451,49 @@ class AudioRecognizer(private val context: Context) {
                             val now = System.currentTimeMillis()
                             if (rms > 0.005f) {
                                 lastSpeechTimestampMs = now
+                                streamClearedForSilence = false
                             }
 
                             if (now - lastAudioLevelPostMs >= 80L) {
                                 lastAudioLevelPostMs = now
                                 val level = (rms * 5.0f).coerceIn(0.0f, 1.0f)
-                                mainHandler.post { onAudioLevel?.invoke(level) }
+                                mainHandler.post {
+                                    try {
+                                        onAudioLevel?.invoke(level)
+                                    } catch (_: Throwable) {}
+                                }
                             }
 
-                            // Stream samples directly to C++ kaldi-native-fbank and Zipformer buffer under lock
-                            synchronized(streamLock) {
-                                currentStream?.acceptWaveform(floatSamples, SAMPLE_RATE)
+                            val silenceDurationMs = now - lastSpeechTimestampMs
+                            if (silenceDurationMs <= 2000L) {
+                                // Active speech or post-speech trailing silence (< 2.0s): feed C++ kaldi fbank
+                                val samplesToFeed = if (readSamples == floatSamples.size) floatSamples else floatSamples.copyOf(readSamples)
+                                synchronized(streamLock) {
+                                    try {
+                                        currentStream?.acceptWaveform(samplesToFeed, SAMPLE_RATE)
+                                    } catch (t: Throwable) {
+                                        AppLogger.e(TAG, "Error in acceptWaveform: ${t.message}", t)
+                                    }
+                                }
+                            } else {
+                                // Prolonged silence (> 2.0s): STOP feeding acceptWaveform to prevent unbounded C++ Fbank accumulation!
+                                // Reset the native stream ONCE to start fresh on next speech onset.
+                                if (!streamClearedForSilence) {
+                                    synchronized(streamLock) {
+                                        try {
+                                            val s = currentStream
+                                            val r = recognizer
+                                            if (s != null && r != null) {
+                                                r.reset(s)
+                                            }
+                                        } catch (t: Throwable) {
+                                            AppLogger.w(TAG, "Error resetting stream in silence gate: ${t.message}")
+                                        }
+                                    }
+                                    lastEmittedProjected = ""
+                                    streamClearedForSilence = true
+                                    AppLogger.i(TAG, "Thermal/Silence gate: prolonged silence (>2s), stopped feeding Fbank & reset stream")
+                                }
                             }
                         }
                     } catch (t: Throwable) {
@@ -432,10 +511,10 @@ class AudioRecognizer(private val context: Context) {
     }
 
     fun resetStream() {
-        val rec = recognizer
-        val stream = currentStream
-        if (rec != null && stream != null) {
-            synchronized(streamLock) {
+        synchronized(streamLock) {
+            val rec = recognizer
+            val stream = currentStream
+            if (rec != null && stream != null) {
                 try {
                     rec.reset(stream)
                     lastEmittedProjected = ""
@@ -452,8 +531,8 @@ class AudioRecognizer(private val context: Context) {
         if (!isRecording.get()) return
         isRecording.set(false)
 
-        try { captureThread?.join(1000) } catch (_: Throwable) {}
-        try { inferenceThread?.join(1000) } catch (_: Throwable) {}
+        try { captureThread?.join(500) } catch (_: Throwable) {}
+        try { inferenceThread?.join(500) } catch (_: Throwable) {}
 
         try {
             audioRecord?.apply {
@@ -479,12 +558,14 @@ class AudioRecognizer(private val context: Context) {
 
     fun release() {
         stopListening()
-        try {
-            recognizer?.release()
-        } catch (t: Throwable) {
-            AppLogger.w(TAG, "Error releasing Sherpa-ONNX recognizer: ${t.localizedMessage}")
+        synchronized(streamLock) {
+            try {
+                recognizer?.release()
+            } catch (t: Throwable) {
+                AppLogger.w(TAG, "Error releasing Sherpa-ONNX recognizer: ${t.localizedMessage}")
+            }
+            recognizer = null
         }
-        recognizer = null
         AppLogger.i(TAG, "AudioRecognizer fully released")
     }
 }

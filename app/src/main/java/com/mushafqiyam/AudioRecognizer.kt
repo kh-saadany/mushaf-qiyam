@@ -147,7 +147,8 @@ class AudioRecognizer(private val context: Context) {
             val modelFile = if (modelPath != null) File(modelPath) else null
             val tokensFile = if (tokensPath != null) File(tokensPath) else null
 
-            if (modelFile != null && modelFile.exists() &&
+            if (modelPath != null && tokensPath != null &&
+                modelFile != null && modelFile.exists() &&
                 tokensFile != null && tokensFile.exists()) {
 
                 AppLogger.i(TAG, "Model candidate: ${modelFile.name} (${modelFile.length()} bytes), Tokens: ${tokensFile.name} (${tokensFile.length()} bytes)")
